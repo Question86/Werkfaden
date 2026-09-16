@@ -19,6 +19,10 @@ jobs:
           python-version: '3.12'
       - name: Compile
         run: python -m compileall -q kickstart kairos/kairos_harness workshop/src
+      - name: Run full KAIROS harness gate
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
       - name: Run full kickstart gate
         run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
       - name: Run full Workshop gate

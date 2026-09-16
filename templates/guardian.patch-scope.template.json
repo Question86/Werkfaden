@@ -1,0 +1,7 @@
+{
+  "schema": "werkfaden-patch-scope/v1",
+  "normal": {"sources": [], "headers": [], "dependent_tests": []},
+  "auxiliary": {"documents": []},
+  "source_set": {"operations": []},
+  "authority": {"add_headers": [], "remove_headers": []}
+}

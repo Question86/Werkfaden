@@ -4,289 +4,247 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
-from .corpus import build_corpus_manifest
+from ._cli_core_v1 import load_cli_core
 from .auxiliary import AuxiliaryDocumentTransaction
 from .engine import WorkshopEngine
+from .guardian import guardian_required
 from .migration import AuthorityMigration
-from .repair import BootstrapRepair
 from .universal_migration import UniversalSourceSetMigration
 from .util import WorkshopError
 
+_legacy = load_cli_core()
+DEFAULT_CONFIG = _legacy.DEFAULT_CONFIG
 
-DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "workshop.config.json"
+
+def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action
+    raise RuntimeError("legacy Workshop parser has no subparsers")
+
+
+def _add_guard_args(parser: argparse.ArgumentParser) -> None:
+    if not any(action.dest == "guardian" for action in parser._actions):
+        parser.add_argument("--guardian", default="", help="active GRD2_ patch-session guardian")
+    if not any(action.dest == "guardian_state_ticket" for action in parser._actions):
+        parser.add_argument(
+            "--guardian-state-ticket",
+            default="",
+            help="PATCH state ticket returned by guard-enter before checkout",
+        )
+    if not any(action.dest == "guardian_memory_ref" for action in parser._actions):
+        parser.add_argument("--guardian-memory-ref", action="append", default=[], help=argparse.SUPPRESS)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="runtime-sync-workshop",
-        description="Fail-closed Runtime/blueprint/KAIROS synchronization workshop",
-    )
-    parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="workshop config JSON")
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("status", help="read and verify all live layers; persist a machine-local receipt")
-    sub.add_parser("manifest", help="emit the complete read-only corpus manifest")
-    sub.add_parser("seal", help="create a trusted content-addressed mirror after full verification")
-    sub.add_parser(
-        "bootstrap-stage",
-        help="stage the verified document-only legacy repair in an isolated KAIROS shadow",
-    )
+    parser = _legacy._parser()
+    sub = _subparsers(parser)
 
-    checkout = sub.add_parser("checkout", help="open one exclusive transaction over named governed sources")
-    checkout.add_argument("--source", action="append", required=True, help="governed source path; repeatable")
-    checkout.add_argument("--purpose", required=True)
-    checkout.add_argument("--test", action="append", default=[], help="configured dependent test whose Runtime owner is selected")
+    step = sub.choices.get("guard-step")
+    if step is not None:
+        if not any(action.dest == "scope_file" for action in step._actions):
+            step.add_argument(
+                "--scope-file",
+                default="",
+                help="werkfaden-patch-scope/v1 JSON used by PROVE; omit for normal source-only scope",
+            )
+        if not any(action.dest == "state_ticket" for action in step._actions):
+            step.add_argument("--state-ticket", required=True, help="state ticket returned by guard-enter")
+        for action in step._actions:
+            if action.dest == "memory_ref":
+                action.required = False
 
-    source_set_checkout = sub.add_parser(
-        "source-set-checkout",
-        help="open a Workshop-owned candidate tree for static source create/delete/rename",
-    )
-    source_set_checkout.add_argument("--purpose", required=True)
+    checkout = sub.choices.get("checkout")
+    if checkout is not None:
+        if not any(action.dest == "guardian_state_ticket" for action in checkout._actions):
+            checkout.add_argument("--guardian-state-ticket", default="", help="PATCH state ticket returned by guard-enter")
+        for action in checkout._actions:
+            if action.dest == "guardian_memory_ref":
+                action.required = False
 
-    source_set_recover = sub.add_parser(
-        "source-set-recover-orphan",
-        help="release a proven pre-apply orphan lease from an interrupted source-set checkout",
-    )
-    source_set_recover.add_argument("transaction_id")
-    source_set_recover.add_argument("--expected-sealed-package-sha256", required=True)
-    for name, help_text in (
-        ("source-set-prepare", "derive source/Markdown/membership deltas from the Workshop-owned candidate tree"),
-        ("source-set-verify", "verify source-set topology and KAIROS projection in an isolated shadow"),
-        ("source-set-apply", "atomically apply the verified source-set migration and reseal"),
-        ("source-set-abort", "abort the source-set candidate while live bytes remain sealed"),
-        ("source-set-transaction", "show one universal source-set transaction"),
-    ):
-        command = sub.add_parser(name, help=help_text)
-        command.add_argument("transaction_id")
+    if "guard-enter" not in sub.choices:
+        command = sub.add_parser("guard-enter", help="read state-relevant canonical Memory and issue a one-state execution ticket")
+        command.add_argument("guardian_id")
+        command.add_argument("--step", required=True, choices=("HYPOTHESIS", "FALSIFIER_1", "FALSIFIER_2", "MAP", "COUNTERPROBE", "EXACT_SOURCE", "PROVE", "PATCH", "HEARTBEAT", "FRESH_RUN"))
+        command.add_argument("--memory-ref", action="append", default=[], help="optional extra canonical Memory selector; configured state requirements are always included")
 
-    auxiliary_checkout = sub.add_parser(
-        "auxiliary-checkout",
-        help="open one exclusive document-only transaction over configured process authorities",
-    )
-    auxiliary_checkout.add_argument("--document", action="append", required=True)
-    auxiliary_checkout.add_argument("--purpose", required=True)
+    for name in ("source-set-checkout", "auxiliary-checkout", "authority-checkout"):
+        target = sub.choices.get(name)
+        if target is not None:
+            _add_guard_args(target)
 
-    for name, help_text in (
-        ("scientific-baseline", "build and run the sealed pre-edit productive scientific reference"),
-        ("scientific-reproducibility", "build the unchanged sealed source twice at one canonical slot"),
-        ("prepare", "regenerate mechanical blueprint layers and enforce metadata review"),
-        ("verify", "promote prepared documents into an isolated KAIROS database snapshot"),
-        ("scientific-verify", "build the candidate and require identical-input H0 statistic bytes"),
-        ("apply", "write named live files, heartbeat KAIROS, and require a bit-exact postcheck"),
-        ("abort", "abort a pre-apply transaction only if the live corpus is unchanged"),
-        ("recover", "release a recovery lease only after a complete live postcheck"),
-        ("transaction", "show one transaction state and journal"),
-    ):
-        command = sub.add_parser(name, help=help_text)
-        command.add_argument("transaction_id")
+    if "guard-reframe" not in sub.choices:
+        command = sub.add_parser("guard-reframe", help="return an idle Guardian session to HYPOTHESIS or MAP without rewriting history")
+        command.add_argument("guardian_id")
+        command.add_argument("--target", required=True, choices=("HYPOTHESIS", "MAP"))
+        command.add_argument("--reason", required=True)
+        command.add_argument("--memory-ref", action="append", required=True)
 
-    stale_abort = sub.add_parser(
-        "stale-abort",
-        help="release a pre-apply stale checkout only after exact current-package and live-scope verification",
-    )
-    stale_abort.add_argument("transaction_id")
-    stale_abort.add_argument("--expected-current-package-sha256", required=True)
+    if "guard-patch-close" not in sub.choices:
+        command = sub.add_parser("guard-patch-close", help="close a fully consumed multi-transaction patch session and bind its final verified heartbeat")
+        command.add_argument("guardian_id")
+        command.add_argument("--state-ticket", required=True)
 
-    authority_recover = sub.add_parser(
-        "authority-recover",
-        help="terminalize one explicitly authorized lease-less pre-apply checkout without adopting live bytes",
-    )
-    authority_recover.add_argument("transaction_id")
-    authority_recover.add_argument("--decision-id", required=True)
-    authority_recover.add_argument("--decision-sha256", required=True)
-    authority_recover.add_argument("--exception-report-id", required=True)
-    authority_recover.add_argument("--exception-report-sha256", required=True)
-    authority_recover.add_argument("--blocker-report-id", required=True)
-    authority_recover.add_argument("--blocker-report-sha256", required=True)
-    authority_recover.add_argument("--expected-current-package-sha256", required=True)
-    authority_recover.add_argument("--expected-sealed-package-sha256", required=True)
+    if "guard-fresh-run" not in sub.choices:
+        command = sub.add_parser("guard-fresh-run", help="close the Guardian only from a content-bound fresh-run receipt")
+        command.add_argument("guardian_id")
+        command.add_argument("--receipt-file", required=True)
+        command.add_argument("--state-ticket", required=True)
 
-    stage_authority = sub.add_parser(
-        "scientific-stage-runner-authority",
-        help="stage one verified reproducible runner as a content-addressed scientific authority",
-    )
-    stage_authority.add_argument("transaction_id")
-    stage_authority.add_argument("--decision-id", required=True)
-    stage_authority.add_argument("--expected-runner-sha256", required=True)
+    if "guard-reconcile" not in sub.choices:
+        command = sub.add_parser("guard-reconcile", help="reconcile a provable Workshop/Guardian crash window without adopting unverified bytes")
+        command.add_argument("guardian_id")
 
-    for name, help_text in (
-        ("auxiliary-verify", "verify staged process-document bytes without touching Runtime"),
-        ("auxiliary-apply", "apply verified process documents and reseal the full corpus"),
-        ("auxiliary-abort", "abort a process-document transaction while live bytes are unchanged"),
-        ("auxiliary-transaction", "show one process-document transaction"),
-    ):
-        command = sub.add_parser(name, help=help_text)
-        command.add_argument("transaction_id")
-
-    for name, help_text in (
-        ("bootstrap-apply", "apply a shadow-verified document-only bootstrap repair"),
-        ("bootstrap-abort", "abort a staged bootstrap repair while live bytes are unchanged"),
-        ("bootstrap-recover", "close a bootstrap recovery lease after exact live postcheck"),
-        ("bootstrap-transaction", "show one bootstrap repair transaction"),
-    ):
-        command = sub.add_parser(name, help=help_text)
-        command.add_argument("transaction_id")
-
-    authority_checkout = sub.add_parser(
-        "authority-checkout",
-        help="stage an explicit compiler-backed authority migration from an isolated candidate tree",
-    )
-    authority_checkout.add_argument("--candidate-root", required=True)
-    authority_checkout.add_argument("--compile-commands", required=True)
-    authority_checkout.add_argument("--purpose", required=True)
-    for name, help_text in (
-        ("authority-prepare", "prepare reviewed candidate code/document/build authority"),
-        ("authority-verify", "verify the candidate authority in an isolated KAIROS/Workshop shadow"),
-        ("authority-apply", "atomically apply the verified authority migration and reseal"),
-        ("authority-abort", "abort a pre-apply authority migration while live bytes remain sealed"),
-        ("authority-transaction", "show one authority migration state and journal"),
-    ):
-        command = sub.add_parser(name, help=help_text)
-        command.add_argument("transaction_id")
-
-    sub.add_parser("acl-plan", help="show the OS boundary required to make workshop-only writes enforceable")
     return parser
 
 
-def _acl_plan(engine: WorkshopEngine) -> dict[str, Any]:
-    config = engine.config
-    return {
-        "schema": "runtime-sync-acl-plan/v1",
-        "applied": False,
-        "reason": "ACL changes are deliberately not automatic; apply them only after naming a dedicated service identity and recovery principal.",
-        "required_boundary": {
-            "read_only_for_normal_agents": [
-                str(config.runtime_root),
-                str(config.blueprint_root),
-                str(config.managed_blueprint_root),
-            ],
-            "write_allowed_for_workshop_service_only": [
-                str(config.runtime_root),
-                str(config.blueprint_root),
-                str(config.managed_blueprint_root),
-                str(config.state_directory),
-                str(config.transaction_directory),
-            ],
-            "kairos_database": "Never grant direct SQL write authority to the workshop; KAIROS heartbeat remains the sole projection writer.",
-            "recovery": "Retain one separately authenticated administrator/recovery principal.",
-        },
-        "logical_guard_active_now": "Every checkout binds a full package seal; drift blocks prepare, verify, apply, abort, and recovery.",
-    }
+def _scope_file(path: str) -> dict | None:
+    value = str(path or "").strip()
+    if not value:
+        return None
+    payload = json.loads(Path(value).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise WorkshopError("GUARDIAN_SCOPE_SCHEMA_INVALID", "scope file must contain a JSON object")
+    return payload
 
 
-def execute(arguments: argparse.Namespace) -> dict[str, Any]:
+def _require_guardian_checkout(engine: WorkshopEngine, arguments: argparse.Namespace) -> tuple[str, str]:
+    required = guardian_required(engine.config.raw)
+    guardian_id = str(getattr(arguments, "guardian", "") or "").strip()
+    ticket = str(getattr(arguments, "guardian_state_ticket", "") or "").strip()
+    if required and not guardian_id:
+        raise WorkshopError("GUARDIAN_REQUIRED", "this checkout requires --guardian after PROVE")
+    if guardian_id and not ticket:
+        raise WorkshopError("GUARDIAN_MEMORY_GATE_MISSING", "guarded checkout requires --guardian-state-ticket from guard-enter PATCH")
+    return guardian_id, ticket
+
+
+def execute(arguments: argparse.Namespace) -> dict:
     engine = WorkshopEngine(Path(arguments.config))
-    bootstrap = BootstrapRepair(engine)
-    auxiliary = AuxiliaryDocumentTransaction(engine)
-    authority = AuthorityMigration(engine)
-    source_set = UniversalSourceSetMigration(engine)
+    guard = engine.guardian()
     command = arguments.command
-    if command == "status":
-        return engine.status()
-    if command == "manifest":
-        return build_corpus_manifest(engine.config)
-    if command == "seal":
-        return engine.seal()
-    if command == "bootstrap-stage":
-        return bootstrap.stage()
+
+    if command == "guard-start":
+        return guard.start(
+            problem=arguments.problem,
+            memory_file=Path(arguments.memory_file),
+            memory_selectors=arguments.memory_ref,
+            package_sha256=engine._verified_package(require_seal=True),
+        )
+    if command == "guard-enter":
+        return guard.enter_state(
+            arguments.guardian_id,
+            step=arguments.step,
+            memory_selectors=arguments.memory_ref,
+            package_sha256=engine._verified_package(require_seal=True),
+        )
+    if command == "guard-step":
+        return guard.advance(
+            arguments.guardian_id,
+            step=arguments.step,
+            summary=arguments.summary,
+            state_ticket_id=arguments.state_ticket,
+            evidence_refs=arguments.evidence,
+            package_sha256=engine._verified_package(require_seal=True),
+            sources=arguments.source,
+            scope_contract=_scope_file(getattr(arguments, "scope_file", "")),
+        )
+    if command == "guard-status":
+        return guard.status(arguments.guardian_id, full=arguments.full)
+    if command == "guard-reframe":
+        return guard.reframe(
+            arguments.guardian_id,
+            target=arguments.target,
+            reason=arguments.reason,
+            memory_selectors=arguments.memory_ref,
+            package_sha256=engine._verified_package(require_seal=True),
+        )
+    if command == "guard-patch-close":
+        return guard.patch_close(
+            arguments.guardian_id,
+            state_ticket_id=arguments.state_ticket,
+            package_sha256=engine._verified_package(require_seal=True),
+        )
+    if command == "guard-fresh-run":
+        return guard.fresh_run(
+            arguments.guardian_id,
+            receipt_file=Path(arguments.receipt_file),
+            state_ticket_id=arguments.state_ticket,
+            package_sha256=engine._verified_package(require_seal=True),
+        )
+    if command == "guard-reconcile":
+        return engine.guardian_reconcile(arguments.guardian_id)
+
     if command == "checkout":
-        return engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test)
-    if command == "source-set-checkout":
-        return source_set.checkout(purpose=arguments.purpose)
-    if command == "source-set-recover-orphan":
-        return source_set.recover_orphan_checkout(
-            arguments.transaction_id,
-            expected_sealed_package_sha256=arguments.expected_sealed_package_sha256,
-        )
-    if command == "source-set-prepare":
-        return source_set.prepare(arguments.transaction_id)
-    if command == "source-set-verify":
-        return source_set.verify(arguments.transaction_id)
-    if command == "source-set-apply":
-        return source_set.apply(arguments.transaction_id)
-    if command == "source-set-abort":
-        return source_set.abort(arguments.transaction_id)
-    if command == "source-set-transaction":
-        return source_set.transaction_status(arguments.transaction_id)
-    if command == "auxiliary-checkout":
-        return auxiliary.checkout(arguments.document, purpose=arguments.purpose)
-    if command == "prepare":
-        return engine.prepare(arguments.transaction_id)
-    if command == "scientific-baseline":
-        return engine.scientific_baseline(arguments.transaction_id)
-    if command == "scientific-reproducibility":
-        return engine.scientific_reproducibility(arguments.transaction_id)
-    if command == "scientific-stage-runner-authority":
-        return engine.scientific_stage_runner_authority(
-            arguments.transaction_id,
-            decision_id=arguments.decision_id,
-            expected_runner_sha256=arguments.expected_runner_sha256,
-        )
-    if command == "verify":
-        return engine.verify(arguments.transaction_id)
-    if command == "scientific-verify":
-        return engine.scientific_verify(arguments.transaction_id)
-    if command == "apply":
-        return engine.apply(arguments.transaction_id)
-    if command == "abort":
-        return engine.abort(arguments.transaction_id)
-    if command == "stale-abort":
-        return engine.stale_abort(
-            arguments.transaction_id,
-            expected_current_package_sha256=arguments.expected_current_package_sha256,
-        )
-    if command == "authority-recover":
-        return engine.authority_recover(
-            arguments.transaction_id,
-            decision_id=arguments.decision_id,
-            decision_sha256=arguments.decision_sha256,
-            exception_report_id=arguments.exception_report_id,
-            exception_report_sha256=arguments.exception_report_sha256,
-            blocker_report_id=arguments.blocker_report_id,
-            blocker_report_sha256=arguments.blocker_report_sha256,
-            expected_current_package_sha256=arguments.expected_current_package_sha256,
-            expected_sealed_package_sha256=arguments.expected_sealed_package_sha256,
-        )
-    if command == "recover":
-        return engine.recover(arguments.transaction_id)
-    if command == "transaction":
-        return engine.transaction_status(arguments.transaction_id)
-    if command == "bootstrap-apply":
-        return bootstrap.apply(arguments.transaction_id)
-    if command == "bootstrap-abort":
-        return bootstrap.abort(arguments.transaction_id)
-    if command == "bootstrap-recover":
-        return bootstrap.recover(arguments.transaction_id)
-    if command == "bootstrap-transaction":
-        return bootstrap.transaction_status(arguments.transaction_id)
-    if command == "auxiliary-verify":
-        return auxiliary.verify(arguments.transaction_id)
-    if command == "auxiliary-apply":
-        return auxiliary.apply(arguments.transaction_id)
-    if command == "auxiliary-abort":
-        return auxiliary.abort(arguments.transaction_id)
-    if command == "auxiliary-transaction":
-        return auxiliary.transaction_status(arguments.transaction_id)
-    if command == "authority-checkout":
-        return authority.checkout(
-            candidate_root=Path(arguments.candidate_root),
-            compile_commands=Path(arguments.compile_commands),
+        guardian_id, ticket = _require_guardian_checkout(engine, arguments)
+        return engine.checkout(
+            arguments.source,
             purpose=arguments.purpose,
+            tests=arguments.test,
+            guardian_id=guardian_id or None,
+            guardian_state_ticket=ticket or None,
         )
-    if command == "authority-prepare":
-        return authority.prepare(arguments.transaction_id)
-    if command == "authority-verify":
-        return authority.verify(arguments.transaction_id)
-    if command == "authority-apply":
-        return authority.apply(arguments.transaction_id)
-    if command == "authority-abort":
-        return authority.abort(arguments.transaction_id)
-    if command == "authority-transaction":
-        return authority.transaction_status(arguments.transaction_id)
-    if command == "acl-plan":
-        return _acl_plan(engine)
-    raise WorkshopError("COMMAND_UNKNOWN", f"unsupported command: {command}")
+
+    if command == "auxiliary-checkout":
+        guardian_id, ticket = _require_guardian_checkout(engine, arguments)
+        auxiliary = AuxiliaryDocumentTransaction(engine)
+        if not guardian_id:
+            return auxiliary.checkout(arguments.document, purpose=arguments.purpose)
+        request = {"documents": sorted(set(arguments.document))}
+        with engine.guardian_transaction(
+            guardian_id=guardian_id,
+            kind="auxiliary",
+            request=request,
+            state_ticket_id=ticket,
+        ):
+            return auxiliary.checkout(arguments.document, purpose=arguments.purpose)
+
+    if command == "source-set-checkout":
+        guardian_id, ticket = _require_guardian_checkout(engine, arguments)
+        source_set = UniversalSourceSetMigration(engine)
+        if not guardian_id:
+            return source_set.checkout(purpose=arguments.purpose)
+        status = guard.status(guardian_id, full=True)
+        request = (((status.get("patch_session") or {}).get("available") or {}).get("source_set") or {"operations": []})
+        with engine.guardian_transaction(
+            guardian_id=guardian_id,
+            kind="source_set",
+            request=request,
+            state_ticket_id=ticket,
+        ):
+            return source_set.checkout(purpose=arguments.purpose)
+
+    if command == "authority-checkout":
+        guardian_id, ticket = _require_guardian_checkout(engine, arguments)
+        authority = AuthorityMigration(engine)
+        if not guardian_id:
+            return authority.checkout(
+                candidate_root=Path(arguments.candidate_root),
+                compile_commands=Path(arguments.compile_commands),
+                purpose=arguments.purpose,
+            )
+        status = guard.status(guardian_id, full=True)
+        request = (((status.get("patch_session") or {}).get("available") or {}).get("authority") or {"add_headers": [], "remove_headers": []})
+        with engine.guardian_transaction(
+            guardian_id=guardian_id,
+            kind="authority",
+            request=request,
+            state_ticket_id=ticket,
+        ):
+            return authority.checkout(
+                candidate_root=Path(arguments.candidate_root),
+                compile_commands=Path(arguments.compile_commands),
+                purpose=arguments.purpose,
+            )
+
+    if command == "bootstrap-stage" and guardian_required(engine.config.raw):
+        raise WorkshopError(
+            "GUARDIAN_MAINTENANCE_BOUNDARY",
+            "bootstrap repair is a pre-seal maintenance path and is unavailable while Guardian enforcement is active",
+        )
+
+    return _legacy.execute(arguments)
 
 
 def main(argv: list[str] | None = None) -> int:
