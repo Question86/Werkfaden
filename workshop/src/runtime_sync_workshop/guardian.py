@@ -123,3 +123,29 @@ class InvestigationGuardian(GuardianCloseMixin, GuardianTransactionMixin, Guardi
             payload["last_step_event_hash"] = event["event_hash"]
             self._save(payload)
             return self._view(payload)
+
+    def release_transaction(self, transaction_id: str, *, state: dict[str, Any], package_sha256: str) -> dict[str, Any]:
+        result = super().release_transaction(
+            transaction_id,
+            state=state,
+            package_sha256=package_sha256,
+        )
+        if str(state.get("state")) != "ABORTED_STALE_BASELINE":
+            return result
+        guardian_id = str(result["guardian_id"])
+        with _file_lock(self._lock_path(guardian_id)):
+            payload = self._load(guardian_id)
+            session = payload.get("patch_session") or {}
+            session["status"] = "INVALIDATED_BY_DRIFT"
+            session["invalidated_at"] = utc_now()
+            payload["rolling_package_sha256"] = package_sha256
+            payload["active_gate"] = None
+            payload["current_step"] = "WORKSHOP"
+            payload["next_step"] = "REFRAME_REQUIRED"
+            self._append(payload, "PATCH_INVALIDATED", {
+                "transaction_id": transaction_id,
+                "reason": "stale baseline recovery proved that the live package changed outside the patch session",
+                "current_package_sha256": package_sha256,
+            })
+            self._save(payload)
+            return self._view(payload)
