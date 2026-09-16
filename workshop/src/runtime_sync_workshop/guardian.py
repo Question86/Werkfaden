@@ -282,9 +282,10 @@ class InvestigationGuardian:
         if payload.get("closed"):
             raise WorkshopError("GUARDIAN_CLOSED", f"guardian session is closed: {guardian_id}")
         self._assert_memory_stable(payload)
-        self._assert_package(payload, package_sha256)
 
         normalized_step = str(step).strip().upper().replace("-", "_")
+        if normalized_step in PRE_PATCH_STEPS:
+            self._assert_package(payload, package_sha256)
         if normalized_step == "PATCH":
             raise WorkshopError(
                 "GUARDIAN_PATCH_DIRECT_FORBIDDEN",
@@ -316,6 +317,7 @@ class InvestigationGuardian:
         step_record: dict[str, Any] = {
             "step": normalized_step,
             "at": utc_now(),
+            "package_sha256": package_sha256,
             "summary": summary,
             "summary_sha256": sha256_text(summary),
             "memory_refs": memory_refs_list,
