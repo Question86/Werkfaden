@@ -9,6 +9,7 @@ from typing import Any
 from .corpus import build_corpus_manifest
 from .auxiliary import AuxiliaryDocumentTransaction
 from .engine import WorkshopEngine
+from .guardian import InvestigationGuardian, guardian_required
 from .migration import AuthorityMigration
 from .repair import BootstrapRepair
 from .universal_migration import UniversalSourceSetMigration
@@ -33,10 +34,64 @@ def _parser() -> argparse.ArgumentParser:
         help="stage the verified document-only legacy repair in an isolated KAIROS shadow",
     )
 
+    guard_start = sub.add_parser(
+        "guard-start",
+        help="start one deterministic Human-problem-to-patch investigation ledger",
+    )
+    guard_start.add_argument("--problem", required=True)
+    guard_start.add_argument("--memory-file", required=True)
+    guard_start.add_argument(
+        "--memory-ref",
+        action="append",
+        required=True,
+        help="relevant canonical Memory passage/code consulted for HUMAN PROBLEM; repeatable",
+    )
+
+    guard_step = sub.add_parser(
+        "guard-step",
+        help="advance exactly one guardian state; out-of-order transitions fail closed",
+    )
+    guard_step.add_argument("guardian_id")
+    guard_step.add_argument("--step", required=True)
+    guard_step.add_argument("--summary", required=True)
+    guard_step.add_argument(
+        "--memory-ref",
+        action="append",
+        required=True,
+        help="relevant canonical Memory passage/code re-verified for this state; repeatable",
+    )
+    guard_step.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        help="evidence/receipt/graph handle supporting this state; repeatable",
+    )
+    guard_step.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="exact governed source frozen by PROVE; only meaningful for PROVE",
+    )
+
+    guard_status = sub.add_parser("guard-status", help="show one guardian state")
+    guard_status.add_argument("guardian_id")
+    guard_status.add_argument("--full", action="store_true")
+
     checkout = sub.add_parser("checkout", help="open one exclusive transaction over named governed sources")
     checkout.add_argument("--source", action="append", required=True, help="governed source path; repeatable")
     checkout.add_argument("--purpose", required=True)
     checkout.add_argument("--test", action="append", default=[], help="configured dependent test whose Runtime owner is selected")
+    checkout.add_argument(
+        "--guardian",
+        default="",
+        help="guardian session at PROVE; required when guardian_required=true",
+    )
+    checkout.add_argument(
+        "--guardian-memory-ref",
+        action="append",
+        default=[],
+        help="canonical Memory passage/code re-verified immediately before PATCH checkout",
+    )
 
     source_set_checkout = sub.add_parser(
         "source-set-checkout",
@@ -175,12 +230,46 @@ def _acl_plan(engine: WorkshopEngine) -> dict[str, Any]:
     }
 
 
+def _guardian(engine: WorkshopEngine) -> InvestigationGuardian:
+    return InvestigationGuardian(
+        state_directory=engine.config.state_directory,
+        kairos_database=engine.config.kairos_database,
+    )
+
+
+def _guardian_package(engine: WorkshopEngine) -> str:
+    status = engine.status(persist=False)
+    if not status.get("verified"):
+        raise WorkshopError(
+            "GUARDIAN_BASELINE_UNVERIFIED",
+            "guardian requires a fully verified Workshop corpus before investigation",
+            details=status.get("issues"),
+        )
+    seal = status.get("seal")
+    if not isinstance(seal, dict) or not seal.get("matches_current"):
+        raise WorkshopError(
+            "GUARDIAN_BASELINE_UNSEALED",
+            "guardian requires the current verified corpus to match the trusted Workshop seal",
+        )
+    return str(status["package_sha256"])
+
+
+def _guarded_mutation_path_block(engine: WorkshopEngine, command: str) -> None:
+    if guardian_required(engine.config.raw):
+        raise WorkshopError(
+            "GUARDIAN_MUTATION_PATH_UNSUPPORTED",
+            f"{command} is blocked while guardian_required=true; guardian v1 authorizes "
+            "exact governed-source checkout only",
+        )
+
+
 def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     engine = WorkshopEngine(Path(arguments.config))
     bootstrap = BootstrapRepair(engine)
     auxiliary = AuxiliaryDocumentTransaction(engine)
     authority = AuthorityMigration(engine)
     source_set = UniversalSourceSetMigration(engine)
+    guard = _guardian(engine)
     command = arguments.command
     if command == "status":
         return engine.status()
@@ -188,11 +277,68 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         return build_corpus_manifest(engine.config)
     if command == "seal":
         return engine.seal()
+    if command == "guard-start":
+        return guard.start(
+            problem=arguments.problem,
+            memory_file=Path(arguments.memory_file),
+            memory_refs=arguments.memory_ref,
+            package_sha256=_guardian_package(engine),
+        )
+    if command == "guard-step":
+        return guard.advance(
+            arguments.guardian_id,
+            step=arguments.step,
+            summary=arguments.summary,
+            memory_refs=arguments.memory_ref,
+            evidence_refs=arguments.evidence,
+            package_sha256=_guardian_package(engine),
+            sources=arguments.source,
+        )
+    if command == "guard-status":
+        return guard.status(arguments.guardian_id, full=arguments.full)
     if command == "bootstrap-stage":
         return bootstrap.stage()
     if command == "checkout":
-        return engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test)
+        required = guardian_required(engine.config.raw)
+        guardian_id = str(arguments.guardian or "").strip()
+        if required and not guardian_id:
+            raise WorkshopError(
+                "GUARDIAN_REQUIRED",
+                "coding is blocked: supply --guardian after completing the investigation through PROVE",
+            )
+        package_sha256 = ""
+        if guardian_id:
+            if not arguments.guardian_memory_ref:
+                raise WorkshopError(
+                    "GUARDIAN_PATCH_MEMORY_REQUIRED",
+                    "PATCH checkout requires at least one --guardian-memory-ref re-verified immediately before coding",
+                )
+            package_sha256 = _guardian_package(engine)
+            guard.assert_checkout(
+                guardian_id,
+                sources=arguments.source,
+                package_sha256=package_sha256,
+            )
+        result = engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test)
+        if guardian_id:
+            try:
+                guardian_state = guard.bind_checkout(
+                    guardian_id,
+                    transaction_id=result["transaction_id"],
+                    package_sha256=package_sha256,
+                    memory_refs=arguments.guardian_memory_ref,
+                    purpose=arguments.purpose,
+                )
+            except Exception:
+                try:
+                    engine.abort(result["transaction_id"])
+                except Exception:
+                    pass
+                raise
+            result["guardian"] = guardian_state
+        return result
     if command == "source-set-checkout":
+        _guarded_mutation_path_block(engine, command)
         return source_set.checkout(purpose=arguments.purpose)
     if command == "source-set-recover-orphan":
         return source_set.recover_orphan_checkout(
@@ -269,6 +415,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     if command == "auxiliary-transaction":
         return auxiliary.transaction_status(arguments.transaction_id)
     if command == "authority-checkout":
+        _guarded_mutation_path_block(engine, command)
         return authority.checkout(
             candidate_root=Path(arguments.candidate_root),
             compile_commands=Path(arguments.compile_commands),
