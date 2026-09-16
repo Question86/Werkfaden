@@ -156,6 +156,35 @@ class InvestigationGuardianTests(unittest.TestCase):
             self.assertEqual(bound["current_step"], "PATCH")
             self.assertEqual(bound["next_step"], "WORKSHOP")
 
+            changed_package = "d" * 64
+            workshop = guard.advance(
+                guardian_id,
+                step="WORKSHOP",
+                summary="The bound Workshop transaction completed its governed verification path.",
+                memory_refs=["MEM.WORKSHOP"],
+                evidence_refs=["TXN_0123456789abcdef01234567"],
+                package_sha256=changed_package,
+            )
+            self.assertEqual(workshop["next_step"], "HEARTBEAT")
+            heartbeat = guard.advance(
+                guardian_id,
+                step="HEARTBEAT",
+                summary="The post-patch heartbeat verified the promoted project state.",
+                memory_refs=["MEM.LOOP"],
+                evidence_refs=["HB_verified"],
+                package_sha256=changed_package,
+            )
+            self.assertEqual(heartbeat["next_step"], "FRESH_RUN")
+            closed = guard.advance(
+                guardian_id,
+                step="FRESH_RUN",
+                summary="A fresh Runtime run produced the next evidence set and closes this investigation.",
+                memory_refs=["MEM.LOOP"],
+                evidence_refs=["RUN_fresh"],
+                package_sha256=changed_package,
+            )
+            self.assertTrue(closed["closed"])
+
     def test_exact_source_requires_real_verified_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
