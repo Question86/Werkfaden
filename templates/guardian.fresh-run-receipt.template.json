@@ -1,0 +1,15 @@
+{
+  "schema": "werkfaden-fresh-run-receipt/v1",
+  "guardian_id": "GRD2_<session>",
+  "state_ticket_id": "GST_<fresh-run-memory-gate>",
+  "run_id": "RUN_<unique>",
+  "completed_at": "2026-01-01T00:00:00Z",
+  "package_sha256": "<final Workshop package sha256>",
+  "heartbeat_id": "HB_<patch-closing heartbeat>",
+  "patch_head_hash": "<Guardian head hash returned by guard-patch-close>",
+  "problem_status": "FIXED",
+  "executor": {"path": "<exact runner/executable path>", "sha256": "<sha256>"},
+  "artifacts": [{"path": "<fresh run output artifact>", "sha256": "<sha256>"}],
+  "validations": [],
+  "problem_evidence": {"criterion_id": "<active criterion>", "path": "<fresh-run evidence file>", "sha256": "<sha256>"}
+}

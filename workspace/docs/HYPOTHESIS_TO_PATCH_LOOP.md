@@ -2,80 +2,58 @@
 schema = "kairos-context/v1"
 id = "KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
-updated_at = "2026-09-15T23:12:00Z"
-capsule = "Binding loop: Human problem -> hypothesis -> two falsifiers -> map -> counterprobe -> exact source -> prove -> patch -> Workshop -> heartbeat -> fresh run, with a mandatory Memory verification gate before every state."
-claim_boundary = "This contract owns the investigation and patch sequence; it does not prove any project hypothesis, implementation fact, Runtime state, test result, or completion claim."
-entities = ["KAIROS", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "KAIROS_MEMORY_VERIFICATION_PROTOCOL", "hypothesis", "falsification", "context-map", "source-prediction", "causal-proof"]
-facets = ["investigation", "falsification", "memory-verification", "retrieval", "source-inspection", "patch-scope", "context-budget"]
+updated_at = "2026-09-16T20:00:00Z"
+capsule = "Binding investigation loop with Memory preflight before every state and a multi-transaction patch session after causal proof."
+claim_boundary = "This contract owns investigation and mutation ordering; it does not prove a hypothesis, current source bytes, Runtime outcome, test result, or completion claim."
+entities = ["KAIROS", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "Werkfaden Investigation Guardian", "patch-session", "falsification"]
+facets = ["investigation", "falsification", "memory-verification", "patch-session", "retrieval", "source-inspection"]
 criteria = []
 does_not_answer = ["current project state", "whether a hypothesis is true", "current source bytes", "whether a patch passed"]
 
 [[answers]]
 intent = "operating_rules"
 question = "What exact loop must an agent follow from a Human problem through a fresh run?"
-target = "s-state-machine"
+target = "s-loop"
 
 [[answers]]
 intent = "operating_rules"
-question = "What must the agent verify in Memory before executing any investigation state?"
-target = "s-memory-gate"
-
-[[answers]]
-intent = "research"
-question = "What must be falsified before an agent maps implementation context?"
-target = "s-falsify"
-
-[[answers]]
-intent = "retrieval"
-question = "In which order should an agent acquire implementation context?"
-target = "s-map"
+question = "What must happen before each Guardian state executes?"
+target = "s-preflight"
 
 [[answers]]
 intent = "validation"
-question = "What must be proven before an agent may patch source?"
+question = "What must be proven before a patch session may open?"
 target = "s-prove"
 
-[refs]
-memory_protocol = "[ref:docs/MEMORY_VERIFICATION_PROTOCOL.md#s-zero-guess|id:KAIROS_MEMORY_VERIFICATION_PROTOCOL|v:1|rel:requires|tags:memory,verification,no-guess|src:declared]"
-axiom_atlas = "[ref:docs/AXIOM_RUNTIME_ATLAS.md#s-overview|id:AXIOM_RUNTIME_ATLAS|v:1|rel:references|tags:axiom,runtime,architecture|src:declared]"
-router = "[ref:NEURAL_CORTEX.md#s-orientation|id:KAIROS_NEURAL_CORTEX|v:dynamic|rel:references|tags:orientation,router|src:system]"
-
-[[search_contract]]
-query = "What exact loop must an agent follow from a Human problem through a fresh run?"
-expected = "KAIROS_HYPOTHESIS_TO_PATCH_LOOP#s-state-machine"
-required_top_k = 3
-
-[[search_contract]]
-query = "What must the agent verify in Memory before executing any investigation state?"
-expected = "KAIROS_HYPOTHESIS_TO_PATCH_LOOP#s-memory-gate"
-required_top_k = 3
+[[answers]]
+intent = "mutation"
+question = "Can one proven patch use multiple Workshop transactions?"
+target = "s-patch-session"
 +++
 # Hypothesis-to-Patch Loop
 
 ## CONTEXT INDEX
 
-- [`s-state-machine`](#s-state-machine) — The loop is fixed: Human problem -> hypothesis -> two falsifiers -> map -> counterprobe -> exact source -> prove -> patch -> Workshop -> heartbeat -> fresh run.
-- [`s-memory-gate`](#s-memory-gate) — Before every state, intercept every would-be guess/inference and verify the relevant canonical Memory passage; remembered context does not count.
-- [`s-frame`](#s-frame) — Convert Human input into one explicit falsifiable problem hypothesis before implementation discovery.
-- [`s-falsify`](#s-falsify) — Two independent probes must support the hypothesis before implementation mapping begins.
-- [`s-map`](#s-map) — Acquire context from semantic architecture to run evidence to graph to implementation documents before source bytes.
-- [`s-counterprobe`](#s-counterprobe) — Try to prove the captured causal surface incomplete before exact source inspection.
-- [`s-exact-source`](#s-exact-source) — Predict and inspect only the exact source lines needed to test the bounded hypothesis.
-- [`s-prove`](#s-prove) — No patch exists until observation, violated invariant, causal owner, and exact affected scope are evidenced.
-- [`s-patch-run`](#s-patch-run) — Apply only the smallest general repair through Workshop, heartbeat it, run fresh, and restart from the top.
-- [`s-context-budget`](#s-context-budget) — Route before reading; raw shell output is bounded evidence and never the default discovery mechanism.
+- [`s-loop`](#s-loop) — Human problem through fresh run is one fixed evidence-first loop.
+- [`s-preflight`](#s-preflight) — Every state starts with `guard-enter`, which returns the relevant canonical Memory passages before the state action occurs.
+- [`s-hypothesis`](#s-hypothesis) — One explicit falsifiable hypothesis is formed from verified prerequisites.
+- [`s-falsifiers`](#s-falsifiers) — Semantic authority and structural graph evidence independently attack the hypothesis.
+- [`s-map`](#s-map) — Context narrows from architecture/evidence/graph to implementation docs and only then source.
+- [`s-counterprobe`](#s-counterprobe) — A negative completeness probe attacks the proposed causal surface.
+- [`s-source`](#s-source) — Exact source is predicted and inspected through the state-bound source policy.
+- [`s-prove`](#s-prove) — Observation, violated invariant, causal owner and exact mutation scope gate patching.
+- [`s-patch-session`](#s-patch-session) — One proof may authorize TX1..TXn without allowing scope growth or source reopening.
+- [`s-close`](#s-close) — Real Workshop postchecks/heartbeat and a content-bound fresh run close the investigation.
 
-<a id="s-state-machine"></a>
-## CLOSED STATE MACHINE
+<a id="s-loop"></a>
+## CLOSED LOOP
 
-> Capsule: The loop is fixed: Human problem -> hypothesis -> two falsifiers -> map -> counterprobe -> exact source -> prove -> patch -> Workshop -> heartbeat -> fresh run.
-
-The only permitted material problem-solving sequence is:
+> Capsule: Human problem through fresh run is one fixed evidence-first loop.
 
 ```text
 HUMAN PROBLEM
@@ -86,197 +64,139 @@ HUMAN PROBLEM
 -> COUNTERPROBE
 -> EXACT SOURCE
 -> PROVE
--> PATCH
--> WORKSHOP
--> HEARTBEAT
+-> PATCH SESSION
+     -> TX1 .. TXn
+-> HEARTBEAT / PATCH CLOSE
 -> FRESH RUN
--> RETURN TO HUMAN PROBLEM / HYPOTHESIS FROM FRESH EVIDENCE
+-> RETURN TO TOP FROM FRESH EVIDENCE
 ```
 
-Before every arrow is crossed, execute the Memory gate below.
+No later state may be entered early. A failed falsifier or newly discovered owner returns to `HYPOTHESIS` or `MAP`; it never grants a larger read or larger patch.
 
-No state may be skipped. A failed gate returns to the nearest earlier reasoning state. Failure never licenses a broader raw read, a speculative conclusion, a larger patch, or a shortcut around missing evidence.
+<a id="s-preflight"></a>
+## MEMORY PREFLIGHT BEFORE ACTION
 
-<a id="s-memory-gate"></a>
-## MANDATORY MEMORY GATE BEFORE EVERY STATE
+> Capsule: Every state starts with `guard-enter`, which returns the relevant canonical Memory passages before the state action occurs.
 
-> Capsule: Before every state, intercept every would-be guess/inference and verify the relevant canonical Memory passage; remembered context does not count.
-
-The agent's default response to uncertainty is verification, not inference.
-
-Before executing any state:
+The Memory rule is temporal: verification must occur **before** the model performs the state action.
 
 ```text
-1. State what project-specific fact(s) the next action depends on.
-2. Identify any fact that is currently only remembered, assumed, inferred, likely, or guessed.
-3. Convert each such fact into one explicit verification question.
-4. Query the smallest relevant passage of the Human-authored canonical Memory.
-5. Classify the result:
-     VERIFIED_MEMORY
-     VERIFIED_LIVE
-     HYPOTHESIS
-     UNRESOLVED
-6. If Memory says the fact is live/changeable, verify the named live authority.
-7. Execute the state only when every prerequisite fact is verified or explicitly retained as a hypothesis that the state is designed to falsify.
+guard-enter STATE
+-> Guardian resolves configured state-relevant Memory selectors
+-> exact passage bytes are hashed and returned as memory_context
+-> Guardian issues GST_<state-ticket>
+-> model performs only that state's action/query
+-> resulting receipts/evidence are bound to that ticket
+-> guard-step / checkout / close consumes the same ticket
 ```
 
-Hard rule:
+A project-specific fact that would otherwise be guessed, inferred, assumed or remembered becomes a verification question. Remembered conversation context is not verification. If Memory says a fact is live-owned, the named live authority must be checked.
 
-```text
-WOULD-BE GUESS OR INFERENCE
--> MEMORY QUESTION
--> RELEVANT PASSAGE
--> VERIFICATION STATUS
--> ACTION
-```
+<a id="s-hypothesis"></a>
+## HYPOTHESIS
 
-Never:
+> Capsule: One explicit falsifiable hypothesis is formed from verified prerequisites.
 
-```text
-WOULD-BE GUESS
--> plausible conclusion
--> code search / patch
-```
+After `guard-enter HYPOTHESIS`, record a structured hypothesis containing:
 
-For project-specific facts, guessing must trend to zero and silent inference must trend to zero. The model may reason about evidence, but it may not manufacture missing project facts by connecting unverified gaps. If a conclusion requires an unstated edge, owner, stage, file responsibility, Runtime relation, or rule, verify that missing fact first.
-
-The detailed Memory access and escalation rules are owned by `KAIROS_MEMORY_VERIFICATION_PROTOCOL`.
-
-<a id="s-frame"></a>
-## HUMAN PROBLEM -> HYPOTHESIS
-
-> Capsule: Convert Human input into one explicit falsifiable problem hypothesis before implementation discovery.
-
-After the Memory gate, record exactly:
-
-1. Human observation/request;
+1. Human observation;
 2. expected invariant;
-3. suspected violation;
-4. expected architecture owner;
-5. evidence that would refute the hypothesis.
+3. suspected mechanism;
+4. expected owner;
+5. evidence that would refute it.
 
-The hypothesis must be narrow enough to be wrong. It is `HYPOTHESIS`, not fact. Do not inspect source yet.
+The hypothesis is not a project fact and cannot authorize source inspection or mutation.
 
-<a id="s-falsify"></a>
+<a id="s-falsifiers"></a>
 ## TWO INDEPENDENT FALSIFIERS
 
-> Capsule: Two independent probes must support the hypothesis before implementation mapping begins.
+> Capsule: Semantic authority and structural graph evidence independently attack the hypothesis.
 
-Perform the Memory gate before each falsifier.
+**FALSIFIER 1 — semantic / authority.** Ask which current contract, invariant or authority would have to permit/forbid/constrain the suspected behavior.
 
-**Falsifier 1 — semantic / authority**
+**FALSIFIER 2 — structural / graph.** Ask which owner, producer/consumer relation, dependency or evidence route must exist if the mechanism is structurally possible.
 
-Ask which current contract, invariant, or architecture authority would have to define, permit, forbid, or constrain the suspected behavior if the hypothesis were correct.
-
-**Falsifier 2 — structural / graph**
-
-Ask which declared owner, producer/consumer relation, dependency, call, evidence route, or Runtime path would have to exist if the suspected mechanism were structurally possible.
-
-The two probes must be orthogonal. Rephrasing the same search twice does not count.
-
-Continue only if both support the same hypothesis. If either contradicts or fails to establish the expected condition, return to `HYPOTHESIS` and reformulate from verified evidence.
+The receipts must be independent. Reusing the same query/receipt does not count. Stale, unscoped, truncated, unbound or unresolved evidence cannot advance the state.
 
 <a id="s-map"></a>
 ## MAP
 
-> Capsule: Acquire context from semantic architecture to run evidence to graph to implementation documents before source bytes.
+> Capsule: Context narrows from architecture/evidence/graph to implementation docs and only then source.
 
-After the Memory gate, map only the implementation surface implicated by the hypothesis that survived both falsifiers.
-
-Use this information-efficient order:
+Use the smallest authority surface in this order:
 
 ```text
-semantic responsibility / AX.RT.*
--> current run-derived evidence when execution participation matters
+semantic responsibility / stable architecture
+-> current run evidence when participation matters
 -> smallest typed graph neighbourhood
 -> exact implementation-document sections
--> expected source owners
+-> predicted source owners
 ```
 
-Choose the query that removes the most remaining explanations with the least returned context. Source bytes are high-volume evidence and therefore come late.
-
-Output a bounded map: semantic stage(s), relevant observed run stage/artifact(s), graph nodes/edges, implementation document sections, expected source owners.
+MAP freezes the expected source/structural surface that later PROVE may not silently exceed.
 
 <a id="s-counterprobe"></a>
 ## COUNTERPROBE
 
-> Capsule: Try to prove the captured causal surface incomplete before exact source inspection.
+> Capsule: A negative completeness probe attacks the proposed causal surface.
 
-Perform the Memory gate, then explicitly challenge the map:
+Challenge the map: if it is complete, there must not be another relevant producer, consumer, owner, bypass or alternate path outside it. Prefer graph/metadata evidence; exact source negative proof is admitted only during the COUNTERPROBE state gate. Any surprise returns to MAP.
 
-```text
-If this captured context is complete, there must not be another relevant
-producer, consumer, implementation owner, bypass, alternate path, or
-matching exact-literal location outside it.
-```
-
-Use one bounded negative probe. Prefer graph traversal. Use `rg -l` only for an exact literal in an already-bounded filesystem scope.
-
-Unexpected relevant branch -> `MAP` again.
-No competing branch established -> `EXACT SOURCE`.
-
-Do not append surprise scope opportunistically.
-
-<a id="s-exact-source"></a>
+<a id="s-source"></a>
 ## EXACT SOURCE
 
-> Capsule: Predict and inspect only the exact source lines needed to test the bounded hypothesis.
+> Capsule: Exact source is predicted and inspected through the state-bound source policy.
 
-Perform the Memory gate, including the source-escalation and bounded-read rules.
+Before source bytes, predict exact file, symbol/section, expected defect signature and legitimate refuting shape. Under Guardian enforcement, the supported KAIROS source-permit/source-search API refuses ordinary exact-source escalation unless the active gate is `EXACT_SOURCE`; exception permits are not admissible as proof.
 
-Before reading source, predict:
-
-- exact file;
-- exact symbol / indexed section;
-- expected relation to the mapped mechanism;
-- concrete defect signature if the hypothesis is true;
-- concrete legitimate implementation shape if it is false.
-
-Then inspect only the governed source lines needed to test that prediction through the existing source-permit/source-search path.
-
-Do not use source as discovery material after the map is already bounded.
+Accepted SIR evidence must be current, task/criterion aligned, state-ticket bound, stable, non-truncated and created after the state Memory preflight. Exact matches create bounded edit windows used later by the Workshop guard.
 
 <a id="s-prove"></a>
 ## PROVE
 
-> Capsule: No patch exists until observation, violated invariant, causal owner, and exact affected scope are evidenced.
+> Capsule: Observation, violated invariant, causal owner and exact mutation scope gate patching.
 
-Perform the Memory gate, especially the relevant invariant, no-guess rule, and general-solution contract.
-
-A patch may begin only when all four are verified:
+A patch session may open only when all are evidenced:
 
 1. observed defect/mismatch;
 2. violated invariant/contract;
 3. causal implementation owner/mechanism;
-4. exact affected implementation scope.
+4. exact affected mutation scope;
+5. why the proposed repair is the smallest general mechanism correction.
 
-The evidence must establish why the identified mechanism causes the observation, why the intended correction repairs the general mechanism rather than one dataset/scenario, and why no required owner remains outside the bounded scope.
+The scope can explicitly include normal sources/headers/tests, auxiliary authority documents, static source-set operations and C-family header-authority operations. Missing scope is unresolved evidence, not permission to widen later.
 
-Any missing link is `UNRESOLVED`, not an invitation to infer it. Return to `MAP`, `COUNTERPROBE`, or `HYPOTHESIS` as appropriate.
+<a id="s-patch-session"></a>
+## PATCH SESSION — TX1..TXn
 
-<a id="s-patch-run"></a>
-## PATCH -> WORKSHOP -> HEARTBEAT -> FRESH RUN
+> Capsule: One proof may authorize TX1..TXn without allowing scope growth or source reopening.
 
-> Capsule: Apply only the smallest general repair through Workshop, heartbeat it, run fresh, and restart from the top.
+`PATCH != TX`.
 
-Perform the Memory gate separately before `PATCH`, `WORKSHOP`, `HEARTBEAT`, and `FRESH RUN`.
+PROVE opens one patch contract with `available` and `consumed` scope plus a rolling package identity. Before **each** transaction, run `guard-enter PATCH`; only then may the Workshop create the transaction work tree.
 
-**PATCH** — freeze the proven scope. Repair only the smallest general mechanism. No dataset/lane special case, opportunistic refactor, or silent scope widening. New evidence that invalidates scope aborts the patch and returns to `MAP`.
+Rules:
 
-**WORKSHOP** — use the existing governed isolated/shadow/verify/test/apply procedure exactly as owned by the local Workshop rules. This supplemental document does not replace them.
+- one active TX at a time;
+- TX(n+1) waits for TX(n) to terminalize;
+- successful `POSTCHECK_VERIFIED` consumes only its actual proven direct scope and advances the rolling package hash;
+- abort/rollback consumes nothing;
+- consumed scope cannot be reopened under the same proof;
+- source/header/test edits outside exact-source inspected windows fail before live apply;
+- deterministic regenerated ledgers/topology/projection files are derived mutation and remain work-package hashed;
+- new causal scope requires `guard-reframe` to MAP/HYPOTHESIS, not an opportunistically wider transaction.
 
-**HEARTBEAT** — promote/reconcile the bounded work and verify receipts, coverage, state, and required postchecks. A passing subcheck proves only its own boundary.
+<a id="s-close"></a>
+## PATCH CLOSE, HEARTBEAT, FRESH RUN
 
-**FRESH RUN** — execute the real Runtime again. The fresh artifacts become the next observation authority. Do not continue from the previous debugging narrative as though it were still current. Re-enter the relevant Memory rules/topology, inspect fresh evidence, and form the next hypothesis from the top.
+> Capsule: Real Workshop postchecks/heartbeat and a content-bound fresh run close the investigation.
 
-<a id="s-context-budget"></a>
-## CONTEXT-BUDGET DISCIPLINE
+When all proven scope is consumed, `guard-enter HEARTBEAT` precedes patch close. `guard-patch-close` validates the real final `POSTCHECK_VERIFIED` transaction and its exact verified Workshop heartbeat; model-supplied completion prose is not evidence.
 
-> Capsule: Route before reading; raw shell output is bounded evidence and never the default discovery mechanism.
+Then `guard-enter FRESH_RUN` occurs **before** the real Runtime execution. `guard-fresh-run` accepts only a content-bound receipt tied to the final package, closing heartbeat, Guardian state ticket/head, executor, artifacts, active-criterion problem evidence and any project-required validation receipts.
 
-1. Ask the smallest precise question first. Graph resolves structure; search resolves governed prose questions; governed source-search resolves exact bytes.
-2. Routine whole-file dumps of governed Memory, Markdown, or source are forbidden for discovery. Do not use `Get-Content`, `cat`, `type`, `ReadAllText`, or equivalents to compensate for an unresolved question.
-3. `rg` is a scalpel, not a context loader: use it only for exact-location/completeness work in an already-bounded scope. Prefer `rg -l` when only containing files matter.
-4. If evidence is insufficient, sharpen the Memory/Werkfaden question or follow a typed relation. Do not increase output until the whole file is in context.
-5. Do not repeat materially identical searches without new evidence or a changed question.
-6. Once `PROVE` closes the causal scope, stop searching. Patch the proven mechanism or return to an earlier state if new evidence invalidates the proof.
+Fresh-run outcome may be `FIXED`, `STILL_PRESENT` or `INCONCLUSIVE`. In every case the old investigative frontier closes and the next investigation starts from fresh evidence at the top.
+
+## CONTEXT DISCIPLINE
+
+Graph resolves structure. Search resolves governed questions. Source-search resolves exact bytes. Whole-file reads and broad grep are not uncertainty-management strategies. Once PROVE closes causal scope, stop searching; either patch that proof or reframe it.

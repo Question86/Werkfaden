@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_AGENT_ENTRYPOINT"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_AGENT_ENTRYPOINT"
-updated_at = "2026-09-16T12:35:00Z"
-capsule = "Single entry point for a fresh coding agent: bind the canonical Memory, enter the deterministic Guardian, verify relevant Memory passages, then remain inside the hypothesis-to-fresh-run loop."
-claim_boundary = "This entrypoint starts the operating method. It does not prove project state, architecture, implementation, Runtime behavior, or completion."
-entities = ["KAIROS_AGENT_ENTRYPOINT", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "KAIROS_MEMORY_VERIFICATION_PROTOCOL", "AXIOM_RUNTIME_ATLAS", "Werkfaden Investigation Guardian"]
-facets = ["entrypoint", "bootstrap", "memory-verification", "investigation-loop", "guardian"]
+updated_at = "2026-09-16T20:00:00Z"
+capsule = "Fresh-agent entrypoint: bind canonical Memory, start Guardian, perform state Memory preflight before every action, and remain inside the evidence-to-patch-session loop."
+claim_boundary = "This entrypoint starts the operating method; it does not prove live project state, architecture, implementation, Runtime behavior, or completion."
+entities = ["KAIROS_AGENT_ENTRYPOINT", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "KAIROS_MEMORY_VERIFICATION_PROTOCOL", "Werkfaden Investigation Guardian"]
+facets = ["entrypoint", "bootstrap", "memory-verification", "guardian", "patch-session"]
 criteria = []
 does_not_answer = ["current project state", "current source bytes", "whether a hypothesis is true"]
 
@@ -22,89 +22,91 @@ target = "s-start"
 
 [[answers]]
 intent = "operating_rules"
-question = "What is the mandatory loop after startup?"
-target = "s-loop"
-
-[[answers]]
-intent = "operating_rules"
-question = "What mechanically gates coding after the investigation loop?"
+question = "What mechanically gates every investigation state and coding transaction?"
 target = "s-guardian"
-
-[refs]
-memory_protocol = "[ref:docs/MEMORY_VERIFICATION_PROTOCOL.md#s-zero-guess|id:KAIROS_MEMORY_VERIFICATION_PROTOCOL|v:1|rel:requires|tags:memory,verification,no-guessing|src:declared]"
-loop = "[ref:docs/HYPOTHESIS_TO_PATCH_LOOP.md#s-state-machine|id:KAIROS_HYPOTHESIS_TO_PATCH_LOOP|v:1|rel:requires|tags:investigation,falsification,patch|src:declared]"
-atlas = "[ref:docs/AXIOM_RUNTIME_ATLAS.md#s-overview|id:AXIOM_RUNTIME_ATLAS|v:1|rel:references|tags:architecture,axiom,runtime|src:declared]"
-
-[[search_contract]]
-query = "How must a fresh agent start work in this workspace?"
-expected = "KAIROS_AGENT_ENTRYPOINT#s-start"
-required_top_k = 1
 +++
 # START HERE — FRESH AGENT ENTRYPOINT
 
 ## CONTEXT INDEX
 
-- [`s-start`](#s-start) — Bind the exact canonical Memory file supplied by the Human, then load only the relevant passages before doing anything material.
-- [`s-zero-guess`](#s-zero-guess) — Any fact the agent would otherwise guess, infer, assume, or remember must first be checked against the canonical Memory or the live authority named by it.
-- [`s-loop`](#s-loop) — Stay inside one closed Human-problem-to-fresh-run loop.
-- [`s-guardian`](#s-guardian) — When enabled, the Workshop Guardian records the loop in order and refuses coding checkout before PROVE.
-- [`s-first-action`](#s-first-action) — The first action is orientation and Memory verification, never source inspection or mutation.
+- [`s-start`](#s-start) — Bind exact workspace and canonical Memory authority, then start one Guardian session for the Human problem.
+- [`s-zero-guess`](#s-zero-guess) — Would-be project guesses become Memory/live-authority questions.
+- [`s-guardian`](#s-guardian) — Every state starts with `guard-enter`; every patch transaction belongs to the same proven patch session.
+- [`s-loop`](#s-loop) — Human problem through fresh run remains one closed sequence.
 
 <a id="s-start"></a>
 ## START CONTRACT
 
-> Capsule: Bind the exact canonical Memory file supplied by the Human, then load only the relevant passages before doing anything material.
+> Capsule: Bind exact workspace and canonical Memory authority, then start one Guardian session for the Human problem.
 
-A fresh agent starts with exactly two externally supplied facts:
+A fresh agent receives the workspace root, the exact Human-authored canonical Memory path, and the Human problem. Do not discover or guess the Memory path.
 
-1. the workspace root;
-2. the exact path of the Human-authored canonical KAIROS/AXIOM Memory file.
-
-Do not discover or guess the Memory path. The Human must provide it explicitly in the kickstart instruction.
-
-Before any material action:
+Before material work:
 
 1. read this entrypoint;
-2. read `docs/MEMORY_VERIFICATION_PROTOCOL.md`;
-3. read `docs/HYPOTHESIS_TO_PATCH_LOOP.md`;
-4. for AXIOM Runtime work, read only the relevant section(s) of `docs/AXIOM_RUNTIME_ATLAS.md`;
-5. resolve the relevant section(s) of the canonical Memory;
-6. if the local Workshop Guardian is enabled, start one Guardian session for the Human problem before entering `HYPOTHESIS`;
-7. only then continue with the current loop state.
+2. read `docs/MEMORY_VERIFICATION_PROTOCOL.md` and `docs/HYPOTHESIS_TO_PATCH_LOOP.md`;
+3. use `workshop/GUARDIAN.md` for the machine-enforced command contract;
+4. confirm the canonical Workshop config and Guardian Memory/state-selector authority;
+5. start exactly one Guardian session for the Human problem;
+6. call `guard-enter HYPOTHESIS` **before** framing the hypothesis;
+7. continue state by state; never read source or open a Workshop work tree early.
 
-Never read the whole canonical Memory by default. Use it as an addressable semantic kernel.
+Routine full reads of the canonical Memory are forbidden. Guardian preflight resolves only the configured passages for the next state and returns them as bounded context.
 
 <a id="s-zero-guess"></a>
 ## ZERO-GUESS ENTRY RULE
 
-> Capsule: Any fact the agent would otherwise guess, infer, assume, or remember must first be checked against the canonical Memory or the live authority named by it.
+> Capsule: Would-be project guesses become Memory/live-authority questions.
 
-Before acting on a project-specific proposition, ask:
-
-```text
-What am I about to assume?
-```
-
-If the answer contains any project-specific fact not already verified in the current step, convert that would-be assumption into an explicit verification question.
-
-Then:
+Before acting on a project-specific proposition, ask what fact the action would otherwise assume. Convert every remembered/likely/inferred project fact into a verification question. Durable rules come from the relevant Memory passage; live/current facts come from the owner named by Memory.
 
 ```text
-would-be guess / inference
--> canonical Memory lookup
--> if Memory owns the durable fact: verify the relevant passage
--> if Memory points to live authority: query that authority
--> VERIFIED or UNRESOLVED
+would-be guess
+-> guard-enter state
+-> relevant canonical Memory passage(s)
+-> live authority when required
+-> VERIFIED / HYPOTHESIS / UNRESOLVED
+-> state action
 ```
 
-`UNRESOLVED` may trigger the next query. It may not be silently promoted into architecture, cause, scope, or patch rationale.
+`HYPOTHESIS` and `UNRESOLVED` may drive the next query. They may not authorize architecture claims, causal proof, mutation scope or completion.
 
-Remembered context, conversation history, filename intuition, common software practice, and model knowledge are not substitutes for verification.
+<a id="s-guardian"></a>
+## DETERMINISTIC GUARDIAN
+
+> Capsule: Every state starts with `guard-enter`; every patch transaction belongs to the same proven patch session.
+
+The Guardian is not an LLM judge. It enforces evidence order and mutation authority.
+
+For reasoning states:
+
+```text
+guard-enter STATE
+-> Memory context + GST_<ticket>
+-> perform that state's query/reasoning
+-> guard-step STATE --state-ticket GST_<ticket>
+```
+
+Search/source receipts used by the state must be generated after and bound to that ticket. Under Guardian enforcement, supported KAIROS source-permit/source-search calls refuse early source escalation.
+
+After PROVE, one patch session may own many Workshop transactions. Before each TX:
+
+```text
+guard-enter PATCH
+-> PATCH + WORKSHOP Memory context
+-> GST_<patch-ticket>
+-> guarded checkout using same session/ticket
+-> prepare / verify / apply
+-> real terminal postcheck
+-> next PATCH ticket or HEARTBEAT when scope is exhausted
+```
+
+The patch session maintains rolling package identity plus available/consumed proven scope. A consumed file cannot be reopened under the same proof. New required scope means reframe to MAP/HYPOTHESIS.
 
 <a id="s-loop"></a>
 ## MANDATORY LOOP
 
-> Capsule: Stay inside one closed Human-problem-to-fresh-run loop.
+> Capsule: Human problem through fresh run remains one closed sequence.
 
 ```text
 HUMAN PROBLEM
@@ -115,55 +117,14 @@ HUMAN PROBLEM
 -> COUNTERPROBE
 -> EXACT SOURCE
 -> PROVE
--> PATCH
--> WORKSHOP
--> HEARTBEAT
+-> PATCH SESSION (TX1..TXn)
+-> HEARTBEAT / PATCH CLOSE
 -> FRESH RUN
--> RETURN TO TOP
+-> RETURN TO TOP FROM FRESH EVIDENCE
 ```
 
-Before every state, re-check the Memory passages relevant to that state. Do not rely on having read them earlier in the session.
+FALSIFIER 1 is semantic/authority evidence. FALSIFIER 2 is independent structural/graph evidence. Source is late. Mutation is later.
 
-The detailed gates and failure returns are owned by `docs/HYPOTHESIS_TO_PATCH_LOOP.md`.
+`guard-enter FRESH_RUN` happens before executing the real Runtime. Closure requires a content-bound fresh-run receipt tied to the final patch package and heartbeat. A `STILL_PRESENT` or `INCONCLUSIVE` result closes the old investigation just as a `FIXED` result does; the next hypothesis is formed from the fresh artifacts, not inherited narrative.
 
-<a id="s-guardian"></a>
-## DETERMINISTIC CODING GUARDIAN
-
-> Capsule: When enabled, the Workshop Guardian records the loop in order and refuses coding checkout before PROVE.
-
-The Guardian is mechanical sequence enforcement, not an LLM judge. For each state it records the state summary, the Memory passage references re-checked for that state, and the evidence handles supplied by the investigation.
-
-Its hard pre-patch properties are:
-
-1. states must be entered in the declared order;
-2. every state must name at least one relevant canonical-Memory passage/reference;
-3. `EXACT_SOURCE` must carry a real `SIR_...` receipt already verified by KAIROS;
-4. canonical Memory identity and the sealed governed package may not drift while the pre-patch investigation is open;
-5. `PROVE` freezes the exact governed source scope;
-6. normal Workshop `checkout` is refused before `PROVE` when Guardian enforcement is enabled;
-7. checkout source scope must exactly equal the scope frozen by `PROVE`;
-8. `PATCH` cannot be entered with `guard-step`; successful guarded Workshop checkout is the only transition into `PATCH`.
-
-Repository-level usage and commands are documented in `workshop/GUARDIAN.md`. The Guardian cannot prove that an LLM's semantic reasoning is true and cannot stop a process with unrestricted OS write access from bypassing Workshop entirely. Those are separate hook/ACL boundaries.
-
-<a id="s-first-action"></a>
-## FIRST ACTION
-
-> Capsule: The first action is orientation and Memory verification, never source inspection or mutation.
-
-When given a Human problem:
-
-1. identify which durable project facts you would need to assume in order to frame the problem;
-2. verify those facts against the relevant canonical Memory passages;
-3. resolve any Memory pointer that requires live authority;
-4. when Guardian enforcement is active, bind the Human problem and exact canonical Memory path with `guard-start`;
-5. frame one falsifiable hypothesis;
-6. record `HYPOTHESIS` in the Guardian and begin the two-falsifier sequence.
-
-Forbidden as a first action:
-
-- broad `Get-Content`, `cat`, `type`, or equivalent whole-file reads;
-- broad `rg` or repository grep;
-- source browsing without a mapped reason;
-- patch planning;
-- code mutation.
+The Guardian closes supported application mutation paths. It is not an OS sandbox: direct native filesystem/database writes remain owned by the Workshop security boundary, filesystem ACL/service identity, and a later model-facing hook.
