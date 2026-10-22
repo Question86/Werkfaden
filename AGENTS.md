@@ -2,13 +2,13 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_RULES"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_RULES"
-updated_at = "2026-09-09T08:45:00Z"
-capsule = "Binding operating rules for KAIROS authority, project initiation, retrieval-first context acquisition, fail-closed Workshop use, and change discipline."
+updated_at = "2026-10-22T00:00:00Z"
+capsule = "Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_RULES"]
 facets = ["operating-rules", "authority", "bootstrap", "change-discipline"]
@@ -49,17 +49,17 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Binding operating rules for KAIROS authority, project initiation, retrieval-first context acquisition, fail-closed Workshop use, and change discipline.
+- [`s-overview`](#s-overview) — Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes.
 - [`s-authority-and-placement`](#s-authority-and-placement) — Authoritative claims live in source Markdown and goal contracts. SQLite, routers, search
 - [`s-project-initiation-authority`](#s-project-initiation-authority) — For a fresh external project, Human intent comes first. A reviewed
 - [`s-mandatory-context-loop`](#s-mandatory-context-loop) — Before a project workspace exists, query the immutable framework corpus with kairos search "<question>" and no --workspace; use it to retrieve the governing KAIROS procedure instead of reconstructing rules from the directory tree. Once proj
 - [`s-fail-closed-boundaries`](#s-fail-closed-boundaries) — The harness owns document validation and deterministic promotion. The Workshop is the only
-- [`s-change-discipline`](#s-change-discipline) — Keep transactions bounded and preserve exact bytes, hashes, mappings, topology and provenance.
+- [`s-change-discipline`](#s-change-discipline) — Keep source and affected semantic Markdown in the same bounded, reviewed and verified transaction.
 
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: Binding operating rules for KAIROS authority, project initiation, retrieval-first context acquisition, fail-closed Workshop use, and change discipline.
+> Capsule: Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes.
 
 <a id="s-authority-and-placement"></a>
 ## Authority and placement
@@ -121,9 +121,18 @@ package supplies no build command, scientific domain, fixture, runner, or result
 <a id="s-change-discipline"></a>
 ## Change discipline
 
-> Capsule: Keep transactions bounded and preserve exact bytes, hashes, mappings, topology and provenance.
+> Capsule: Keep source and affected semantic Markdown in the same bounded, reviewed and verified transaction.
 
 Keep transactions bounded and preserve exact bytes, hashes, mappings, topology and provenance.
+For ordinary source patches, checkout the affected existing Markdown with repeatable `--document`
+arguments; the selected source's implementation Markdown is already included. Edit and review
+`capsule`, `answers`, `refs`, `claim_boundary` and affected sections inside the same work tree.
+Declare any additional context scope through `include-documents`, complete the document review,
+and rerun preparation and verification. Preserve meaningful historical pinned references. Apply
+must receive the finished source and Markdown package; the governed heartbeat projects that
+package into the database before postcheck success. Do not defer semantic maintenance to a
+post-apply edit or treat regenerated hashes as proof of semantic accuracy.
+
 Existing governed files use `checkout -> prepare -> verify -> apply`. Create/delete/rename of static-
 ecosystem sources use `source-set-checkout -> source-set-prepare -> source-set-verify -> source-set-apply`;
 the live project remains unchanged until verified apply. Candidate build/config changes and C-family

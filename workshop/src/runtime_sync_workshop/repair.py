@@ -983,7 +983,7 @@ class BootstrapRepair:
                 "mirror_manifest": str(
                     self.config.state_directory
                     / "mirrors"
-                    / f"{post['package_sha256']}.json"
+                    / f"{mirror['mirror_sha256']}.json"
                 ),
                 "counts": post["counts"],
                 "transaction_id": transaction_id,
@@ -1150,7 +1150,7 @@ class BootstrapRepair:
             "mirror_manifest": str(
                 self.config.state_directory
                 / "mirrors"
-                / f"{post['package_sha256']}.json"
+                / f"{mirror['mirror_sha256']}.json"
             ),
             "counts": post["counts"],
             "transaction_id": transaction_id,

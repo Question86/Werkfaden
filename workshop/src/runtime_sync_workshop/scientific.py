@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .corpus import WorkshopConfig
+from .context_documents import ContextDocuments
 from .util import WorkshopError, package_hash, read_json, sha256_bytes
 
 
@@ -108,6 +109,22 @@ def transaction_work_manifest(config: WorkshopConfig, root: Path, state: dict[st
             "path": str(relative),
             "sha256": sha256_bytes(raw),
             "size": len(raw),
+        }
+    for role, relative, path in ContextDocuments(config).work_files(root, state):
+        raw = path.read_bytes()
+        rows[f"{role}:{relative}"] = {
+            "role": role, "path": relative, "sha256": sha256_bytes(raw), "size": len(raw),
+        }
+    if state.get("schema") == "runtime-sync-transaction/v1":
+        # Reviews are evidence about these exact bytes, not an editable sidecar
+        # that can silently change after prepare or shadow verification.
+        review = root / "review" / "metadata_review.json"
+        if not review.is_file() or review.is_symlink() or review.stat().st_nlink != 1:
+            raise WorkshopError("WORK_FILE_INVALID", "metadata review must be a regular transaction file")
+        raw = review.read_bytes()
+        rows["review:metadata_review.json"] = {
+            "role": "review", "path": "review/metadata_review.json",
+            "sha256": sha256_bytes(raw), "size": len(raw),
         }
     ordered = [rows[key] for key in sorted(rows)]
     return {

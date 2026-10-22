@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP"
-updated_at = "2026-09-09T08:45:00Z"
-capsule = "Authoritative synchronized-change lifecycle for universal governed source, C-family headers, source-set changes, metadata, shadow verification, postcheck and authority migration."
+updated_at = "2026-10-22T00:00:00Z"
+capsule = "Authoritative synchronized-change lifecycle for governed source and reviewed Markdown context in one verified package, including shadow verification, heartbeat promotion, postcheck and authority migration."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP"]
-facets = ["workshop", "transaction", "source-set", "topology", "authority-migration"]
+facets = ["workshop", "transaction", "semantic-context", "source-set", "topology", "authority-migration"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 
@@ -40,23 +40,35 @@ intent = "source_set"
 question = "How do I create delete or rename governed source files after seal?"
 target = "s-universal-source-set-mutation"
 
+[[answers]]
+intent = "semantic_context"
+question = "How do I update Markdown context together with a code patch?"
+target = "s-semantic-context-transactions"
+
 [[search_contract]]
 query = "How do I modify governed code through the KAIROS Workshop?"
 expected = "KAIROS_WORKSHOP#s-overview"
+required_top_k = 1
+
+[[search_contract]]
+query = "How do I update Markdown context together with a code patch?"
+expected = "KAIROS_WORKSHOP#s-semantic-context-transactions"
 required_top_k = 1
 +++
 # Workshop module
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The Workshop is a fail-closed synchronizer for a separately configured codebase, its
+- [`s-overview`](#s-overview) — The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
+- [`s-semantic-context-transactions`](#s-semantic-context-transactions) — A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
 - [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) — Header-only project records are valid Workshop checkout targets and can be changed through
+- [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) — Create, delete and rename of static-ecosystem source files use a separate candidate migration.
 - [`s-authority-migration`](#s-authority-migration) — authority-checkout requires an isolated candidate project tree plus its compile_commands.json
 
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: The Workshop is a fail-closed synchronizer for a separately configured codebase, its
+> Capsule: The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
 
 The Workshop is a fail-closed synchronizer for a separately configured codebase, its
 implementation documents and its KAIROS projection. It is shipped unbound and becomes
@@ -88,6 +100,53 @@ by changed implementation documents, while derived live state and receipts remai
 `apply` backs up exact targets, writes only the selected transaction result, runs the governed
 heartbeat, verifies the complete corpus, reseals and releases the lease. A successful result
 is `POSTCHECK_VERIFIED` with a bit-exact receipt.
+
+<a id="s-semantic-context-transactions"></a>
+## Semantic context transactions
+
+> Capsule: A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
+
+An ordinary checkout always includes each selected source's implementation Markdown under
+`work/blueprints/`. Select additional affected existing workspace documents with repeatable
+`checkout --document <workspace-relative.md>` arguments. They are copied, with their exact
+baseline, into `work/documents/<workspace-relative.md>`. The agent reviews which documents are
+affected by the behavior change; the Workshop does not infer that scope from filenames or claim
+to discover every semantic dependency.
+
+Edit the code and its context together in the transaction. Review `capsule`, `answers`, `refs`,
+`claim_boundary` and the affected sections, including their capsules and context index. A new
+behavior may require new answer targets, narrower claims or revised relationships even when its
+source mapping is mechanically correct. Preserve historical revision-pinned references when they
+still describe the intended provenance; a patch does not automatically retarget all references.
+
+The existing `metadata_review` records source/implementation-document impact. Additional selected
+documents have a `document_review` at `review/context_review.json`. Every selected document needs
+an explicit `updated` or `none` decision, a reason, reviewer, review time and all five entries in
+`reviewed_fields`: `capsule`, `answers`, `refs`, `claim_boundary`, `sections`. `updated` requires a
+real semantic edit; `none` requires unchanged semantic content. Revision and timestamp changes
+alone do not count. An unchanged document can remain in scope after review without a forced
+rewrite. These records attest the review; they do not prove that an LLM's interpretation is true.
+
+If another affected document is found during work, use
+`include-documents <transaction-id> --document <path> --reason "<scope reason>"`. This binds it to
+the unchanged live baseline, preserves existing work, adds its review entry and invalidates any
+prior preparation or verification. Complete the newly included document and run `prepare` and
+`verify` again. Do not copy an extra file into the work tree as a substitute for declaring scope.
+
+`prepare` advances changed document revisions and mechanical evidence. `verify` validates the
+complete prepared document set in the isolated KAIROS shadow and binds it, with the reviews, to
+the work-package hash. `apply` backs up and writes those exact reviewed bytes together with the
+source change, then runs the governed heartbeat. The heartbeat updates the SQLite artifact
+metadata, answer handles, section search and reference/graph projections from the new Markdown.
+Postcheck and recovery include the selected documents. Editing a document or review after
+verification requires a new preparation and verification; it cannot silently change the applied
+package. No semantic rewrite is deferred until after apply.
+
+This extension edits existing managed documents. It does not create or delete documents, bypass
+source-set/authority migrations, or permit edits to generated routers, runtime documents or
+machine-owned topology authority. Select a code document through its owning `--source`, rather
+than adding `code/*.md` as a separate context document. Document-only auxiliary transactions remain
+a separate interface for their configured external process authorities.
 
 <a id="s-header-and-topology-behavior"></a>
 ## Header and topology behavior

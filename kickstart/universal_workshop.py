@@ -154,7 +154,7 @@ def _render_header_blueprint(
         {"id": "s-purpose", "title": "PURPOSE", "capsule": "Exact compiler-reached header mirror.", "content": f"The governed header file is `{relative}`."},
         {"id": "s-mapping", "title": "SOURCE MAPPING", "capsule": "The header path and exact byte facts are explicit.", "content": mapping},
         {"id": "s-ownership", "title": "COMPILED OWNERS", "capsule": "Only compiler-backed translation units reaching this header are listed.", "content": owner_rows},
-        {"id": "s-boundary", "title": "AUTHORITY BOUNDARY", "capsule": "Header membership comes from the C-family include closure, not filename inference.", "content": f"- Authority: `compiler_backed_include_closure`\n- SHA-256: `{sha}`"},
+        {"id": "s-boundary", "title": "AUTHORITY BOUNDARY", "capsule": "Header membership comes from the C-family include closure, not filename inference.", "content": "- Authority: `compiler_backed_include_closure`\n- Current byte hashes are owned by [SOURCE MAPPING](#s-mapping)."},
         {"id": "s-source-ledger", "title": "SOURCE LEDGER", "capsule": "Verbatim numbered header evidence.", "content": f"### HEADER {len(lines)} LINES\n~~~text\n{_ledger_rows('H', lines)}\n~~~\n\n### SOURCE 0 LINES\n~~~text\n~~~\n\nEND OF BLUEPRINT"},
     ])
 

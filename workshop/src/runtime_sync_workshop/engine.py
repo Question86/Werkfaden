@@ -38,6 +38,7 @@ from .corpus import (
     verify_project_intake_binding,
 )
 from .scientific import ScientificParityGate, transaction_work_manifest
+from .context_documents import ContextDocuments
 from .util import (
     WorkshopError,
     atomic_write_bytes,
@@ -61,6 +62,7 @@ class WorkshopEngine:
     def __init__(self, config_path: Path) -> None:
         self.config = load_config(config_path)
         self.scientific_gate = ScientificParityGate(self.config)
+        self.context_documents = ContextDocuments(self.config)
         self.config.state_directory.mkdir(parents=True, exist_ok=True)
         self.config.transaction_directory.mkdir(parents=True, exist_ok=True)
         (self.config.state_directory / "objects").mkdir(parents=True, exist_ok=True)
@@ -122,8 +124,12 @@ class WorkshopEngine:
         atomic_write_bytes(target, raw)
         return digest
 
-    def _mirror(self, manifest: dict[str, Any]) -> dict[str, Any]:
+    def _mirror(self, manifest: dict[str, Any], *, documents: Iterable[str] = ()) -> dict[str, Any]:
         objects: dict[str, str] = {}
+        for relative in documents:
+            objects[f"context:{relative}"] = self._store_object(
+                (self.config.kairos_workspace / relative).read_bytes()
+            )
         for relative in manifest["authority"].get("dependent_tests", {}):
             objects[f"dependent-test:{relative}"] = self._store_object(
                 (self.config.codebase_root / relative).read_bytes()
@@ -164,8 +170,16 @@ class WorkshopEngine:
             "objects": dict(sorted(objects.items())),
         }
         mirror["mirror_sha256"] = package_hash({"package_sha256": mirror["package_sha256"], "objects": mirror["objects"]})
-        destination = self.config.state_directory / "mirrors" / f"{manifest['package_sha256']}.json"
-        atomic_write_json(destination, mirror)
+        # Context-only transactions can leave the source corpus hash unchanged.
+        # Name snapshots by their complete object set so earlier recovery points
+        # remain immutable, including their Markdown and database snapshot.
+        destination = self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"
+        if destination.is_file():
+            previous = read_json(destination)
+            if previous.get("objects") != mirror["objects"] or previous.get("package_sha256") != mirror["package_sha256"]:
+                raise WorkshopError("MIRROR_STORE_CORRUPT", "content-addressed mirror does not match its object set")
+        else:
+            atomic_write_json(destination, mirror)
         return mirror
 
     def seal(self) -> dict[str, Any]:
@@ -181,7 +195,7 @@ class WorkshopEngine:
             "created_at": utc_now(),
             "package_sha256": manifest["package_sha256"],
             "mirror_sha256": mirror["mirror_sha256"],
-            "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{manifest['package_sha256']}.json"),
+            "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
             "counts": manifest["counts"],
             "scientific_parity": scientific_preflight,
         }
@@ -246,8 +260,12 @@ class WorkshopEngine:
         if lease.get("transaction_id") != transaction_id:
             raise WorkshopError("LEASE_OWNER_MISMATCH", f"lease belongs to {lease.get('transaction_id')}")
 
-    def checkout(self, sources: Iterable[str], *, purpose: str, tests: Iterable[str] = ()) -> dict[str, Any]:
+    def checkout(
+        self, sources: Iterable[str], *, purpose: str, tests: Iterable[str] = (),
+        documents: Iterable[str] = (),
+    ) -> dict[str, Any]:
         normalized_sources = sorted({str(value).replace("\\", "/") for value in sources})
+        selected_documents = self.context_documents.normalize(documents)
         if not normalized_sources:
             raise WorkshopError("CHECKOUT_SCOPE_EMPTY", "checkout requires at least one --source")
         if len(purpose.strip()) < 12:
@@ -277,6 +295,7 @@ class WorkshopEngine:
             "baseline": manifest["package_sha256"],
             "sources": normalized_sources,
             "dependent_tests": selected_tests,
+            "documents": selected_documents,
             "purpose": purpose.strip(),
             "created_at": created_at,
         })[:24]
@@ -328,6 +347,7 @@ class WorkshopEngine:
             review = {
                 "schema": "runtime-sync-metadata-review/v1",
                 "transaction_id": transaction_id,
+                "semantic_fields": ["capsule", "answers", "refs", "claim_boundary", "sections"],
                 "entries": review_entries,
             }
             atomic_write_json(root / "review" / "metadata_review.json", review)
@@ -344,7 +364,10 @@ class WorkshopEngine:
                 "baseline_package_sha256": manifest["package_sha256"],
                 "journal": [],
             }
-            self._save_transaction(root, state, event="CHECKOUT_COMPLETED", details={"sources": normalized_sources})
+            self.context_documents.checkout(root, state, selected_documents)
+            self._save_transaction(root, state, event="CHECKOUT_COMPLETED", details={
+                "sources": normalized_sources, "documents": selected_documents,
+            })
         except Exception:
             if self.lease_path.exists():
                 self._release_lease(transaction_id)
@@ -357,6 +380,38 @@ class WorkshopEngine:
             "metadata_review": str(root / "review" / "metadata_review.json"),
             "sources": normalized_sources,
             "dependent_tests": selected_tests,
+            "documents": selected_documents,
+            "document_review": str(root / "review" / "context_review.json") if selected_documents else None,
+        }
+
+    def include_documents(
+        self, transaction_id: str, documents: Iterable[str], *, reason: str,
+    ) -> dict[str, Any]:
+        """Expand a normal transaction's context scope without discarding its edits."""
+        root, state = self._load_transaction(transaction_id)
+        self._require_lease(transaction_id)
+        if state.get("schema") != "runtime-sync-transaction/v1" or state["state"] not in PRE_APPLY_STATES:
+            raise WorkshopError("TRANSACTION_STATE_INVALID", "document inclusion requires a pre-apply source transaction")
+        if len(reason.strip()) < 12:
+            raise WorkshopError("PURPOSE_TOO_SHORT", "document inclusion reason must contain at least 12 characters")
+        self._assert_live_baseline(state)
+        selected = self.context_documents.normalize(documents)
+        if not selected:
+            raise WorkshopError("CONTEXT_SCOPE_EMPTY", "include-documents requires at least one document")
+        added = sorted(set(selected) - set(state.get("documents", [])))
+        if added:
+            self.context_documents.checkout(root, state, added)
+            state["state"] = "CHECKED_OUT"
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow"):
+                state.pop(key, None)
+            self._save_transaction(root, state, event="CONTEXT_SCOPE_EXPANDED", details={
+                "documents": added, "reason": reason.strip(),
+            })
+        return {
+            "schema": "runtime-sync-context-inclusion/v1", "transaction_id": transaction_id,
+            "state": state["state"], "documents": state.get("documents", []), "added": added,
+            "work_directory": str(root / "work"),
+            "document_review": str(root / "review" / "context_review.json"),
         }
 
     def _assert_live_baseline(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -365,6 +420,7 @@ class WorkshopEngine:
             raise WorkshopError("LIVE_CORPUS_DRIFT", "live corpus failed verification while a transaction is open", details=current["issues"])
         if current["package_sha256"] != state["baseline_package_sha256"]:
             raise WorkshopError("LIVE_CORPUS_DRIFT", "live corpus package changed after checkout", details={"baseline": state["baseline_package_sha256"], "current": current["package_sha256"]})
+        self.context_documents.assert_baseline(self._transaction_path(state["transaction_id"]), state)
         return current
 
     def _test_changes(self, root: Path, state: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -818,10 +874,15 @@ class WorkshopEngine:
     def prepare(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load_transaction(transaction_id)
         self._require_lease(transaction_id)
-        if state["state"] not in {"CHECKED_OUT", "AWAITING_METADATA_REVIEW", "PREPARED"}:
+        if state["state"] not in PRE_APPLY_STATES:
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"prepare is not allowed from {state['state']}")
         baseline_manifest = read_json(root / "baseline" / "manifest.json")
         self._assert_live_baseline(state)
+        if state["state"] == "SHADOW_VERIFIED":
+            state["state"] = "CHECKED_OUT"
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow"):
+                state.pop(key, None)
+            self._save_transaction(root, state, event="VERIFICATION_REOPENED")
         reviews = self._review_map(root, state)
         review_blockers: list[dict[str, Any]] = []
         change_rows: list[dict[str, Any]] = []
@@ -934,12 +995,19 @@ class WorkshopEngine:
         # cannot make the transaction admissible. Staging happens only after
         # ordinary review succeeds.
         self._prepare_topology_authority(root, state, baseline_manifest, stage=False)
-        if not any(row["changed"] for row in change_rows):
-            raise WorkshopError("TRANSACTION_NO_CHANGES", "prepare found no source, header, or semantic blueprint changes")
         if review_blockers:
             state["state"] = "AWAITING_METADATA_REVIEW"
             self._save_transaction(root, state, event="METADATA_REVIEW_REQUIRED", details=review_blockers)
             raise WorkshopError("METADATA_REVIEW_REQUIRED", "prepare is blocked until metadata review is complete", details=review_blockers)
+        try:
+            document_changes = self.context_documents.prepare(root, state)
+        except WorkshopError as exc:
+            if exc.code == "CONTEXT_REVIEW_REQUIRED":
+                state["state"] = "AWAITING_METADATA_REVIEW"
+                self._save_transaction(root, state, event="CONTEXT_REVIEW_REQUIRED", details=exc.details)
+            raise
+        if not any(row["changed"] for row in change_rows) and not state.get("changed_documents"):
+            raise WorkshopError("TRANSACTION_NO_CHANGES", "prepare found no source, header, or semantic document changes")
         for source, raw in generated.items():
             name = baseline_manifest["records"][source]["blueprint"]["filename"]
             atomic_write_bytes(root / "work" / "blueprints" / name, raw)
@@ -965,9 +1033,11 @@ class WorkshopEngine:
             state,
             baseline_manifest,
         )
+        state["document_changes"] = document_changes
+        state["prepared_work_package_sha256"] = transaction_work_manifest(self.config, root, state)["package_sha256"]
         state["state"] = "PREPARED"
         self._save_transaction(root, state, event="PREPARE_COMPLETED", details=change_rows)
-        return {"schema": "runtime-sync-prepare/v1", "transaction_id": transaction_id, "state": state["state"], "changes": change_rows}
+        return {"schema": "runtime-sync-prepare/v1", "transaction_id": transaction_id, "state": state["state"], "changes": change_rows, "document_changes": document_changes}
 
     def _shadow_native(self, root: Path, state: dict[str, Any], baseline_manifest: dict[str, Any]) -> dict[str, Any]:
         shadow = root / "shadow"
@@ -1006,6 +1076,8 @@ class WorkshopEngine:
             copy_exact(current_path, shadow / "current.json")
         for relative in state.get("authority_documents", []):
             copy_exact(root / "work" / "authority" / relative, shadow / relative)
+        for relative in state.get("documents", []):
+            copy_exact(root / "work" / "documents" / relative, shadow / relative)
         entries: list[CorpusEntry] = []
         for source in state["changed_sources"]:
             name = baseline_manifest["records"][source]["blueprint"]["filename"]
@@ -1045,6 +1117,14 @@ class WorkshopEngine:
                 raise WorkshopError("SHADOW_PROMOTION_FAILED", f"shadow promotion was not verified: {name}", details=receipt)
             receipts.append(receipt)
             entries.append(shadow_entry)
+        for relative in state.get("changed_documents", []):
+            try:
+                receipt = promoter_module.promote_document(shadow / relative, shadow, database)
+            except (OSError, ValueError, promoter_module.PromotionError) as exc:
+                raise WorkshopError("SHADOW_PROMOTION_FAILED", f"context validation failed: {relative}", details=str(exc)) from exc
+            if not receipt.get("verified"):
+                raise WorkshopError("SHADOW_PROMOTION_FAILED", f"shadow context promotion was not verified: {relative}", details=receipt)
+            receipts.append(receipt)
         for header in state.get("topology_blueprints", []):
             name = baseline_manifest["records"][header]["blueprint"]["filename"]
             shadow_document = parse_blueprint(shadow / "code" / name)
@@ -1074,7 +1154,8 @@ class WorkshopEngine:
         summary, issues = verify_database_projection(self.config, entries, database_path=shadow / ".kairos" / "kairos.db")
         if issues:
             raise WorkshopError("SHADOW_PROJECTION_MISMATCH", "shadow KAIROS projection is not exact", details=issues)
-        return {"adapter": "native", "receipts": receipts, "database": summary, "compiler_include_edges": include_edge_projection, "shadow_workspace": str(shadow)}
+        context_summary = self.context_documents.verify_projection(shadow, state.get("documents", []), shadow / ".kairos" / "kairos.db")
+        return {"adapter": "native", "receipts": receipts, "database": summary, "context_documents": context_summary, "compiler_include_edges": include_edge_projection, "shadow_workspace": str(shadow)}
 
     def _shadow_fixture(self, root: Path, state: dict[str, Any], baseline_manifest: dict[str, Any]) -> dict[str, Any]:
         if not self.config.raw.get("test_mode"):
@@ -1144,6 +1225,9 @@ class WorkshopEngine:
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"verify is not allowed from {state['state']}")
         self._assert_live_baseline(state)
         baseline_manifest = read_json(root / "baseline" / "manifest.json")
+        prepared_work = transaction_work_manifest(self.config, root, state)
+        if prepared_work["package_sha256"] != state.get("prepared_work_package_sha256"):
+            raise WorkshopError("WORK_CHANGED_AFTER_PREPARE", "code, context, or review changed after prepare; run prepare again before verify")
         intake_stage = state.get("project_intake_authority")
         if isinstance(intake_stage, dict):
             staged_intake = root / "work" / "machine" / str(intake_stage.get("path", ""))
@@ -1195,6 +1279,8 @@ class WorkshopEngine:
         adapter = str(self.config.raw.get("shadow_adapter", "native"))
         shadow = self._shadow_native(root, state, baseline_manifest) if adapter == "native" else self._shadow_fixture(root, state, baseline_manifest)
         work_package = transaction_work_manifest(self.config, root, state)
+        if work_package["package_sha256"] != prepared_work["package_sha256"]:
+            raise WorkshopError("WORK_CHANGED_DURING_VERIFY", "transaction files changed during shadow verification; prepare again")
         state["state"] = "SHADOW_VERIFIED"
         state["shadow"] = shadow
         state["verified_work_package_sha256"] = work_package["package_sha256"]
@@ -1385,6 +1471,14 @@ class WorkshopEngine:
                 "backup": str(backup),
                 "sha256": sha256_bytes(live.read_bytes()),
             })
+        for relative in state.get("changed_documents", []):
+            live = self.config.kairos_workspace / relative
+            backup = root / "rollback" / "documents" / relative
+            copy_exact(live, backup)
+            rows.append({
+                "role": "context", "live": str(live), "backup": str(backup),
+                "sha256": sha256_bytes(live.read_bytes()),
+            })
         for relative in state.get("machine_authority_files", []):
             live = (self.config.machine_root / relative).resolve()
             try:
@@ -1441,7 +1535,9 @@ class WorkshopEngine:
             for header in state.get("topology_blueprints", [])
         )
         changed_managed.extend(state.get("authority_documents", []))
+        changed_managed.extend(state.get("changed_documents", []))
         changed_managed = sorted(set(changed_managed))
+        backups = self._backup_apply_targets(root, state, baseline_manifest)
         permit: dict[str, Any] | None = None
         if adapter == "native":
             runtime_state_path = self.config.kairos_workspace / ".kairos" / "runtime_state.json"
@@ -1455,7 +1551,6 @@ class WorkshopEngine:
                 reason=f"Runtime Sync Workshop {transaction_id}: {state['purpose']}",
                 ttl_seconds=1800,
             )
-        backups = self._backup_apply_targets(root, state, baseline_manifest)
         state["state"] = "APPLYING"
         state["permit"] = permit
         self._save_transaction(root, state, event="APPLY_STARTED", details={"managed_paths": changed_managed})
@@ -1484,6 +1579,8 @@ class WorkshopEngine:
                 copy_exact(root / "work" / "managed" / name, self.config.managed_blueprint_root / name)
             for relative in state.get("authority_documents", []):
                 copy_exact(root / "work" / "authority" / relative, self.config.kairos_workspace / relative)
+            for relative in state.get("changed_documents", []):
+                copy_exact(root / "work" / "documents" / relative, self.config.kairos_workspace / relative)
             for relative in state.get("machine_authority_files", []):
                 copy_exact(root / "work" / "machine" / relative, self.config.machine_root / relative)
             heartbeat_receipt: dict[str, Any]
@@ -1536,15 +1633,18 @@ class WorkshopEngine:
             for relative in state.get("machine_authority_files", []):
                 if (self.config.machine_root / relative).read_bytes() != (root / "work" / "machine" / relative).read_bytes():
                     raise WorkshopError("POSTCHECK_MACHINE_AUTHORITY_MISMATCH", f"live machine authority differs from work: {relative}")
-            mirror = self._mirror(post)
+            self.context_documents.postcheck(root, state)
+            mirror = self._mirror(post, documents=state.get("documents", []))
             seal = {
                 "schema": "runtime-sync-seal/v1",
                 "created_at": utc_now(),
                 "package_sha256": post["package_sha256"],
                 "mirror_sha256": mirror["mirror_sha256"],
-                "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{post['package_sha256']}.json"),
+                "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
                 "counts": post["counts"],
                 "transaction_id": transaction_id,
+                "context_documents": state.get("documents", []),
+                "work_package_sha256": state["verified_work_package_sha256"],
             }
             atomic_write_json(self.seal_path, seal)
             state["state"] = "POSTCHECK_VERIFIED"
@@ -1560,6 +1660,9 @@ class WorkshopEngine:
                 "postcheck_package_sha256": post["package_sha256"],
                 "heartbeat": heartbeat_receipt,
                 "bit_exact": True,
+                "context_documents": state.get("documents", []),
+                "changed_documents": state.get("changed_documents", []),
+                "work_package_sha256": state["verified_work_package_sha256"],
                 "scientific_parity": scientific_parity,
             }
             self._write_receipt("postcheck", receipt)
@@ -1572,6 +1675,19 @@ class WorkshopEngine:
                 raise WorkshopError("RECOVERY_REQUIRED", "apply crossed the heartbeat boundary and failed; lease retained", details=state["failure"]) from exc
             rollback = self._rollback_files(backups)
             if all(row.get("restored") for row in rollback):
+                if permit and adapter == "native":
+                    try:
+                        governance, _ = self._import_kairos()
+                        state["permit_revocation"] = governance.revoke_action_permit(
+                            self.config.kairos_workspace,
+                            permit_id=str(permit["permit_id"]),
+                            reason=f"Workshop {transaction_id} restored all apply targets before heartbeat; the edit permit is no longer needed.",
+                        )
+                    except Exception as revoke_error:
+                        state["state"] = "RECOVERY_REQUIRED"
+                        state["failure"] = {"code": "PERMIT_REVOCATION_FAILED", "message": str(revoke_error)}
+                        self._save_transaction(root, state, event="RECOVERY_REQUIRED", details=state["failure"])
+                        raise WorkshopError("RECOVERY_REQUIRED", "files restored but unused edit permit could not be revoked; lease retained", details=state["failure"]) from revoke_error
                 state["state"] = "ROLLED_BACK"
                 state["failure"] = {"code": getattr(exc, "code", type(exc).__name__), "message": str(exc)}
                 self._save_transaction(root, state, event="APPLY_ROLLED_BACK", details=rollback)
@@ -1798,6 +1914,8 @@ class WorkshopEngine:
             if live.read_bytes() != (root / "baseline" / relative).read_bytes():
                 raise WorkshopError(error_code, f"checked-out live test differs from baseline: {relative}")
             checked.append(str(live))
+        self.context_documents.assert_baseline(root, state)
+        checked.extend(str(self.config.kairos_workspace / relative) for relative in state.get("documents", []))
         return checked
 
     def authority_recover(
@@ -1985,6 +2103,8 @@ class WorkshopEngine:
             if live.read_bytes() != (root / "baseline" / relative).read_bytes():
                 raise WorkshopError("STALE_ABORT_LIVE_SCOPE_CHANGED", f"checked-out live test differs from baseline: {relative}")
             checked.append(str(live))
+        self.context_documents.assert_baseline(root, state)
+        checked.extend(str(self.config.kairos_workspace / relative) for relative in state.get("documents", []))
         state["state"] = "ABORTED_STALE_BASELINE"
         details = {
             "baseline_package_sha256": state["baseline_package_sha256"],
@@ -2010,7 +2130,17 @@ class WorkshopEngine:
         post = build_corpus_manifest(self.config)
         if not post["verified"]:
             raise WorkshopError("RECOVERY_STILL_BLOCKED", "live corpus is not bit-exact; lease retained", details=post["issues"])
-        if post["package_sha256"] == state["baseline_package_sha256"]:
+        baseline_restored = post["package_sha256"] == state["baseline_package_sha256"]
+        if baseline_restored:
+            # A context-only edit can leave the source corpus hash unchanged.
+            # Do not mistake successfully written context for a complete rollback.
+            try:
+                self.context_documents.assert_baseline(root, state)
+            except WorkshopError as exc:
+                if exc.code != "CONTEXT_BASELINE_CHANGED":
+                    raise
+                baseline_restored = False
+        if baseline_restored:
             permit_revocation: dict[str, Any] | None = None
             permit = state.get("permit")
             if permit and str(self.config.raw.get("shadow_adapter", "native")) == "native":
@@ -2039,6 +2169,8 @@ class WorkshopEngine:
                 "state": "ROLLED_BACK",
                 **details,
             }
+        if transaction_work_manifest(self.config, root, state)["package_sha256"] != state.get("verified_work_package_sha256"):
+            raise WorkshopError("RECOVERY_STILL_BLOCKED", "preserved work or review differs from the verified package")
         for source in state["changed_sources"]:
             record = post["records"].get(source)
             if not record:
@@ -2064,16 +2196,19 @@ class WorkshopEngine:
         for relative in state.get("machine_authority_files", []):
             if (self.config.machine_root / relative).read_bytes() != (root / "work" / "machine" / relative).read_bytes():
                 raise WorkshopError("RECOVERY_STILL_BLOCKED", f"live machine authority differs from transaction result: {relative}")
-        mirror = self._mirror(post)
+        self.context_documents.postcheck(root, state)
+        mirror = self._mirror(post, documents=state.get("documents", []))
         seal = {
             "schema": "runtime-sync-seal/v1",
             "created_at": utc_now(),
             "package_sha256": post["package_sha256"],
             "mirror_sha256": mirror["mirror_sha256"],
-            "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{post['package_sha256']}.json"),
+            "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
             "counts": post["counts"],
             "transaction_id": transaction_id,
             "recovered": True,
+            "context_documents": state.get("documents", []),
+            "work_package_sha256": state["verified_work_package_sha256"],
         }
         atomic_write_json(self.seal_path, seal)
         state["state"] = "POSTCHECK_VERIFIED"

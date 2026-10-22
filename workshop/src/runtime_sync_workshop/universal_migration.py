@@ -922,7 +922,7 @@ class UniversalSourceSetMigration:
                 "created_at": utc_now(),
                 "package_sha256": post["package_sha256"],
                 "mirror_sha256": mirror["mirror_sha256"],
-                "mirror_manifest": str(self.engine.config.state_directory / "mirrors" / f"{post['package_sha256']}.json"),
+                "mirror_manifest": str(self.engine.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
                 "counts": post["counts"],
                 "transaction_id": transaction_id,
                 "universal_source_set_migration": True,

@@ -37,6 +37,12 @@ def _parser() -> argparse.ArgumentParser:
     checkout.add_argument("--source", action="append", required=True, help="governed source path; repeatable")
     checkout.add_argument("--purpose", required=True)
     checkout.add_argument("--test", action="append", default=[], help="configured dependent test whose Runtime owner is selected")
+    checkout.add_argument("--document", action="append", default=[], help="existing governed workspace-relative Markdown context; repeatable")
+
+    include_documents = sub.add_parser("include-documents", help="add affected Markdown to a source transaction and invalidate its verification")
+    include_documents.add_argument("transaction_id")
+    include_documents.add_argument("--document", action="append", required=True)
+    include_documents.add_argument("--reason", required=True)
 
     source_set_checkout = sub.add_parser(
         "source-set-checkout",
@@ -191,7 +197,9 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     if command == "bootstrap-stage":
         return bootstrap.stage()
     if command == "checkout":
-        return engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test)
+        return engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test, documents=arguments.document)
+    if command == "include-documents":
+        return engine.include_documents(arguments.transaction_id, arguments.document, reason=arguments.reason)
     if command == "source-set-checkout":
         return source_set.checkout(purpose=arguments.purpose)
     if command == "source-set-recover-orphan":
