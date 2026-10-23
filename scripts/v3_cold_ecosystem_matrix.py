@@ -7,6 +7,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from v3_cold_bootstrap_gate import review_value_fixture
+
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
 
@@ -77,21 +79,6 @@ def snapshot(project: Path) -> dict[str, bytes]:
     }
 
 
-def approve_metadata(checkout: dict, reason: str) -> None:
-    review_path = Path(checkout["metadata_review"])
-    review = json.loads(review_path.read_text(encoding="utf-8"))
-    entries = review.get("entries", [])
-    if len(entries) != 1:
-        raise SystemExit(f"unexpected metadata review entries: {review}")
-    entries[0].update({
-        "metadata_impact": "none",
-        "reason": reason,
-        "reviewer": "v3-release-matrix",
-        "reviewed_at": "2026-09-09T00:00:00Z",
-    })
-    review_path.write_text(json.dumps(review, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
 def ordinary_roundtrip(label: str, filename: str, before: str, after: str) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"kairos-v3-matrix-{label}-") as temporary:
         root = Path(temporary)
@@ -100,7 +87,7 @@ def ordinary_roundtrip(label: str, filename: str, before: str, after: str) -> di
         project.mkdir()
         source = project / filename
         source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(before, encoding="utf-8")
+        source.write_bytes(before.encode("utf-8"))
         baseline = snapshot(project)
         spec_path = root / "spec.json"
         spec_path.write_text(json.dumps(spec(label), indent=2) + "\n", encoding="utf-8")
@@ -131,9 +118,10 @@ def ordinary_roundtrip(label: str, filename: str, before: str, after: str) -> di
         transaction_id = checkout["transaction_id"]
         work_source = Path(checkout["work_directory"]) / filename
         work_source.parent.mkdir(parents=True, exist_ok=True)
-        work_source.write_text(after, encoding="utf-8")
-        approve_metadata(checkout, f"Exact {label} byte change; no additional semantic claim is asserted")
+        work_source.write_bytes(after.encode("utf-8"))
+        review_value_fixture(config, checkout, filename, before, after)
         prepared = run_json("workshop/workshop.py", "--config", str(config), "prepare", transaction_id)
+        run_json("workshop/workshop.py", "--config", str(config), "metadata-check", transaction_id)
         verified = run_json("workshop/workshop.py", "--config", str(config), "verify", transaction_id)
         if prepared.get("state") != "PREPARED" or verified.get("state") != "SHADOW_VERIFIED":
             raise SystemExit(f"{label}: pre-apply transaction failed: {prepared} / {verified}")
@@ -159,7 +147,7 @@ def mixed_cpp_python_roundtrip() -> dict:
         cpp = project / "main.cpp"
         py = project / "helper.py"
         cpp.write_text("int main(){return 0;}\n", encoding="utf-8")
-        py.write_text("VALUE = 1\n", encoding="utf-8")
+        py.write_bytes(b"VALUE = 1\n")
         compile_commands = root / "compile_commands.json"
         compile_commands.write_text(json.dumps([{
             "directory": str(project.resolve()),
@@ -191,9 +179,10 @@ def mixed_cpp_python_roundtrip() -> dict:
             "--source", "helper.py", "--purpose", "Cold mixed C++ Python release mutation verification",
         )
         transaction_id = checkout["transaction_id"]
-        (Path(checkout["work_directory"]) / "helper.py").write_text("VALUE = 2\n", encoding="utf-8")
-        approve_metadata(checkout, "Python-only byte change leaves compiler-backed C-family claims unchanged")
+        (Path(checkout["work_directory"]) / "helper.py").write_bytes(b"VALUE = 2\n")
+        review_value_fixture(config, checkout, "helper.py", "VALUE = 1\n", "VALUE = 2\n")
         run_json("workshop/workshop.py", "--config", str(config), "prepare", transaction_id)
+        run_json("workshop/workshop.py", "--config", str(config), "metadata-check", transaction_id)
         verified = run_json("workshop/workshop.py", "--config", str(config), "verify", transaction_id)
         if verified.get("state") != "SHADOW_VERIFIED" or snapshot(project) != baseline:
             raise SystemExit("mixed: verification failed or changed live project")

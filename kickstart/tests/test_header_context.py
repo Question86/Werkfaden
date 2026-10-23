@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -15,7 +16,10 @@ WORKSHOP_SRC = ROOT / "workshop" / "src"
 if str(WORKSHOP_SRC) not in sys.path:
     sys.path.insert(0, str(WORKSHOP_SRC))
 
+from runtime_sync_workshop.blueprint import parse_blueprint  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
+from runtime_sync_workshop.util import WorkshopError  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 
 
 def _project_spec() -> dict:
@@ -92,7 +96,31 @@ class HeaderContextTests(unittest.TestCase):
             })
             review_path.write_text(json.dumps(review) + "\n", encoding="utf-8")
             transaction_id = checkout["transaction_id"]
+            # A comment-only header patch still needs a semantic header update.
+            with self.assertRaises(WorkshopError) as raised:
+                engine.prepare(transaction_id)
+            self.assertEqual(raised.exception.code, "METADATA_HEADER_UNCHANGED")
+            plan, _audit = complete_metadata_audit(engine, checkout)
+            work_doc = Path(checkout["work_directory"]) / plan["subjects"][0]["blueprint"]
+            reviewed_document = work_doc.read_bytes()
+            parsed = parse_blueprint(work_doc)
+            ownership = parsed.sections["s-ownership"]
+            section = parsed.text[ownership.start:ownership.end]
+            revised, count = re.subn(
+                r"(?m)^> Capsule:.*$",
+                "> Capsule: The compiler include graph identifies every translation unit that reaches this header.",
+                section, count=1,
+            )
+            self.assertEqual(count, 1)
+            work_doc.write_bytes((parsed.text[:ownership.start] + revised + parsed.text[ownership.end:]).encode("utf-8"))
+            # Human ownership claims remain bound even though generated owner
+            # rows may be regenerated during preparation.
+            with self.assertRaises(WorkshopError) as raised:
+                engine.prepare(transaction_id)
+            self.assertEqual(raised.exception.code, "METADATA_AUDIT_STALE")
+            work_doc.write_bytes(reviewed_document)
             engine.prepare(transaction_id)
+            engine.metadata_check(transaction_id)
             engine.verify(transaction_id)
             receipt = engine.apply(transaction_id)
             self.assertEqual(receipt["state"], "POSTCHECK_VERIFIED")

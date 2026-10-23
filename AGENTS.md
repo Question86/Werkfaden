@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_RULES"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_RULES"
-updated_at = "2026-10-22T00:00:00Z"
-capsule = "Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes."
+updated_at = "2026-10-23T00:00:00Z"
+capsule = "Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_RULES"]
-facets = ["operating-rules", "authority", "bootstrap", "change-discipline"]
+facets = ["operating-rules", "authority", "bootstrap", "change-discipline", "metadata-aftercheck"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 
@@ -38,7 +38,7 @@ target = "s-fail-closed-boundaries"
 [refs]
 bootstrap = "[ref:docs/FRAMEWORK_BOOTSTRAP.md#s-before-project-intake|id:KAIROS_FRAMEWORK_BOOTSTRAP|v:1|rel:requires|tags:bootstrap,retrieval|src:framework]"
 kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-1-project-intent-precedes-code-discovery|id:KAIROS_PROJECT_KICKSTART|v:1|rel:requires|tags:intent,kickstart|src:framework]"
-workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:1|rel:requires|tags:workshop,mutation|src:framework]"
+workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:4|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
 
 [[search_contract]]
 query = "How must an agent operate KAIROS?"
@@ -49,7 +49,7 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes.
+- [`s-overview`](#s-overview) — Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied.
 - [`s-authority-and-placement`](#s-authority-and-placement) — Authoritative claims live in source Markdown and goal contracts. SQLite, routers, search
 - [`s-project-initiation-authority`](#s-project-initiation-authority) — For a fresh external project, Human intent comes first. A reviewed
 - [`s-mandatory-context-loop`](#s-mandatory-context-loop) — Before a project workspace exists, query the immutable framework corpus with kairos search "<question>" and no --workspace; use it to retrieve the governing KAIROS procedure instead of reconstructing rules from the directory tree. Once proj
@@ -59,7 +59,7 @@ required_top_k = 1
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: Binding operating rules for KAIROS authority, retrieval-first context acquisition, fail-closed Workshop use, and joint source and semantic Markdown changes.
+> Capsule: Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied.
 
 <a id="s-authority-and-placement"></a>
 ## Authority and placement
@@ -126,16 +126,44 @@ package supplies no build command, scientific domain, fixture, runner, or result
 Keep transactions bounded and preserve exact bytes, hashes, mappings, topology and provenance.
 For ordinary source patches, checkout the affected existing Markdown with repeatable `--document`
 arguments; the selected source's implementation Markdown is already included. Edit and review
-`capsule`, `answers`, `refs`, `claim_boundary` and affected sections inside the same work tree.
+`capsule`, `answers`, `refs`, `claim_boundary`, `entities`, `facets`, `does_not_answer`,
+`search_contract` and affected sections inside the same work tree.
 Declare any additional context scope through `include-documents`, complete the document review,
 and rerun preparation and verification. Preserve meaningful historical pinned references. Apply
 must receive the finished source and Markdown package; the governed heartbeat projects that
 package into the database before postcheck success. Do not defer semantic maintenance to a
 post-apply edit or treat regenerated hashes as proof of semantic accuracy.
 
-Existing governed files use `checkout -> prepare -> verify -> apply`. Create/delete/rename of static-
+For every existing source/header whose code bytes change in an ordinary patch or an authority
+migration, updating and checking its implementation metadata is mandatory BEFORE apply.
+Change at least one of the eight semantic
+header fields above to describe the actual change; revision, timestamp, generated mapping/ledger
+changes and unrelated body additions do not count. Review every field, documenting why each
+unchanged value remains accurate. Do not invent claims or cosmetic wording merely to clear a gate.
+Run `metadata-plan`, inspect the selected source/document evidence, and complete the pending
+field decisions and deterministic spot checks in `review/metadata_audit.json`. Derive findings
+from the candidate source, preserve exact identifiers and historical provenance, and correct any
+partial or failed finding before rerunning the check. The review must not assert build results,
+scientific truth or complete semantic coverage that its evidence does not establish.
+
+Ordinary code patches use `checkout -> edit code and metadata -> metadata-plan -> complete audit
+-> prepare -> metadata-check -> verify -> apply`. Preparation validates the required header edits
+and audit; `metadata-check` grants a hash-bound clearance that verification and apply require.
+Changed source, Markdown, scope or review after clearance requires fresh preparation, metadata
+checking and verification, with a new plan when its evidence has changed. A documentation-only
+transaction does not require an invented code change or header rewrite; its existing document
+review still applies. Never defer this required aftercheck to a post-apply task.
+
+An authority migration that changes existing source/header bytes uses the same `metadata-plan`
+and completed audit before `authority-prepare`, then `metadata-check` before `authority-verify`
+and `authority-apply`. Newly added or removed files retain their explicit migration review;
+do not invent a previous semantic header for a new file.
+
+Create/delete/rename of static-
 ecosystem sources use `source-set-checkout -> source-set-prepare -> source-set-verify -> source-set-apply`;
-the live project remains unchanged until verified apply. Candidate build/config changes and C-family
+the live project remains unchanged until verified apply. Existing source paths must retain their
+sealed bytes in that candidate; apply their code edits through the ordinary metadata workflow before
+or after the membership migration. Candidate build/config changes and C-family
 topology are refused by that generic source-set path. C-family owner-only header changes remain derived
 inside the ordinary transaction; governed-header topology uses the compiler-backed authority migration,
 and compiler-context/build-authority changes require stronger project-specific proof. After any failed

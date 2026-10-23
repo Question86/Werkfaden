@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ from .util import (
     copy_exact,
     package_hash,
     read_json,
+    reject_link_components,
     sha256_bytes,
     utc_now,
 )
@@ -106,7 +108,30 @@ def _replace_sections(
         candidate_span = candidate.sections.get(section_id)
         if current_span is None or candidate_span is None:
             continue
-        replacement = candidate.text[candidate_span.start:candidate_span.end]
+        current_section = current.text[current_span.start:current_span.end]
+        candidate_section = candidate.text[candidate_span.start:candidate_span.end]
+        prefix_pattern = rf'(?s)(<a id="{re.escape(section_id)}"></a>\n##[^\n]*\n\n> Capsule:[^\n]*\n\n)'
+        current_prefix = re.match(prefix_pattern, current_section)
+        candidate_prefix = re.match(prefix_pattern, candidate_section)
+        if not current_prefix or not candidate_prefix:
+            raise WorkshopError("AUTHORITY_TOPOLOGY_INVALID", f"derived section lacks its heading/capsule: {section_id}")
+        row_patterns = {
+            "s-ownership": r"^- (?:`[^`\n]+`|none found in the static include closure)[ \t]*(?:\n|$)",
+            "s-includes": r"^- (?:`[^`\n]+`|none declared by the compiler command)[ \t]*(?:\n|$)",
+            "s-boundary": r"^- (?:Source authority|Command-set SHA-256|Commands recorded for this unit): `[^`\n]+`[ \t]*(?:\n|$)",
+        }
+        row_pattern = row_patterns[section_id]
+        generated_rows = re.findall(row_pattern, candidate_section[candidate_prefix.end():], re.MULTILINE)
+        if not generated_rows:
+            raise WorkshopError("AUTHORITY_TOPOLOGY_INVALID", f"derived section has no generated rows: {section_id}")
+        remaining = re.sub(row_pattern, "", current_section[current_prefix.end():], flags=re.MULTILINE).strip("\n")
+        # Preserve the editor's heading, Capsule and any additional prose. Only
+        # compiler-produced rows are replaced; these rows are staged at checkout
+        # so a pre-prepare metadata audit already sees the final source sections.
+        replacement = current_prefix.group(1) + "\n".join(row.rstrip("\n") for row in generated_rows)
+        if remaining:
+            replacement += "\n\n" + remaining
+        replacement += "\n\n"
         replacements.append((current_span.start, current_span.end, replacement))
     for start, end, replacement in sorted(replacements, reverse=True):
         text = text[:start] + replacement + text[end:]
@@ -484,14 +509,37 @@ class AuthorityMigration:
                 root / "work" / "machine" / "PROJECT_BUILD_AUTHORITY.cmake",
             )
 
-            affected_active = sorted(set(content_changed) | set(added_sources) | set(added_headers))
-            for relative in affected_active:
+            candidate_record_names = {record.relative_path: record.filename for record in generated.records}
+            # Snapshot every retained owner, including files that are unchanged
+            # at checkout but may be edited later in the isolated candidate.
+            for relative in sorted(set(common) | set(added_sources) | set(added_headers)):
                 if relative in baseline_manifest["records"]:
-                    name = baseline_manifest["records"][relative]["blueprint"]["filename"]
+                    record = baseline_manifest["records"][relative]
+                    name = record["blueprint"]["filename"]
                     copy_exact(self.config.blueprint_root / name, root / "baseline" / "blueprints" / name)
                     copy_exact(self.config.managed_blueprint_root / name, root / "baseline" / "managed" / name)
                     copy_exact(self.config.blueprint_root / name, root / "work" / "blueprints" / name)
                     copy_exact(self.config.managed_blueprint_root / name, root / "work" / "managed" / name)
+                    for role in ("source", "header"):
+                        facts = record.get(role)
+                        if isinstance(facts, dict) and facts.get("path"):
+                            path = Path(str(facts["path"]))
+                            baseline_relative = path.relative_to(self.config.codebase_root)
+                            _copy_tree_file(path, root / "baseline" / baseline_relative)
+                    work_path = root / "work" / "blueprints" / name
+                    generated_path = root / "work" / "generated" / candidate_record_names[relative]
+                    current_document = parse_blueprint(work_path)
+                    staged = _replace_sections(
+                        current_document.text,
+                        generated_path.read_text(encoding="utf-8"),
+                        ("s-ownership",) if relative in set(candidate_headers) else ("s-includes", "s-boundary"),
+                        current_path=work_path,
+                        candidate_path=generated_path,
+                        revision=current_document.revision,
+                        updated_at=created_at,
+                    )
+                    atomic_write_bytes(work_path, staged.encode("utf-8"))
+                    atomic_write_bytes(root / "work" / "managed" / name, staged.encode("utf-8"))
                 else:
                     name = filename_for(relative, header_only=relative in set(candidate_headers))
                     copy_exact(root / "work" / "generated" / name, root / "work" / "blueprints" / name)
@@ -550,9 +598,6 @@ class AuthorityMigration:
                     baseline_manifest,
                     root / "work" / "candidate",
                 ),
-            }
-            candidate_record_names = {
-                record.relative_path: record.filename for record in generated.records
             }
             state = {
                 "schema": "runtime-sync-authority-migration/v1",
@@ -672,7 +717,8 @@ class AuthorityMigration:
             "add": {"created"},
             "remove": {"removed"},
         }[expected_action]
-        return impact in allowed and len(reason) >= 12 and bool(reviewer) and bool(reviewed_at)
+        return (entry.get("action") == expected_action and impact in allowed
+                and len(reason) >= 12 and bool(reviewer) and bool(reviewed_at))
 
     def _derived_sections_for(self, relative: str, state: dict[str, Any]) -> tuple[str, ...]:
         return ("s-ownership",) if relative in set(state["candidate_headers"]) else ("s-includes", "s-boundary")
@@ -734,15 +780,22 @@ class AuthorityMigration:
         self.engine._require_lease(transaction_id)
         if state.get("transaction_kind") != "authority_migration":
             raise WorkshopError("TRANSACTION_KIND_INVALID", "transaction is not an authority migration")
-        if state["state"] not in {"CHECKED_OUT", "AWAITING_METADATA_REVIEW", "PREPARED"}:
+        if state["state"] not in {"CHECKED_OUT", "AWAITING_METADATA_REVIEW", "PREPARED", "SHADOW_VERIFIED"}:
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"authority prepare is not allowed from {state['state']}")
+        if state["state"] in {"PREPARED", "SHADOW_VERIFIED"} or "metadata_check" in state:
+            state["state"] = "CHECKED_OUT"
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow", "metadata_check"):
+                state.pop(key, None)
+            self.engine._save_transaction(root, state, event="AUTHORITY_VERIFICATION_REOPENED")
         self.engine._assert_live_baseline(state)
         baseline_manifest = read_json(root / "baseline" / "manifest.json")
         review = self._review(root, state)
         blockers: list[dict[str, Any]] = []
         added = set(state["added_sources"]) | set(state["added_headers"])
         removed = set(state["removed_sources"]) | set(state["removed_headers"])
-        changed = set(state["content_changed"])
+        metadata_plan = self.engine.metadata_gate.plan(root, state)
+        changed = {row["path"] for subject in metadata_plan["subjects"] for row in subject["files"]}
+        state["content_changed"] = sorted(changed)
         for relative in sorted(changed):
             entry = review.get(relative, {})
             if not self._review_ok(entry, "update"):
@@ -753,6 +806,19 @@ class AuthorityMigration:
         for relative in sorted(removed):
             if not self._review_ok(review.get(relative, {}), "remove"):
                 blockers.append({"path": relative, "reason": "removed governed file requires metadata_impact=removed review"})
+
+        if blockers:
+            state["state"] = "AWAITING_METADATA_REVIEW"
+            self.engine._save_transaction(root, state, event="AUTHORITY_METADATA_REVIEW_REQUIRED", details=blockers)
+            raise WorkshopError("METADATA_REVIEW_REQUIRED", "authority migration is blocked until review is complete", details=blockers)
+        try:
+            metadata_aftercheck = self.engine.metadata_gate.validate(root, state)
+        except WorkshopError as exc:
+            state["state"] = "AWAITING_METADATA_REVIEW"
+            self.engine._save_transaction(root, state, event="AUTHORITY_METADATA_AFTERCHECK_REQUIRED", details={
+                "code": exc.code, "details": exc.details,
+            })
+            raise
 
         candidate_root = root / "work" / "candidate"
         generated_root = root / "work" / "generated"
@@ -786,7 +852,7 @@ class AuthorityMigration:
 
             record = baseline_manifest["records"][relative]
             baseline_name = record["blueprint"]["filename"]
-            baseline_path = self.config.blueprint_root / baseline_name
+            baseline_path = root / "baseline" / "blueprints" / baseline_name
             work_path = root / "work" / "blueprints" / baseline_name
             if not work_path.is_file():
                 copy_exact(baseline_path, work_path)
@@ -795,9 +861,7 @@ class AuthorityMigration:
             content_changed = relative in changed
             token_changed = False
             if content_changed:
-                live_fact = record.get("source") or record.get("header")
-                live_path = Path(str(live_fact["path"]))
-                token_changed = cpp_token_signature(live_path.read_bytes()) != cpp_token_signature(candidate_file.read_bytes())
+                token_changed = cpp_token_signature((root / "baseline" / relative).read_bytes()) != cpp_token_signature(candidate_file.read_bytes())
                 entry = review.get(relative, {})
                 semantic_changed = semantic_document_hash(baseline_doc) != semantic_document_hash(work_doc)
                 if token_changed and entry.get("metadata_impact") != "updated":
@@ -823,23 +887,27 @@ class AuthorityMigration:
             candidate_generated = generated_path.read_text(encoding="utf-8")
             current_for_sections = rendered
             current_doc = parse_blueprint_text(work_path, current_for_sections)
-            candidate_doc = parse_blueprint(generated_path)
+            rendered = _replace_sections(
+                current_for_sections,
+                candidate_generated,
+                self._derived_sections_for(relative, state),
+                current_path=work_path,
+                candidate_path=generated_path,
+                revision=current_doc.revision,
+                updated_at=state["deterministic_updated_at"],
+            )
+            candidate_doc = parse_blueprint_text(work_path, rendered)
             derived_changed = any(
-                section_id in current_doc.sections
+                section_id in baseline_doc.sections
                 and section_id in candidate_doc.sections
-                and current_doc.text[current_doc.sections[section_id].start:current_doc.sections[section_id].end]
+                and baseline_doc.text[baseline_doc.sections[section_id].start:baseline_doc.sections[section_id].end]
                     != candidate_doc.text[candidate_doc.sections[section_id].start:candidate_doc.sections[section_id].end]
                 for section_id in self._derived_sections_for(relative, state)
             )
-            if derived_changed:
-                revision = baseline_doc.revision + 1
-                rendered = _replace_sections(
-                    current_for_sections,
-                    candidate_generated,
-                    self._derived_sections_for(relative, state),
-                    current_path=work_path,
-                    candidate_path=generated_path,
-                    revision=revision if current_doc.revision == baseline_doc.revision else current_doc.revision,
+            if derived_changed and candidate_doc.revision == baseline_doc.revision:
+                rendered = advance_document_revision(
+                    candidate_doc,
+                    revision=baseline_doc.revision + 1,
                     updated_at=state["deterministic_updated_at"],
                 )
             final_doc = parse_blueprint_text(work_path, rendered)
@@ -987,6 +1055,18 @@ class AuthorityMigration:
             },
         )
 
+        # Mechanical regeneration may not replace a reviewed semantic claim.
+        # Recompute the same plan after projection before binding prepared bytes.
+        try:
+            if self.engine.metadata_gate.validate(root, state) != metadata_aftercheck:
+                raise WorkshopError("METADATA_AUDIT_STALE", "authority preparation changed the reviewed metadata plan")
+        except WorkshopError as exc:
+            state["state"] = "AWAITING_METADATA_REVIEW"
+            self.engine._save_transaction(root, state, event="AUTHORITY_METADATA_AFTERCHECK_REQUIRED", details={
+                "code": exc.code, "details": exc.details,
+            })
+            raise
+
         state["state"] = "PREPARED"
         state["prepared_active"] = prepared_active
         state["updated_existing"] = updated_existing
@@ -994,6 +1074,7 @@ class AuthorityMigration:
         state["tombstones"] = tombstones
         state["authority_documents"] = [relative_index]
         state["final_config_sha256"] = _sha256_json(final_config)
+        state["prepared_work_package_sha256"] = self._work_package(root, state)["package_sha256"]
         self.engine._save_transaction(root, state, event="AUTHORITY_PREPARE_COMPLETED", details={
             "updated_existing": updated_existing,
             "created_active": created_active,
@@ -1007,6 +1088,8 @@ class AuthorityMigration:
             "created_active": created_active,
             "retired": sorted(tombstones),
             "renames": state["renames"],
+            "metadata_aftercheck": metadata_aftercheck,
+            "work_package_sha256": state["prepared_work_package_sha256"],
         }
 
     def _shadow_workspace(self, root: Path, state: dict[str, Any]) -> Path:
@@ -1045,6 +1128,10 @@ class AuthorityMigration:
         if state["state"] not in {"PREPARED", "SHADOW_VERIFIED"}:
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"authority verify is not allowed from {state['state']}")
         self.engine._assert_live_baseline(state)
+        prepared_package = self._work_package(root, state)
+        if prepared_package["package_sha256"] != state.get("prepared_work_package_sha256"):
+            raise WorkshopError("WORK_CHANGED_AFTER_PREPARE", "authority candidate or audit changed; repeat prepare")
+        self.engine._assert_metadata_checked(root, state, prepared_package["package_sha256"])
         shadow = self._shadow_workspace(root, state)
         changed_managed: list[str] = []
         for relative, name in state.get("prepared_active", {}).items():
@@ -1151,6 +1238,8 @@ class AuthorityMigration:
         if not candidate_manifest.get("verified"):
             raise WorkshopError("AUTHORITY_MIGRATION_SHADOW_INVALID", "candidate corpus failed Workshop verification", details=candidate_manifest.get("issues"))
         work_package = self._work_package(root, state)
+        if work_package["package_sha256"] != prepared_package["package_sha256"]:
+            raise WorkshopError("WORK_CHANGED_DURING_VERIFY", "authority migration candidate changed during verification")
         state["state"] = "SHADOW_VERIFIED"
         state["shadow"] = {
             "workspace": shadow.as_posix(),
@@ -1180,12 +1269,29 @@ class AuthorityMigration:
             ("machine", root / "work" / "machine"),
             ("external-final", root / "work" / "external-final"),
         ):
-            if not directory.exists():
+            if not directory.exists() and not directory.is_symlink():
                 continue
-            for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+            reject_link_components(directory, label="authority work package")
+            if not directory.is_dir():
+                raise WorkshopError("WORK_FILE_INVALID", f"authority work directory is invalid: {directory}")
+            for path in sorted(directory.rglob("*")):
+                reject_link_components(path, label="authority work package")
+                if path.is_dir():
+                    continue
+                if not path.is_file() or path.stat().st_nlink != 1:
+                    raise WorkshopError("WORK_FILE_INVALID", f"authority work file must be a single-link regular file: {path}")
                 relative = path.relative_to(directory).as_posix()
                 raw = path.read_bytes()
                 rows.append({"role": base, "path": relative, "sha256": sha256_bytes(raw), "size": len(raw)})
+        for name in ("authority_review.json", "metadata_audit.json"):
+            path = root / "review" / name
+            if name == "metadata_audit.json" and not path.exists() and not path.is_symlink():
+                continue
+            reject_link_components(path, label="authority metadata review")
+            if not path.is_file() or path.stat().st_nlink != 1:
+                raise WorkshopError("WORK_FILE_INVALID", f"authority review must be a single-link regular file: {path}")
+            raw = path.read_bytes()
+            rows.append({"role": "review", "path": name, "sha256": sha256_bytes(raw), "size": len(raw)})
         return {
             "schema": "runtime-sync-authority-work-package/v1",
             "file_count": len(rows),
@@ -1236,6 +1342,9 @@ class AuthorityMigration:
         work_package = self._work_package(root, state)
         if work_package["package_sha256"] != state.get("verified_work_package_sha256"):
             raise WorkshopError("WORK_CHANGED_AFTER_VERIFY", "authority migration work package changed after verification")
+        if work_package["package_sha256"] != state.get("prepared_work_package_sha256"):
+            raise WorkshopError("WORK_CHANGED_AFTER_PREPARE", "authority migration no longer matches its prepared candidate")
+        self.engine._assert_metadata_checked(root, state, work_package["package_sha256"])
 
         changed_managed = sorted({
             *(f"code/{name}" for name in state.get("prepared_active", {}).values()),

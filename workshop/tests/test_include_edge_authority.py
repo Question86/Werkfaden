@@ -19,6 +19,7 @@ from kairos.graph import query_graph_context  # noqa: E402
 from kairos.query import compile_query  # noqa: E402
 from runtime_sync_workshop.corpus import build_corpus_manifest  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 from runtime_sync_workshop.util import WorkshopError  # noqa: E402
 
 
@@ -160,6 +161,7 @@ class IncludeEdgeAuthorityTests(unittest.TestCase):
                 encoding="utf-8",
             )
             set_review(Path(checkout["metadata_review"]), "src/main.cpp")
+            complete_metadata_audit(engine, checkout)
             prepared = engine.prepare(checkout["transaction_id"])
             self.assertEqual(prepared["state"], "PREPARED")
             state = json.loads((work.parent / "state.json").read_text(encoding="utf-8"))
@@ -173,6 +175,7 @@ class IncludeEdgeAuthorityTests(unittest.TestCase):
             )
             self.assertEqual(main.read_text(encoding="utf-8"), '#include <a.hpp>\nint main(){return a();}\n')
 
+            engine.metadata_check(checkout["transaction_id"])
             verified = engine.verify(checkout["transaction_id"])
             self.assertEqual(verified["state"], "SHADOW_VERIFIED")
             self.assertEqual(main.read_text(encoding="utf-8"), '#include <a.hpp>\nint main(){return a();}\n')

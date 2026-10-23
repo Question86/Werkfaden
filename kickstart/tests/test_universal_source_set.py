@@ -54,7 +54,7 @@ def _project_spec() -> dict:
 
 
 class UniversalSourceSetTests(unittest.TestCase):
-    def test_create_delete_rename_and_edit_apply_only_after_shadow_verification(self) -> None:
+    def test_create_delete_and_rename_apply_only_after_shadow_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             project = root / "project"
@@ -74,14 +74,13 @@ class UniversalSourceSetTests(unittest.TestCase):
             engine = WorkshopEngine(Path(intake["workshop_config"]))
             engine.seal()
             migration = UniversalSourceSetMigration(engine)
-            checkout = migration.checkout(purpose="Create delete rename and edit static Python sources atomically")
+            checkout = migration.checkout(purpose="Create delete and rename static Python sources atomically")
             candidate = Path(checkout["candidate_root"])
 
             # All changes happen only in Workshop-owned candidate state.
             (candidate / "rename_me.py").rename(candidate / "renamed.py")
             (candidate / "delete_me.py").unlink()
             (candidate / "new_file.py").write_text("NEW = 3\n", encoding="utf-8")
-            (candidate / "keep.py").write_text("KEEP = 2\n", encoding="utf-8")
 
             # Governed live project is bit-identical before verified apply.
             self.assertEqual({path.name: path.read_bytes() for path in project.glob("*.py")}, initial)
@@ -91,7 +90,7 @@ class UniversalSourceSetTests(unittest.TestCase):
             self.assertEqual(set(prepared["added_sources"]), {"new_file.py", "renamed.py"})
             self.assertEqual(set(prepared["removed_sources"]), {"delete_me.py", "rename_me.py"})
             self.assertEqual(prepared["renames"], {"rename_me.py": "renamed.py"})
-            self.assertEqual(prepared["updated_existing"], ["keep.py"])
+            self.assertEqual(prepared["updated_existing"], [])
             self.assertEqual({path.name: path.read_bytes() for path in project.glob("*.py")}, initial)
 
             verified = migration.verify(checkout["transaction_id"])
@@ -107,7 +106,7 @@ class UniversalSourceSetTests(unittest.TestCase):
             self.assertFalse((project / "delete_me.py").exists())
             self.assertEqual((project / "renamed.py").read_text(encoding="utf-8"), "VALUE = 1\n")
             self.assertEqual((project / "new_file.py").read_text(encoding="utf-8"), "NEW = 3\n")
-            self.assertEqual((project / "keep.py").read_text(encoding="utf-8"), "KEEP = 2\n")
+            self.assertEqual((project / "keep.py").read_text(encoding="utf-8"), "KEEP = 1\n")
 
             post = build_corpus_manifest(engine.config)
             self.assertTrue(post["verified"], post["issues"])
@@ -119,6 +118,32 @@ class UniversalSourceSetTests(unittest.TestCase):
             self.assertEqual({path.name for path in engine.config.blueprint_root.glob("*.md")}, active_ids)
             retired_text = "\n".join(path.read_text(encoding="utf-8") for path in engine.config.managed_blueprint_root.glob("*.md"))
             self.assertIn('state = "superseded"', retired_text)
+
+    def test_source_addition_cannot_bypass_metadata_review_for_existing_code(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            source = project / "app.py"
+            source.write_bytes(b"VALUE = 1\n")
+            intake = initialize_universal_markdown(
+                project_root=project, workspace=root / "workspace", project_spec=_project_spec(),
+            )
+            engine = WorkshopEngine(Path(intake["workshop_config"]))
+            engine.seal()
+            migration = UniversalSourceSetMigration(engine)
+            checkout = migration.checkout(purpose="Add a source while attempting an unreviewed existing-source patch")
+            candidate = Path(checkout["candidate_root"])
+            (candidate / "app.py").write_bytes(b"VALUE = 2\n")
+            (candidate / "new_file.py").write_bytes(b"NEW = 3\n")
+
+            with self.assertRaises(WorkshopError) as raised:
+                migration.prepare(checkout["transaction_id"])
+            self.assertEqual(raised.exception.code, "ORDINARY_METADATA_PATCH_REQUIRED")
+            self.assertIn("app.py", str(raised.exception.details))
+            self.assertEqual(source.read_bytes(), b"VALUE = 1\n")
+            self.assertFalse((project / "new_file.py").exists())
+            migration.abort(checkout["transaction_id"])
 
     def test_candidate_build_or_config_mutation_fails_closed_without_touching_live(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

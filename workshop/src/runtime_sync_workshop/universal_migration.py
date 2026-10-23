@@ -529,6 +529,17 @@ class UniversalSourceSetMigration:
             relative for relative in set(candidate_sources) & set(baseline_sources)
             if relative in modified_files
         )
+        if updated_existing:
+            raise WorkshopError(
+                "ORDINARY_METADATA_PATCH_REQUIRED",
+                "source-set migration cannot update existing source bytes without the ordinary metadata aftercheck; "
+                "apply those edits in an ordinary Workshop transaction before or after the membership migration",
+                details={
+                    "affected_paths": updated_existing,
+                    "required_workflow": "checkout -> edit code and semantic headers -> metadata-plan -> complete audit -> "
+                    "prepare -> metadata-check -> verify -> apply",
+                },
+            )
         generated_docs = render_markdown_corpus(
             survey,
             workspace_id=str(read_json(self.config.kairos_workspace / ".kairos" / "config.json").get("workspace_id", "")),

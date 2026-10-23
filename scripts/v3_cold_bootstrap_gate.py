@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,63 @@ def require_search(query: str, artifact: str, section: str) -> None:
     framework = payload.get("framework") or {}
     if not framework.get("verified"):
         raise SystemExit(f"framework bundle was not verified for query {query!r}")
+
+
+def review_value_fixture(config: Path, checkout: dict, filename: str, before: str, after: str) -> None:
+    """Supply concrete evidence for this gate's known scalar-value fixtures only.
+
+    This is regression-fixture setup, not a general-purpose automatic reviewer.
+    The actual source bytes must equal the complete expected 1-to-2 fixture.
+    """
+    work = Path(checkout["work_directory"])
+    root = work.parent
+    if (root / "baseline" / filename).read_bytes() != before.encode("utf-8"):
+        raise SystemExit(f"unexpected baseline for metadata fixture {filename}")
+    if (work / filename).read_bytes() != after.encode("utf-8") or before.replace("1", "2") != after:
+        raise SystemExit(f"metadata fixture is not the expected scalar-value change: {filename}")
+    manifest = json.loads((root / "baseline" / "manifest.json").read_text(encoding="utf-8"))
+    document = work / "blueprints" / manifest["records"][filename]["blueprint"]["filename"]
+    claim = f"The source `{filename}` contains `{after.strip().replace(chr(10), ' ')}`; runtime behavior and build results are outside this static claim."
+    text, count = re.subn(
+        r"(?m)^capsule\s*=.*$", lambda _match: "capsule = " + json.dumps(claim),
+        document.read_text(encoding="utf-8"), count=1,
+    )
+    if count != 1:
+        raise SystemExit(f"fixture implementation document has no capsule: {document}")
+    document.write_text(text, encoding="utf-8")
+
+    review_path = Path(checkout["metadata_review"])
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    if [entry.get("source") for entry in review.get("entries", [])] != [filename]:
+        raise SystemExit(f"unexpected metadata fixture review scope: {review}")
+    review["entries"][0].update({
+        "metadata_impact": "updated",
+        "reason": "The capsule now quotes the complete candidate with scalar value 2; source path, symbols and static scope are unchanged.",
+        "reviewer": "cold-value-fixture-review",
+        "reviewed_at": "2026-10-23T00:00:00Z",
+    })
+    review_path.write_text(json.dumps(review, indent=2) + "\n", encoding="utf-8")
+    planned = run_json("workshop/workshop.py", "--config", str(config), "metadata-plan", checkout["transaction_id"])
+    subject, = planned["plan"]["subjects"]
+    audit_path = Path(planned["metadata_audit"])
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    audit.update(reviewer="cold-value-fixture-review", reviewed_at="2026-10-23T00:00:00Z")
+    entry, = audit["entries"]
+    for field, decision in entry["field_reviews"].items():
+        changed = subject["fields"][field]["changed"]
+        decision.update(
+            action="updated" if changed else "unchanged",
+            reason=("The capsule quotes the candidate's complete static source, including scalar value 2." if changed else
+                    f"The literal-only fixture change preserves paths, symbols, ownership and static scope; {field} remains accurate."),
+            sample_ids=[sample["id"] for sample in subject["samples"]],
+        )
+    for sample in entry["samples"]:
+        sample.update(
+            verdict="pass",
+            reason="The complete fixture bytes were compared: only the declared scalar changes from 1 to 2, and the capsule quotes that candidate.",
+            metadata_evidence=[{"field": "capsule", "quote": claim}],
+        )
+    audit_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
 
 
 def project_spec() -> dict:
@@ -98,7 +156,7 @@ def main() -> int:
         workspace = root / "workspace"
         project.mkdir()
         source = project / "app.py"
-        source.write_text("VALUE = 1\n", encoding="utf-8")
+        source.write_bytes(b"VALUE = 1\n")
         original = source.read_bytes()
         spec_path = root / "project-spec.json"
         spec_path.write_text(json.dumps(project_spec(), indent=2) + "\n", encoding="utf-8")
@@ -138,18 +196,8 @@ def main() -> int:
             raise SystemExit("checkout modified live source before verification")
 
         work = Path(checkout["work_directory"])
-        (work / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
-        review_path = Path(checkout["metadata_review"])
-        review = json.loads(review_path.read_text(encoding="utf-8"))
-        if len(review.get("entries", [])) != 1:
-            raise SystemExit(f"unexpected metadata review shape: {review}")
-        review["entries"][0].update({
-            "metadata_impact": "none",
-            "reason": "Exact Python value change requires no semantic Markdown claim update",
-            "reviewer": "cold-bootstrap-gate",
-            "reviewed_at": "2026-09-09T00:00:00Z",
-        })
-        review_path.write_text(json.dumps(review, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (work / "app.py").write_bytes(b"VALUE = 2\n")
+        review_value_fixture(config, checkout, "app.py", "VALUE = 1\n", "VALUE = 2\n")
 
         prepared = run_json("workshop/workshop.py", "--config", str(config), "prepare", transaction_id)
         if prepared.get("state") != "PREPARED":
@@ -157,6 +205,7 @@ def main() -> int:
         if source.read_bytes() != original:
             raise SystemExit("prepare modified live source")
 
+        run_json("workshop/workshop.py", "--config", str(config), "metadata-check", transaction_id)
         verified = run_json("workshop/workshop.py", "--config", str(config), "verify", transaction_id)
         if verified.get("state") != "SHADOW_VERIFIED":
             raise SystemExit(f"cold shadow verification failed: {verified}")
@@ -178,6 +227,7 @@ def main() -> int:
         "initial_project_read_only": True,
         "seal": True,
         "first_workshop_transaction": "POSTCHECK_VERIFIED",
+        "metadata_aftercheck": True,
         "bit_exact": True,
     }, indent=2, sort_keys=True))
     return 0

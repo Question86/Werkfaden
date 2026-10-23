@@ -23,6 +23,7 @@ from kairos.heartbeat import run_heartbeat  # noqa: E402
 from kairos.search import search_database  # noqa: E402
 from kairos.templates import pointer, render_document  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 from runtime_sync_workshop.util import WorkshopError, copy_exact  # noqa: E402
 
 
@@ -221,7 +222,9 @@ class ContextTransactionTests(unittest.TestCase):
 
     def prepare_and_verify(self, checkout: dict) -> None:
         transaction_id = checkout["transaction_id"]
+        complete_metadata_audit(self.engine, checkout)
         self.assertEqual(self.engine.prepare(transaction_id)["state"], "PREPARED")
+        self.engine.metadata_check(transaction_id)
         self.assertEqual(self.engine.verify(transaction_id)["state"], "SHADOW_VERIFIED")
 
     def test_apply_promotes_reviewed_code_and_semantic_context_in_one_heartbeat(self) -> None:
@@ -281,6 +284,7 @@ class ContextTransactionTests(unittest.TestCase):
             self.engine.prepare(checkout["transaction_id"])
         self.assertEqual(raised.exception.code, "CONTEXT_REVIEW_REQUIRED")
         self.review_document(checkout, BEHAVIOR)
+        complete_metadata_audit(self.engine, checkout)
         self.assertEqual(self.engine.prepare(checkout["transaction_id"])["state"], "PREPARED")
         self.assertEqual(split_frontmatter(
             (Path(checkout["work_directory"]) / "documents" / REFERENCE).read_text(encoding="utf-8"),
@@ -290,7 +294,9 @@ class ContextTransactionTests(unittest.TestCase):
     def test_document_edit_after_prepare_requires_new_preparation(self) -> None:
         checkout = self.checkout()
         work_doc = self.stage_behavior(checkout)
+        complete_metadata_audit(self.engine, checkout)
         self.engine.prepare(checkout["transaction_id"])
+        self.engine.metadata_check(checkout["transaction_id"])
         work_doc.write_bytes(work_doc.read_bytes().replace(b"value = 2", b"value = 3"))
         with self.assertRaises(WorkshopError) as raised:
             self.engine.verify(checkout["transaction_id"])
@@ -340,13 +346,16 @@ class ContextTransactionTests(unittest.TestCase):
         work_doc = self.stage_behavior(checkout)
         self.prepare_and_verify(checkout)
         reviewed_bytes = work_doc.read_bytes()
+        self.assertIn("metadata_check", self.engine.transaction_status(checkout["transaction_id"]))
         expanded = self.engine.include_documents(
             checkout["transaction_id"], [REFERENCE],
             reason="The application contract also needs a scoped impact review",
         )
         self.assertEqual(set(expanded["documents"]), {BEHAVIOR, REFERENCE})
         self.assertEqual(work_doc.read_bytes(), reviewed_bytes)
-        self.assertEqual(self.engine.transaction_status(checkout["transaction_id"])["state"], "CHECKED_OUT")
+        state = self.engine.transaction_status(checkout["transaction_id"])
+        self.assertEqual(state["state"], "CHECKED_OUT")
+        self.assertNotIn("metadata_check", state)
         with self.assertRaises(WorkshopError) as raised:
             self.engine.apply(checkout["transaction_id"])
         self.assertEqual(raised.exception.code, "TRANSACTION_STATE_INVALID")
@@ -364,7 +373,9 @@ class ContextTransactionTests(unittest.TestCase):
         checkout = self.checkout()
         work_doc = self.stage_behavior(checkout)
         work_doc.write_bytes(work_doc.read_bytes().replace(b'target = "s-behavior"', b'target = "s-missing"'))
+        complete_metadata_audit(self.engine, checkout)
         self.engine.prepare(checkout["transaction_id"])
+        self.engine.metadata_check(checkout["transaction_id"])
         with self.assertRaises(WorkshopError) as raised:
             self.engine.verify(checkout["transaction_id"])
         self.assertEqual(raised.exception.code, "SHADOW_PROMOTION_FAILED")
@@ -473,7 +484,12 @@ class ContextTransactionTests(unittest.TestCase):
         checkout = self.checkout()
         (Path(checkout["work_directory"]) / "app.py").write_bytes(b"value = 1\n")
         work_doc = self.stage_behavior(checkout)
-        self.prepare_and_verify(checkout)
+        prepared = self.engine.prepare(checkout["transaction_id"])
+        self.assertFalse(prepared["metadata_aftercheck"]["required"])
+        audit = Path(checkout["work_directory"]).parent / "review" / "metadata_audit.json"
+        self.assertFalse(audit.exists())
+        self.assertEqual(self.engine.verify(checkout["transaction_id"])["state"], "SHADOW_VERIFIED")
+        self.assertNotIn("metadata_check", self.engine.transaction_status(checkout["transaction_id"]))
         self.assertEqual(self.engine.apply(checkout["transaction_id"])["state"], "POSTCHECK_VERIFIED")
         seal = json.loads(self.engine.seal_path.read_text(encoding="utf-8"))
         mirror_path = Path(seal["mirror_manifest"])

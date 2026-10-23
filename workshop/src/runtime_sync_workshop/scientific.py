@@ -126,6 +126,15 @@ def transaction_work_manifest(config: WorkshopConfig, root: Path, state: dict[st
             "role": "review", "path": "review/metadata_review.json",
             "sha256": sha256_bytes(raw), "size": len(raw),
         }
+        audit = root / "review" / "metadata_audit.json"
+        if audit.exists() or audit.is_symlink():
+            if not audit.is_file() or audit.is_symlink() or audit.stat().st_nlink != 1:
+                raise WorkshopError("WORK_FILE_INVALID", "metadata audit must be a regular transaction file")
+            raw = audit.read_bytes()
+            rows["review:metadata_audit.json"] = {
+                "role": "review", "path": "review/metadata_audit.json",
+                "sha256": sha256_bytes(raw), "size": len(raw),
+            }
     ordered = [rows[key] for key in sorted(rows)]
     return {
         "schema": "runtime-sync-work-package/v1",

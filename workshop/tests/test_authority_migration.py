@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from kickstart.binding import initialize_project  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
 from runtime_sync_workshop.migration import AuthorityMigration  # noqa: E402
 from runtime_sync_workshop.util import WorkshopError  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 
 
 def project_spec() -> dict:
@@ -145,10 +147,39 @@ class AuthorityMigrationTests(unittest.TestCase):
                     "include/a.hpp": "removed",
                 },
             )
+            # A body-only review sentence must not turn a topology migration
+            # into an escape from the ordinary metadata maintenance duty.
+            with self.assertRaises(WorkshopError) as raised:
+                migration.prepare(checkout["transaction_id"])
+            self.assertEqual(raised.exception.code, "METADATA_HEADER_UNCHANGED")
+            self.assertEqual(main.read_text(encoding="utf-8"), '#include <a.hpp>\nint main(){return a();}\n')
+            source_blueprint = next(
+                path for path in (work / "blueprints").glob("PROJECT_CODE_*.md")
+                if 'target_source_file = "src/main.cpp"' in path.read_text(encoding="utf-8")
+            )
+            reviewed_text, count = re.subn(
+                r"(?m)^capsule\s*=.*$",
+                lambda _match: "capsule = " + json.dumps("The src/main.cpp translation unit includes c.hpp and returns c(), implemented by the new header as 3."),
+                source_blueprint.read_text(encoding="utf-8"), count=1,
+            )
+            self.assertEqual(count, 1)
+            source_blueprint.write_bytes(reviewed_text.encode("utf-8"))
+            _metadata_plan, audit_path = complete_metadata_audit(engine, checkout, update_capsules=False)
             prepared = migration.prepare(checkout["transaction_id"])
             self.assertEqual(prepared["state"], "PREPARED")
+            with self.assertRaises(WorkshopError) as raised:
+                migration.verify(checkout["transaction_id"])
+            self.assertEqual(raised.exception.code, "METADATA_CHECK_REQUIRED")
+            aftercheck = engine.metadata_check(checkout["transaction_id"])
+            self.assertTrue(aftercheck["verified"])
             verified = migration.verify(checkout["transaction_id"])
             self.assertEqual(verified["state"], "SHADOW_VERIFIED")
+            reviewed_audit = audit_path.read_bytes()
+            audit_path.write_bytes(reviewed_audit + b"\n")
+            with self.assertRaises(WorkshopError) as raised:
+                migration.apply(checkout["transaction_id"])
+            self.assertEqual(raised.exception.code, "WORK_CHANGED_AFTER_VERIFY")
+            audit_path.write_bytes(reviewed_audit)
             machine_verify = work.parent / "work" / "machine-verify"
             verify_config = json.loads((machine_verify / "workshop.config.json").read_text(encoding="utf-8"))
             verify_intake = json.loads((machine_verify / "project-intake.json").read_text(encoding="utf-8"))

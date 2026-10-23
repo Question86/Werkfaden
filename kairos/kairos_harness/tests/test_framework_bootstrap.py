@@ -76,6 +76,7 @@ class FrameworkBootstrapTests(unittest.TestCase):
             'How do I onboard an arbitrary existing codebase into KAIROS?': ('KAIROS_UNIVERSAL_ONBOARDING', 's-cold-onboarding'),
             'After KAIROS seals a project, what is allowed to modify source code or Markdown?': ('KAIROS_UNIVERSAL_ONBOARDING', 's-single-mutation-boundary'),
             'How do I create delete or rename governed source files after seal?': ('KAIROS_UNIVERSAL_ONBOARDING', 's-source-set-transactions'),
+            'How must I check metadata before applying a source patch?': ('KAIROS_WORKSHOP', 's-metadata-aftercheck'),
         }
         for query, expected in cases.items():
             with self.subTest(query=query):

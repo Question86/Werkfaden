@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP"
-updated_at = "2026-10-22T00:00:00Z"
-capsule = "Authoritative synchronized-change lifecycle for governed source and reviewed Markdown context in one verified package, including shadow verification, heartbeat promotion, postcheck and authority migration."
+updated_at = "2026-10-23T00:00:00Z"
+capsule = "Authoritative Workshop lifecycle for jointly updated code and Markdown, with required semantic header changes, evidence-backed metadata afterchecks, hash-bound apply clearance and heartbeat projection."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP"]
-facets = ["workshop", "transaction", "semantic-context", "source-set", "topology", "authority-migration"]
+facets = ["workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 
@@ -45,6 +45,11 @@ intent = "semantic_context"
 question = "How do I update Markdown context together with a code patch?"
 target = "s-semantic-context-transactions"
 
+[[answers]]
+intent = "metadata_aftercheck"
+question = "How must I check metadata before applying a source patch?"
+target = "s-metadata-aftercheck"
+
 [[search_contract]]
 query = "How do I modify governed code through the KAIROS Workshop?"
 expected = "KAIROS_WORKSHOP#s-overview"
@@ -54,6 +59,11 @@ required_top_k = 1
 query = "How do I update Markdown context together with a code patch?"
 expected = "KAIROS_WORKSHOP#s-semantic-context-transactions"
 required_top_k = 1
+
+[[search_contract]]
+query = "How must I check metadata before applying a source patch?"
+expected = "KAIROS_WORKSHOP#s-metadata-aftercheck"
+required_top_k = 1
 +++
 # Workshop module
 
@@ -61,6 +71,7 @@ required_top_k = 1
 
 - [`s-overview`](#s-overview) — The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
 - [`s-semantic-context-transactions`](#s-semantic-context-transactions) — A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
+- [`s-metadata-aftercheck`](#s-metadata-aftercheck) — Every ordinary code patch requires changed semantic headers, field-by-field review and bound source/document spot checks before apply.
 - [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) — Header-only project records are valid Workshop checkout targets and can be changed through
 - [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) — Create, delete and rename of static-ecosystem source files use a separate candidate migration.
 - [`s-authority-migration`](#s-authority-migration) — authority-checkout requires an isolated candidate project tree plus its compile_commands.json
@@ -84,16 +95,21 @@ preparation, verification or application rather than being repaired by assumptio
 Normal operation is:
 
 ```text
-status -> seal -> checkout -> metadata review -> prepare -> verify -> apply
+status -> seal -> checkout -> edit code and metadata -> metadata-plan
+-> complete audit -> prepare -> metadata-check -> verify -> apply
 ```
 
 Work is edited only under the transaction `work/` tree. `prepare` regenerates mechanical
 hash/ledger layers. C-family retains its token-stream review rule; static universal ecosystems do
 not acquire fake C++ token semantics and advance their exact mechanical mirrors on byte changes.
+In addition, every actually changed source/header in an ordinary patch, in every admitted language,
+requires a semantic header change and the metadata aftercheck described below. This requirement
+uses the actual byte changes and does not depend on the C++ token rule.
 Mutable file facts have one mechanical owner: generated SOURCE MAPPING/ledger layers. Project
 intake does not duplicate those changing hashes in an independently stale semantic section.
 
-`verify` promotes the prepared documents into an isolated native KAIROS shadow. The shadow
+`metadata-check` grants a clearance for the prepared source/document/review package. `verify`
+requires that clearance and promotes the prepared documents into an isolated native KAIROS shadow. The shadow
 contains the authoritative task, method, source-index and other source documents referenced
 by changed implementation documents, while derived live state and receipts remain isolated.
 
@@ -114,7 +130,8 @@ affected by the behavior change; the Workshop does not infer that scope from fil
 to discover every semantic dependency.
 
 Edit the code and its context together in the transaction. Review `capsule`, `answers`, `refs`,
-`claim_boundary` and the affected sections, including their capsules and context index. A new
+`claim_boundary`, `entities`, `facets`, `does_not_answer`, `search_contract` and the affected
+sections, including their capsules and context index. A new
 behavior may require new answer targets, narrower claims or revised relationships even when its
 source mapping is mechanically correct. Preserve historical revision-pinned references when they
 still describe the intended provenance; a patch does not automatically retarget all references.
@@ -130,8 +147,9 @@ rewrite. These records attest the review; they do not prove that an LLM's interp
 If another affected document is found during work, use
 `include-documents <transaction-id> --document <path> --reason "<scope reason>"`. This binds it to
 the unchanged live baseline, preserves existing work, adds its review entry and invalidates any
-prior preparation or verification. Complete the newly included document and run `prepare` and
-`verify` again. Do not copy an extra file into the work tree as a substitute for declaring scope.
+prior preparation or verification. Complete the newly included document; for a code patch, refresh
+the metadata plan and audit as needed, then run `prepare`, `metadata-check` and `verify` again.
+Do not copy an extra file into the work tree as a substitute for declaring scope.
 
 `prepare` advances changed document revisions and mechanical evidence. `verify` validates the
 complete prepared document set in the isolated KAIROS shadow and binds it, with the reviews, to
@@ -147,6 +165,57 @@ source-set/authority migrations, or permit edits to generated routers, runtime d
 machine-owned topology authority. Select a code document through its owning `--source`, rather
 than adding `code/*.md` as a separate context document. Document-only auxiliary transactions remain
 a separate interface for their configured external process authorities.
+
+<a id="s-metadata-aftercheck"></a>
+## Mandatory metadata aftercheck
+
+> Capsule: Every ordinary code patch requires changed semantic headers, field-by-field review and bound source/document spot checks before apply.
+
+Metadata maintenance is a required operation on the transaction candidate, not a task to defer
+until after apply. For every source/header with changed bytes, the corresponding implementation
+Markdown must change at least one real value in `capsule`, `answers`, `refs`, `claim_boundary`,
+`entities`, `facets`, `does_not_answer` or `search_contract`. An unrelated body sentence, formatting,
+revision, timestamp or regenerated source ledger cannot satisfy this header-change requirement.
+Other correct field values may remain unchanged, but the audit must review and explain them.
+The requirement applies to ordinary source/header patches in all admitted languages and to
+existing sources/headers whose bytes change in an authority migration. A pure
+Markdown transaction with unchanged code bytes keeps its existing review path and does not need
+an artificial header edit.
+
+After editing the candidate code and metadata, run `metadata-plan <transaction-id>`. It creates
+`review/metadata_audit.json` with the bound review scope, field decisions and reproducible
+source/document spot checks. The template contains pending work, not pre-approved findings.
+Read the candidate source and the relevant document claims; fill in the decisions, concrete
+explanations and requested evidence. Preserve the generated sample identities and evidence
+locations. A review is incomplete if it only restates that the file was reviewed.
+
+`prepare` validates the header-change obligation and the completed audit. Then run
+`metadata-check <transaction-id>` to issue clearance for the prepared package. The check verifies
+the declared field changes against the actual header values, the selected evidence and its
+hashes/locations, the completed spot checks and an RFC-3339 review time. Missing or unresolved
+findings block progress. Correct overbroad or contradicted claims and review the corrected
+candidate before clearance; a partial finding is not a pass.
+
+Both `verify` and ordinary `apply` require a current clearance bound to the candidate and review.
+Changing source, semantic Markdown, selected scope or review after clearance makes that clearance
+stale. Refresh the plan when its evidence changes, complete the audit again, and rerun `prepare`,
+`metadata-check` and `verify`. Do not edit the receipt or state to reuse an earlier clearance.
+The final heartbeat projects the already-reviewed Markdown; it does not repair its meaning.
+
+The aftercheck follows the original blueprint method: derive claims from current source; retain
+canonical IDs and typed references; use the narrowest supporting section; distinguish current
+implementation facts from historical requirements and unresolved observations. State only
+relationships proved by the cited source. A source/document sample identifies the exact claim,
+source location, result and revision anchors. Its pass concerns that sample, not every claim in
+the codebase. Preserve existing detailed evidence and one canonical representation of graph
+metadata rather than adding duplicate facts or changing the context schema.
+
+This gate makes the maintenance work and its evidence checkable. It is not an automatic proof
+that an LLM's explanation is true, an independent reviewer identity check, a build/test runner or
+a proof of complete semantic dependency discovery. It covers ordinary source/header patches
+and existing-file code changes in authority migrations. New and removed files retain their
+separate migration review; the gate does not invent a baseline header for a new file. Static
+source-set migrations reject edits to retained existing source paths.
 
 <a id="s-header-and-topology-behavior"></a>
 ## Header and topology behavior
@@ -183,11 +252,17 @@ source-set-checkout -> edit isolated candidate -> source-set-prepare -> source-s
 ```
 
 `source-set-checkout` copies the sealed governed project into Workshop transaction staging. The
-agent creates/deletes/renames/edits only inside that candidate. `source-set-prepare` recomputes the
+agent creates/deletes/renames sources only inside that candidate. `source-set-prepare` recomputes the
 bounded static source membership and generated Markdown/machine authority. `source-set-verify`
 builds and verifies the candidate KAIROS/Workshop corpus in isolation. `source-set-apply` is the only
 step allowed to alter live source membership; it advances source files, active/tombstoned Markdown,
 machine authority, database projection and seal together, ending at `POSTCHECK_VERIFIED`.
+
+An existing source path must retain its sealed bytes in a source-set candidate. Combining a
+membership change with edits to an existing source fails with `ORDINARY_METADATA_PATCH_REQUIRED`
+before document regeneration. Apply those existing-source edits through the ordinary metadata
+workflow before or after the membership migration. Adding a source does not bypass the aftercheck
+for an existing source patch.
 
 The generic source-set transaction fails closed if build/config authority changes or C-family source/
 header topology changes. Those transitions use stronger authority paths; the static source-set path
@@ -215,6 +290,14 @@ regenerates mechanical evidence, advances current derived compiler/include secti
 source index and stages machine authority. Removed managed implementation documents are retained as
 `superseded`; they cease to be active external corpus members but remain addressable historical
 evidence.
+
+If existing source/header bytes change, update their semantic headers in `work/blueprints`, run
+`metadata-plan`, and complete `review/metadata_audit.json` before `authority-prepare`. Run
+`metadata-check` after preparation and before `authority-verify` and `authority-apply`. These
+steps enforce the same actual header changes, field reviews, source/document samples and fresh
+hash-bound clearance as an ordinary patch. Created and removed files keep the migration's
+explicit creation/removal reviews. A metadata change after clearance requires renewed preparation,
+metadata checking and verification; refresh the plan and audit when their evidence has changed.
 
 `authority-verify` promotes the candidate document set into an isolated KAIROS shadow and requires
 the staged Workshop corpus, database projection and exact ledgers to verify before live paths can

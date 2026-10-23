@@ -14,6 +14,7 @@ for value in (PACKAGE_ROOT, WORKSHOP_SRC):
 
 from kickstart.binding import initialize_project  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 from runtime_sync_workshop.util import WorkshopError  # noqa: E402
 
 
@@ -116,7 +117,9 @@ class KickstartWorkshopIntegrationTests(unittest.TestCase):
                 impact="none",
                 reason="Comment-only source edit leaves semantic implementation metadata unchanged",
             )
+            complete_metadata_audit(engine, checkout)
             engine.prepare(checkout["transaction_id"])
+            engine.metadata_check(checkout["transaction_id"])
             engine.verify(checkout["transaction_id"])
             source_apply = engine.apply(checkout["transaction_id"])
             self.assertTrue(source_apply["bit_exact"])
@@ -145,7 +148,9 @@ class KickstartWorkshopIntegrationTests(unittest.TestCase):
                 impact="none",
                 reason="Comment-only header edit leaves semantic implementation metadata unchanged",
             )
+            complete_metadata_audit(engine, checkout)
             engine.prepare(checkout["transaction_id"])
+            engine.metadata_check(checkout["transaction_id"])
             engine.verify(checkout["transaction_id"])
             header_apply = engine.apply(checkout["transaction_id"])
             self.assertTrue(header_apply["bit_exact"])
@@ -203,9 +208,11 @@ class KickstartWorkshopIntegrationTests(unittest.TestCase):
                 impact="updated",
                 reason="The semantic include dependency changed and its implementation document was reviewed",
             )
+            complete_metadata_audit(engine, checkout)
             engine.prepare(checkout["transaction_id"])
             state = json.loads((work.parent / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["authority_documents"], ["docs/PROJECT_SOURCE_INDEX.md"])
+            engine.metadata_check(checkout["transaction_id"])
             engine.verify(checkout["transaction_id"])
             receipt = engine.apply(checkout["transaction_id"])
             after = (workspace / "docs" / "PROJECT_SOURCE_INDEX.md").read_text(encoding="utf-8")

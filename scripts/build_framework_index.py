@@ -75,6 +75,11 @@ GOLD_QUERIES: tuple[tuple[str, tuple[str, ...], int], ...] = (
         ("KAIROS_LLM_OPERATING_CONTRACT#s-context-policy",),
         1,
     ),
+    (
+        "How must I check metadata before applying a source patch?",
+        ("KAIROS_WORKSHOP#s-metadata-aftercheck",),
+        1,
+    ),
 )
 
 

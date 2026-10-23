@@ -17,6 +17,7 @@ if str(WORKSHOP_SRC) not in sys.path:
 
 from runtime_sync_workshop.corpus import build_corpus_manifest  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
+from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 
 
 def _project_spec() -> dict:
@@ -101,8 +102,10 @@ class UniversalWorkshopRoundtripTests(unittest.TestCase):
         self.assertTrue(selected)
         review_path.write_text(json.dumps(review, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+        complete_metadata_audit(engine, checkout)
         prepared = engine.prepare(transaction_id)
         self.assertEqual(prepared["state"], "PREPARED")
+        engine.metadata_check(transaction_id)
         verified = engine.verify(transaction_id)
         self.assertEqual(verified["state"], "SHADOW_VERIFIED")
         receipt = engine.apply(transaction_id)

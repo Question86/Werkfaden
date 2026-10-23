@@ -44,6 +44,12 @@ def _parser() -> argparse.ArgumentParser:
     include_documents.add_argument("--document", action="append", required=True)
     include_documents.add_argument("--reason", required=True)
 
+    metadata_plan = sub.add_parser("metadata-plan", help="create required header aftercheck and source samples for a source patch or authority migration")
+    metadata_plan.add_argument("transaction_id")
+    metadata_plan.add_argument("--refresh", action="store_true", help="replace a stale audit draft and repeat its manual review")
+    metadata_check = sub.add_parser("metadata-check", help="validate completed header reviews and source samples; bind approval to the prepared patch")
+    metadata_check.add_argument("transaction_id")
+
     source_set_checkout = sub.add_parser(
         "source-set-checkout",
         help="open a Workshop-owned candidate tree for static source create/delete/rename",
@@ -200,6 +206,10 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         return engine.checkout(arguments.source, purpose=arguments.purpose, tests=arguments.test, documents=arguments.document)
     if command == "include-documents":
         return engine.include_documents(arguments.transaction_id, arguments.document, reason=arguments.reason)
+    if command == "metadata-plan":
+        return engine.metadata_plan(arguments.transaction_id, refresh=arguments.refresh)
+    if command == "metadata-check":
+        return engine.metadata_check(arguments.transaction_id)
     if command == "source-set-checkout":
         return source_set.checkout(purpose=arguments.purpose)
     if command == "source-set-recover-orphan":

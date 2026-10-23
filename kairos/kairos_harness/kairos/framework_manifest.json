@@ -1,16 +1,16 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "049aa4dff3b0d5e3f870dff168aea78205aa38a48c12a5de88612ac52ebcc641",
+  "database_content_sha256": "29a8e0979d3a95bc35f4e66302dc4ca30366e9b28f2dd4b4cfba91e07fea99d2",
   "database_file": "framework.db",
-  "database_sha256": "363d2b04e7808669f37c9648032346c9e5670e72943caa8e283d811864065361",
+  "database_sha256": "4181d33362fb2ce20cf1c5c8199a9ac55daa5b4d1947ed4dcf0361552e088ac8",
   "derived": true,
   "document_count": 24,
   "documents": [
     {
       "artifact_id": "KAIROS_FRAMEWORK_RULES",
       "path": "AGENTS.md",
-      "sha256": "296e28703fc66b8b900abb7019c7f1535ce8dd768c7fec033cfb4077c424355c"
+      "sha256": "b70ca1415f591b2bb7821958d28affccad5020b45b53a0e5b6c70c6615bfa8df"
     },
     {
       "artifact_id": "KAIROS_README",
@@ -75,7 +75,7 @@
     {
       "artifact_id": "KAIROS_WORKSHOP",
       "path": "docs/WORKSHOP.md",
-      "sha256": "d607bbbdc92413d7362f257b146cef491634a6a51f6d757f3f9faea90eff29e5"
+      "sha256": "7add29a13d0e32e012da37adc5a83f0a218b429df7d3ac57f0ae3640a19a8a70"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
@@ -115,12 +115,12 @@
     {
       "artifact_id": "KAIROS_WORKSHOP_README",
       "path": "workshop/README.md",
-      "sha256": "dc7b659d363f79f2e17f2921373c7c921644e4a8781f82d8a2b735b3cb4468e0"
+      "sha256": "e62a456091824140430fadfa9d1a770212a3a1ed92da8d4d9de424413920ee83"
     },
     {
       "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
       "path": "workshop/OPERATIONS.md",
-      "sha256": "993bcc3ee709ffe77e81df4dc2835a5c5cdf8095e7944f02091d389c4a6062a4"
+      "sha256": "6b18ae045c185bd1f4b75bdd507a7c5f57bdfb408e7a9fe3f53b5fac2d92c037"
     },
     {
       "artifact_id": "KAIROS_SECURITY_BOUNDARY",
@@ -199,6 +199,14 @@
       ],
       "primary": "KAIROS_LLM_OPERATING_CONTRACT#s-context-policy",
       "query": "How should an LLM acquire context in KAIROS?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSHOP#s-metadata-aftercheck"
+      ],
+      "primary": "KAIROS_WORKSHOP#s-metadata-aftercheck",
+      "query": "How must I check metadata before applying a source patch?",
       "required_top_k": 1
     }
   ],

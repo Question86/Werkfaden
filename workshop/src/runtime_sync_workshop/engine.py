@@ -38,6 +38,7 @@ from .corpus import (
     verify_project_intake_binding,
 )
 from .scientific import ScientificParityGate, transaction_work_manifest
+from .metadata_gate import MetadataGate, POLICY_SCHEMA
 from .context_documents import ContextDocuments
 from .util import (
     WorkshopError,
@@ -62,6 +63,7 @@ class WorkshopEngine:
     def __init__(self, config_path: Path) -> None:
         self.config = load_config(config_path)
         self.scientific_gate = ScientificParityGate(self.config)
+        self.metadata_gate = MetadataGate(self.config)
         self.context_documents = ContextDocuments(self.config)
         self.config.state_directory.mkdir(parents=True, exist_ok=True)
         self.config.transaction_directory.mkdir(parents=True, exist_ok=True)
@@ -382,6 +384,10 @@ class WorkshopEngine:
             "dependent_tests": selected_tests,
             "documents": selected_documents,
             "document_review": str(root / "review" / "context_review.json") if selected_documents else None,
+            "metadata_aftercheck": {
+                "required_for": "every changed source or header, in every supported language",
+                "instructions": "Update the affected semantic header and sections in work/blueprints, then run metadata-plan. Inspect the selected source samples, complete review/metadata_audit.json, and run prepare -> metadata-check -> verify -> apply. A body-only edit or regenerated hashes do not satisfy the header obligation.",
+            },
         }
 
     def include_documents(
@@ -402,7 +408,7 @@ class WorkshopEngine:
         if added:
             self.context_documents.checkout(root, state, added)
             state["state"] = "CHECKED_OUT"
-            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow"):
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow", "metadata_check"):
                 state.pop(key, None)
             self._save_transaction(root, state, event="CONTEXT_SCOPE_EXPANDED", details={
                 "documents": added, "reason": reason.strip(),
@@ -413,6 +419,94 @@ class WorkshopEngine:
             "work_directory": str(root / "work"),
             "document_review": str(root / "review" / "context_review.json"),
         }
+
+    def metadata_plan(self, transaction_id: str, *, refresh: bool = False) -> dict[str, Any]:
+        """Stage an unanswered, deterministic aftercheck for the edited candidate."""
+        root, state = self._load_transaction(transaction_id)
+        self._require_lease(transaction_id)
+        if state.get("schema") not in {"runtime-sync-transaction/v1", "runtime-sync-authority-migration/v1"} or state["state"] not in PRE_APPLY_STATES:
+            raise WorkshopError("TRANSACTION_STATE_INVALID", "metadata-plan requires a source patch or authority migration before apply")
+        self._assert_live_baseline(state)
+        plan = self.metadata_gate.plan(root, state)
+        target = root / "review" / "metadata_audit.json"
+        preserve = False
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or not target.is_file() or target.stat().st_nlink != 1:
+                raise WorkshopError("WORK_FILE_INVALID", "metadata audit must be a regular transaction file")
+            existing = read_json(target)
+            preserve = isinstance(existing, dict) and existing.get("plan_sha256") == plan["plan_sha256"]
+            if not preserve and not refresh:
+                raise WorkshopError("METADATA_PLAN_STALE", "candidate changed; run metadata-plan --refresh and repeat the aftercheck")
+        if not preserve or refresh:
+            atomic_write_json(target, self.metadata_gate.draft(plan))
+            state["state"] = "CHECKED_OUT"
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow", "metadata_check"):
+                state.pop(key, None)
+            self._save_transaction(root, state, event="METADATA_PLAN_CREATED", details={
+                "plan_sha256": plan["plan_sha256"], "required": plan["required"],
+            })
+        prefix = "authority-" if state.get("transaction_kind") == "authority_migration" else ""
+        return {
+            "schema": "runtime-sync-metadata-plan-result/v1", "transaction_id": transaction_id,
+            "state": state["state"], "plan": plan, "metadata_audit": str(target),
+            "existing_review_preserved": preserve and not refresh,
+            "instructions": f"Review every listed header field and source sample against the edited files. Fill exact document claims, reasons and pass/partial/fail verdicts in metadata_audit.json; correct partial/fail findings before {prefix}prepare. Then run metadata-check, {prefix}verify and {prefix}apply. The tool does not supply the semantic judgment.",
+            "review_format": {
+                "field_reviews": "For every field, set action to updated or unchanged according to the actual values, explain why in reason, and list supporting sample_ids from this subject.",
+                "samples": "Preserve every generated sample fact. Set verdict to pass, partial or fail, explain the code-to-metadata relationship in reason, and supply nonempty metadata_evidence.",
+                "metadata_evidence_example": {"field": "capsule", "quote": "<exact quotation from the candidate capsule, at least 8 characters>"},
+                "review_identity": "Set reviewer and reviewed_at; reviewed_at must be a valid timezone-aware RFC3339 timestamp.",
+                "completion": "Every explanation needs at least 12 characters; all samples must pass. Length and exact quotations do not establish semantic truth: inspect and correct the claims yourself.",
+            },
+        }
+
+    def _metadata_work_manifest(self, root: Path, state: dict[str, Any]) -> dict[str, Any]:
+        if state.get("schema") == "runtime-sync-authority-migration/v1":
+            from .migration import AuthorityMigration
+            return AuthorityMigration(self)._work_package(root, state)
+        return transaction_work_manifest(self.config, root, state)
+
+    def metadata_check(self, transaction_id: str) -> dict[str, Any]:
+        """Verify the completed aftercheck and bind its receipt to prepared bytes."""
+        root, state = self._load_transaction(transaction_id)
+        self._require_lease(transaction_id)
+        if state.get("schema") not in {"runtime-sync-transaction/v1", "runtime-sync-authority-migration/v1"} or state["state"] not in {"PREPARED", "SHADOW_VERIFIED"}:
+            raise WorkshopError("TRANSACTION_STATE_INVALID", "metadata-check requires a prepared source patch or authority migration")
+        self._assert_live_baseline(state)
+        before = self._metadata_work_manifest(root, state)
+        if before["package_sha256"] != state.get("prepared_work_package_sha256"):
+            raise WorkshopError("WORK_CHANGED_AFTER_PREPARE", "candidate or audit changed; repeat prepare before metadata-check")
+        result = self.metadata_gate.validate(root, state)
+        after = self._metadata_work_manifest(root, state)
+        if before["package_sha256"] != after["package_sha256"]:
+            raise WorkshopError("WORK_CHANGED_DURING_METADATA_CHECK", "candidate changed during metadata aftercheck")
+        receipt = {
+            "schema": "runtime-sync-metadata-check/v1", "policy": POLICY_SCHEMA,
+            "transaction_id": transaction_id, "work_package_sha256": after["package_sha256"],
+            "verified": True, "checked_at": utc_now(), "review": result,
+        }
+        self._write_receipt("metadata-check", receipt)
+        state["metadata_check"] = receipt
+        self._save_transaction(root, state, event="METADATA_CHECKED", details={
+            "work_package_sha256": after["package_sha256"], "required": result.get("required", True),
+        })
+        return {**receipt, "state": state["state"]}
+
+    def _assert_metadata_checked(self, root: Path, state: dict[str, Any], work_sha256: str) -> dict[str, Any]:
+        result = self.metadata_gate.validate(root, state)
+        if not result.get("required", True):
+            return result
+        receipt = state.get("metadata_check")
+        if not isinstance(receipt, dict):
+            raise WorkshopError("METADATA_CHECK_REQUIRED", "run metadata-check after prepare before verify or apply")
+        if (receipt.get("schema") != "runtime-sync-metadata-check/v1"
+                or receipt.get("policy") != POLICY_SCHEMA
+                or receipt.get("transaction_id") != state["transaction_id"]
+                or receipt.get("verified") is not True
+                or receipt.get("work_package_sha256") != work_sha256
+                or receipt.get("review") != result):
+            raise WorkshopError("METADATA_CHECK_STALE", "metadata aftercheck does not bind this exact prepared candidate")
+        return result
 
     def _assert_live_baseline(self, state: dict[str, Any]) -> dict[str, Any]:
         current = build_corpus_manifest(self.config)
@@ -876,13 +970,15 @@ class WorkshopEngine:
         self._require_lease(transaction_id)
         if state["state"] not in PRE_APPLY_STATES:
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"prepare is not allowed from {state['state']}")
-        baseline_manifest = read_json(root / "baseline" / "manifest.json")
-        self._assert_live_baseline(state)
-        if state["state"] == "SHADOW_VERIFIED":
+        # Preparation always invalidates earlier approvals, including when a new
+        # candidate fails a later gate. Do not leave an old receipt usable.
+        if state["state"] in {"PREPARED", "SHADOW_VERIFIED"} or "metadata_check" in state:
             state["state"] = "CHECKED_OUT"
-            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow"):
+            for key in ("prepared_work_package_sha256", "verified_work_package_sha256", "shadow", "metadata_check"):
                 state.pop(key, None)
             self._save_transaction(root, state, event="VERIFICATION_REOPENED")
+        baseline_manifest = read_json(root / "baseline" / "manifest.json")
+        self._assert_live_baseline(state)
         reviews = self._review_map(root, state)
         review_blockers: list[dict[str, Any]] = []
         change_rows: list[dict[str, Any]] = []
@@ -932,10 +1028,9 @@ class WorkshopEngine:
                 if baseline_header and work_header:
                     token_changed = token_changed or cpp_token_signature(baseline_header.read_bytes()) != cpp_token_signature(work_header.read_bytes())
             else:
-                # Universal static blueprints intentionally make no semantic claim
-                # beyond exact bytes/ledger. A language-agnostic C++ lexer must not
-                # manufacture a semantic-metadata obligation for Python/Rust/JS/etc.
-                # Their exact mechanical mirror still advances on every byte change.
+                # This legacy token-review rule is C-family-specific. The separate
+                # MetadataGate below requires actual contextual header maintenance
+                # and source evidence for byte changes in every supported language.
                 token_changed = False
             changed = code_changed or semantic_changed
             review = reviews.get(source)
@@ -1008,6 +1103,14 @@ class WorkshopEngine:
             raise
         if not any(row["changed"] for row in change_rows) and not state.get("changed_documents"):
             raise WorkshopError("TRANSACTION_NO_CHANGES", "prepare found no source, header, or semantic document changes")
+        try:
+            metadata_aftercheck = self.metadata_gate.validate(root, state)
+        except WorkshopError as exc:
+            state["state"] = "AWAITING_METADATA_REVIEW"
+            self._save_transaction(root, state, event="METADATA_AFTERCHECK_REQUIRED", details={
+                "code": exc.code, "details": exc.details,
+            })
+            raise
         for source, raw in generated.items():
             name = baseline_manifest["records"][source]["blueprint"]["filename"]
             atomic_write_bytes(root / "work" / "blueprints" / name, raw)
@@ -1037,7 +1140,7 @@ class WorkshopEngine:
         state["prepared_work_package_sha256"] = transaction_work_manifest(self.config, root, state)["package_sha256"]
         state["state"] = "PREPARED"
         self._save_transaction(root, state, event="PREPARE_COMPLETED", details=change_rows)
-        return {"schema": "runtime-sync-prepare/v1", "transaction_id": transaction_id, "state": state["state"], "changes": change_rows, "document_changes": document_changes}
+        return {"schema": "runtime-sync-prepare/v1", "transaction_id": transaction_id, "state": state["state"], "changes": change_rows, "document_changes": document_changes, "metadata_aftercheck": metadata_aftercheck, "next": "metadata-check -> verify -> apply"}
 
     def _shadow_native(self, root: Path, state: dict[str, Any], baseline_manifest: dict[str, Any]) -> dict[str, Any]:
         shadow = root / "shadow"
@@ -1228,6 +1331,7 @@ class WorkshopEngine:
         prepared_work = transaction_work_manifest(self.config, root, state)
         if prepared_work["package_sha256"] != state.get("prepared_work_package_sha256"):
             raise WorkshopError("WORK_CHANGED_AFTER_PREPARE", "code, context, or review changed after prepare; run prepare again before verify")
+        self._assert_metadata_checked(root, state, prepared_work["package_sha256"])
         intake_stage = state.get("project_intake_authority")
         if isinstance(intake_stage, dict):
             staged_intake = root / "work" / "machine" / str(intake_stage.get("path", ""))
@@ -1527,6 +1631,7 @@ class WorkshopEngine:
                     "current": current_work["package_sha256"],
                 },
             )
+        metadata_aftercheck = self._assert_metadata_checked(root, state, current_work["package_sha256"])
         scientific_parity = self.scientific_gate.assert_apply_ready(root, state)
         adapter = str(self.config.raw.get("shadow_adapter", "native"))
         changed_managed = [f"code/{baseline_manifest['records'][source]['blueprint']['filename']}" for source in state["changed_sources"]]
@@ -1664,6 +1769,7 @@ class WorkshopEngine:
                 "changed_documents": state.get("changed_documents", []),
                 "work_package_sha256": state["verified_work_package_sha256"],
                 "scientific_parity": scientific_parity,
+                "metadata_aftercheck": metadata_aftercheck,
             }
             self._write_receipt("postcheck", receipt)
             return receipt
