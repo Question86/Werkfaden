@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import closing
 import sqlite3
 import sys
 import tempfile
@@ -242,7 +243,7 @@ class ContextTransactionTests(unittest.TestCase):
         self.assertEqual((self.workspace / BEHAVIOR).read_bytes(), work_doc.read_bytes())
         metadata = split_frontmatter(work_doc.read_text(encoding="utf-8")).metadata
         self.assertEqual(metadata["revision"], 2)
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection:
             row = connection.execute(
                 "SELECT revision,capsule,claim_boundary FROM artifacts WHERE artifact_id='APP_BEHAVIOR'",
             ).fetchone()
@@ -431,7 +432,7 @@ class ContextTransactionTests(unittest.TestCase):
                 self.assertEqual(live_doc.read_bytes(), work_doc.read_bytes())
                 raise OSError("injected interruption after context copy and before heartbeat")
 
-        with patch("runtime_sync_workshop.engine.copy_exact", side_effect=interrupted_copy):
+        with patch.dict(self.engine.apply.__func__.__globals__, {"copy_exact": interrupted_copy}):
             with self.assertRaises(WorkshopError) as raised:
                 self.engine.apply(checkout["transaction_id"])
         self.assertTrue(interrupted)
@@ -440,7 +441,7 @@ class ContextTransactionTests(unittest.TestCase):
         self.assertFalse(self.engine.lease_path.exists())
         for path, original in originals.items():
             self.assertEqual(path.read_bytes(), original, str(path))
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(connection.execute(
                 "SELECT revision FROM artifacts WHERE artifact_id='APP_BEHAVIOR'",
             ).fetchone()[0], 1)
@@ -472,7 +473,7 @@ class ContextTransactionTests(unittest.TestCase):
         self.assertEqual((self.workspace / BEHAVIOR).read_bytes(), work_doc.read_bytes())
         self.assertIn("revisedcounter", work_doc.read_text(encoding="utf-8"))
         self.assertEqual(split_frontmatter(work_doc.read_text(encoding="utf-8")).metadata["revision"], 2)
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(connection.execute(
                 "SELECT revision FROM artifact_revisions WHERE artifact_id='APP_BEHAVIOR' ORDER BY revision",
             ).fetchall(), [(1,), (2,)])

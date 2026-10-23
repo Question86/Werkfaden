@@ -1,0 +1,35 @@
+name: JEV review port and combined Workshop regression
+
+on:
+  push:
+    branches: ['codex/typed-ai-review-gate']
+  pull_request:
+    paths: ['review/**', 'workshop/**', 'kairos/**', 'kickstart/**', 'docs/WORKSHOP.md']
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline JEV transport, evidence and binding characterization
+        run: python -m unittest discover -s review/tests -v
+      - name: Combined Workshop metadata and Guardian regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+      - name: Harness regression including Guardian bridge
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+      - name: Kickstart regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+      - name: Verify rebuilt framework projection
+        run: python scripts/build_framework_index.py --output /tmp/rebuilt-framework.db --manifest /tmp/rebuilt-framework.json --verify-determinism --compare-content-with kairos/kairos_harness/kairos/framework.db

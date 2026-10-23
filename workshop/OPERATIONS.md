@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP_OPERATIONS"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP_OPERATIONS"
-updated_at = "2026-10-23T00:00:00Z"
+updated_at = "2026-10-23T23:52:16Z"
 capsule = "Operational sequence for ordinary Workshop patches: update source and semantic headers, complete deterministic metadata spot checks, obtain bound clearance, verify and apply before heartbeat postcheck."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP_OPERATIONS"]
-facets = ["workshop", "operations", "transaction", "semantic-context", "metadata-aftercheck", "scratch-retention"]
+facets = ["ai-review", "guardian", "workshop", "operations", "transaction", "semantic-context", "metadata-aftercheck", "scratch-retention"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 
@@ -34,14 +34,21 @@ target = "s-scratch-retention"
 query = "What is the operational sequence for a Workshop transaction?"
 expected = "KAIROS_WORKSHOP_OPERATIONS#s-overview"
 required_top_k = 1
+[[answers]]
+intent = "ai_review"
+question = "Does Workshop enforce JEV AI approval before Apply?"
+target = "s-standalone-ai-review"
+
 +++
 # Workshop operations
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Update source and semantic metadata, complete the aftercheck, then verify and apply the bound package.
-- [`s-context-review`](#s-context-review) — Review semantic headers and sections before preparing the complete source and document package.
-- [`s-scratch-retention`](#s-scratch-retention) — Keep active transactions and recovery evidence; bound disposable experiments without deleting governed knowledge.
+- `s-standalone-ai-review` â€” Standalone JEV submission, combined Guardian/metadata checks and missing AI enforcement.
+
+- [`s-overview`](#s-overview) â€” Update source and semantic metadata, complete the aftercheck, then verify and apply the bound package.
+- [`s-context-review`](#s-context-review) â€” Review semantic headers and sections before preparing the complete source and document package.
+- [`s-scratch-retention`](#s-scratch-retention) â€” Keep active transactions and recovery evidence; bound disposable experiments without deleting governed knowledge.
 
 <a id="s-overview"></a>
 ## Overview
@@ -197,3 +204,12 @@ the evidence needed to explain an applied change. Any later pruning must enumera
 paths, confirm their terminal state and preserve referenced evidence before deleting them.
 Configured dependent tests and governed Markdown are source artifacts, not disposable Workshop
 outputs. Scratch cleanup does not erase knowledge from the KAIROS database.
+
+<a id="s-standalone-ai-review"></a>
+## Standalone AI review and combined branch
+
+> Capsule: The standalone JEV port submits actual changed code but does not authorize or gate Workshop Apply.
+
+The publication combines Guardian v2 with the metadata-aware Workshop core. Existing deterministic gates retain their own scope. Optional JEV submission, separate evidence-sufficiency questions and reconsideration tools live under `review/`; see [the operating instructions](../review/README.md) and [the comparison](../review/COMPARISON.md). No supported Apply path consumes a JEV approval. A metadata reviewer field or Guardian receipt is not evidence of an AI call.
+
+When Guardian is required, normal-transaction context documents remain unsupported and fail closed; separately proven auxiliary scope is required. Without Guardian enforcement, the existing context-document transaction path retains its metadata checks.

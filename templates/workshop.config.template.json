@@ -12,9 +12,7 @@
   "kairos_workspace": "<KAIROS workspace, absolute or config-relative>",
   "kairos_harness": "@bundled",
   "kairos_database": "<KAIROS .kairos/kairos.db, absolute or config-relative>",
-  "include_roots": [
-    "<project include root, absolute or config-relative>"
-  ],
+  "include_roots": ["<project include root, absolute or config-relative>"],
   "expected_translation_units": 0,
   "blueprint_ignore": [],
   "auxiliary_documents": [],
@@ -25,6 +23,10 @@
   "dependent_tests": {},
   "dependent_test_root": "tests",
   "dependent_test_suffixes": [".c", ".cc", ".cpp", ".cxx", ".cu"],
+  "guardian_required": false,
+  "guardian_memory_file": "",
+  "guardian_memory_requirements": {},
   "state_directory": ".state",
-  "transaction_directory": "transactions"
+  "transaction_directory": "transactions",
+  "guardian_fresh_run_required_validations": []
 }

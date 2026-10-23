@@ -16,4 +16,4 @@ kairos = "kairos.cli:main"
 packages = ["kairos"]
 
 [tool.setuptools.package-data]
-kairos = ["framework.db", "framework_manifest.json"]
+kairos = ["framework.db", "framework_manifest.json", "quarantine/*.txt"]

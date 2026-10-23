@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 4
+revision = 5
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP"
-updated_at = "2026-10-23T00:00:00Z"
+updated_at = "2026-10-23T23:52:16Z"
 capsule = "Authoritative Workshop lifecycle for jointly updated code and Markdown, with required semantic header changes, evidence-backed metadata afterchecks, hash-bound apply clearance and heartbeat projection."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP"]
-facets = ["workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration"]
+facets = ["ai-review", "guardian", "workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 
@@ -64,17 +64,24 @@ required_top_k = 1
 query = "How must I check metadata before applying a source patch?"
 expected = "KAIROS_WORKSHOP#s-metadata-aftercheck"
 required_top_k = 1
+[[answers]]
+intent = "ai_review"
+question = "Does Workshop enforce JEV AI approval before Apply?"
+target = "s-standalone-ai-review"
+
 +++
 # Workshop module
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
-- [`s-semantic-context-transactions`](#s-semantic-context-transactions) — A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
-- [`s-metadata-aftercheck`](#s-metadata-aftercheck) — Every ordinary code patch requires changed semantic headers, field-by-field review and bound source/document spot checks before apply.
-- [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) — Header-only project records are valid Workshop checkout targets and can be changed through
-- [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) — Create, delete and rename of static-ecosystem source files use a separate candidate migration.
-- [`s-authority-migration`](#s-authority-migration) — authority-checkout requires an isolated candidate project tree plus its compile_commands.json
+- `s-standalone-ai-review` â€” Standalone JEV submission, combined Guardian/metadata checks and missing AI enforcement.
+
+- [`s-overview`](#s-overview) â€” The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
+- [`s-semantic-context-transactions`](#s-semantic-context-transactions) â€” A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
+- [`s-metadata-aftercheck`](#s-metadata-aftercheck) â€” Every ordinary code patch requires changed semantic headers, field-by-field review and bound source/document spot checks before apply.
+- [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) â€” Header-only project records are valid Workshop checkout targets and can be changed through
+- [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) â€” Create, delete and rename of static-ecosystem source files use a separate candidate migration.
+- [`s-authority-migration`](#s-authority-migration) â€” authority-checkout requires an isolated candidate project tree plus its compile_commands.json
 
 <a id="s-overview"></a>
 ## Overview
@@ -314,3 +321,12 @@ the new compiler database.
 The optional parity interface is deliberately empty until a project supplies a reproducible
 build/scientific/product-specific adapter. Mechanical synchronization is not promoted into
 an application-domain correctness claim.
+
+<a id="s-standalone-ai-review"></a>
+## Standalone AI review and combined branch
+
+> Capsule: The standalone JEV port submits actual changed code but does not authorize or gate Workshop Apply.
+
+The publication combines Guardian v2 with the metadata-aware Workshop core. Existing deterministic gates retain their own scope. Optional JEV submission, separate evidence-sufficiency questions and reconsideration tools live under `review/`; see [the operating instructions](../review/README.md) and [the comparison](../review/COMPARISON.md). No supported Apply path consumes a JEV approval. A metadata reviewer field or Guardian receipt is not evidence of an AI call.
+
+When Guardian is required, normal-transaction context documents remain unsupported and fail closed; separately proven auxiliary scope is required. Without Guardian enforcement, the existing context-document transaction path retains its metadata checks.
