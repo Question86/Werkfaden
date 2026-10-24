@@ -13,6 +13,8 @@ from .corpus import build_corpus_manifest
 from .guardian import InvestigationGuardian, guardian_required
 from .util import WorkshopError, read_json
 from .jev_admission import require_candidate_jev_clearance
+from .tx_documents import update_document, assert_projected, assert_no_pending
+from .tx_retention import enforce_pool_limit, snapshot, assert_verified_snapshot, compact, materialized_worktrees, rehydrate
 
 
 class WorkshopEngine(_CoreWorkshopEngine):
@@ -108,6 +110,10 @@ class WorkshopEngine(_CoreWorkshopEngine):
             self._guardian_context = None
 
     def _acquire_lease(self, transaction_id: str) -> dict[str, Any]:
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            assert_no_pending(self)
+        if self.config.raw.get("tx_retention_required", False) is True:
+            enforce_pool_limit(self)
         required = self._guardian_enabled()
         context = self._guardian_context
         if required and context is None:
@@ -134,6 +140,10 @@ class WorkshopEngine(_CoreWorkshopEngine):
             transaction_id = str(state.get("transaction_id", ""))
             if transaction_id:
                 self.guardian().observe_transaction_state(transaction_id, event=event, state=state)
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            # Publication failures are durably marked and must not turn an
+            # already-applied change into an apparent pre-apply failure.
+            update_document(self, state, event=event)
 
     def _release_lease(self, transaction_id: str) -> None:
         if not self._guardian_enabled():
@@ -163,7 +173,14 @@ class WorkshopEngine(_CoreWorkshopEngine):
         source_list = sorted({str(value).replace("\\", "/") for value in sources})
         test_list = sorted({str(value).replace("\\", "/") for value in tests})
         if not self._guardian_enabled() and not guardian_id:
-            return super().checkout(source_list, purpose=purpose, tests=test_list, documents=document_list)
+            result = super().checkout(source_list, purpose=purpose, tests=test_list, documents=document_list)
+            if self.config.raw.get("transaction_documents_required", False) is True:
+                try:
+                    assert_projected(self, result["transaction_id"])
+                except Exception:
+                    super().abort(result["transaction_id"])
+                    raise
+            return result
         guardian_id = str(guardian_id or "").strip()
         if not guardian_id:
             raise WorkshopError("GUARDIAN_REQUIRED", "normal checkout requires --guardian while guardian_required=true")
@@ -176,6 +193,12 @@ class WorkshopEngine(_CoreWorkshopEngine):
         with self.guardian_transaction(guardian_id=guardian_id, kind="normal", request=request, state_ticket_id=ticket):
             result = super().checkout(source_list, purpose=purpose, tests=test_list, documents=document_list)
         result["guardian"] = self.guardian().status(guardian_id)
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            try:
+                assert_projected(self, result["transaction_id"])
+            except Exception:
+                super().abort(result["transaction_id"])
+                raise
         return result
 
     def include_documents(self, transaction_id: str, documents: Iterable[str], *, reason: str) -> dict[str, Any]:
@@ -183,13 +206,58 @@ class WorkshopEngine(_CoreWorkshopEngine):
             raise WorkshopError("GUARDIAN_CONTEXT_DOCUMENTS_UNSUPPORTED", "Guardian v2 requires separately proven auxiliary document scope")
         return super().include_documents(transaction_id, documents, reason=reason)
 
+    def verify(self, transaction_id: str) -> dict[str, Any]:
+        result = super().verify(transaction_id)
+        if self.config.raw.get("tx_retention_required", False) is True:
+            snapshot(self, transaction_id)
+        return result
+
     def apply(self, transaction_id: str) -> dict[str, Any]:
         # Check at the authoritative public Engine boundary (not merely CLI).
         # Never treat a standalone Jev workflow result as an implicit approval.
         root, state = self._load_transaction(transaction_id)
+        if self.config.raw.get("tx_retention_required", False) is True:
+            assert_verified_snapshot(self, transaction_id)
         if self.config.raw.get("jev_apply_required", False) is True:
             require_candidate_jev_clearance(self.config, root, state)
-        return super().apply(transaction_id)
+        result = super().apply(transaction_id)
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            assert_projected(self, transaction_id)
+        return result
+
+    def abort(self, transaction_id: str) -> dict[str, Any]:
+        result = super().abort(transaction_id)
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            assert_projected(self, transaction_id)
+        return result
+
+    def recover(self, transaction_id: str) -> dict[str, Any]:
+        result = super().recover(transaction_id)
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            assert_projected(self, transaction_id)
+        return result
+
+    def transaction_pool_status(self) -> dict[str, Any]:
+        return {
+            "materialized_count": len(materialized_worktrees(self)),
+            "limit": self.config.raw.get("tx_max_materialized", 10),
+            "retention_enabled": self.config.raw.get("tx_retention_required", False) is True,
+        }
+
+    def compact_transaction(self, transaction_id: str) -> dict[str, Any]:
+        return compact(self, transaction_id)
+
+    def rehydrate_transaction(self, transaction_id: str, manifest_path: Path, destination: Path) -> dict[str, Any]:
+        return rehydrate(self, transaction_id, manifest_path, destination)
+
+    def reconcile_transaction_document(self, transaction_id: str) -> dict[str, Any]:
+        from .tx_documents import publish, pending_path
+        root, state = self._load_transaction(transaction_id)
+        result = publish(self, state)
+        marker = pending_path(self, transaction_id)
+        if marker.is_file():
+            marker.unlink()
+        return result
 
     def authority_recover(self, transaction_id: str, **kwargs: Any) -> dict[str, Any]:
         result = super().authority_recover(transaction_id, **kwargs)

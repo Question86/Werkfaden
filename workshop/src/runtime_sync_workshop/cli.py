@@ -142,6 +142,20 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser("guard-reconcile", help="reconcile a provable Workshop/Guardian crash window without adopting unverified bytes")
         command.add_argument("guardian_id")
 
+    if "tx-document-reconcile" not in sub.choices:
+        command = sub.add_parser("tx-document-reconcile", help="retry the canonical KAIROS transaction document projection without repeating Apply")
+        command.add_argument("transaction_id")
+    if "tx-pool-status" not in sub.choices:
+        sub.add_parser("tx-pool-status", help="inspect bounded materialized TX worktrees")
+    if "tx-compact" not in sub.choices:
+        command = sub.add_parser("tx-compact", help="archive every byte and compact one terminal, SQL-documented TX")
+        command.add_argument("transaction_id")
+    if "tx-rehydrate" not in sub.choices:
+        command = sub.add_parser("tx-rehydrate", help="restore a verified terminal TX archive to a new directory")
+        command.add_argument("transaction_id")
+        command.add_argument("--manifest", required=True)
+        command.add_argument("--destination", required=True)
+
     return parser
 
 
@@ -221,6 +235,15 @@ def execute(arguments: argparse.Namespace) -> dict:
         )
     if command == "guard-reconcile":
         return engine.guardian_reconcile(arguments.guardian_id)
+
+    if command == "tx-document-reconcile":
+        return engine.reconcile_transaction_document(arguments.transaction_id)
+    if command == "tx-pool-status":
+        return engine.transaction_pool_status()
+    if command == "tx-compact":
+        return engine.compact_transaction(arguments.transaction_id)
+    if command == "tx-rehydrate":
+        return engine.rehydrate_transaction(arguments.transaction_id, Path(arguments.manifest), Path(arguments.destination))
 
     if command == "checkout":
         guardian_id, ticket = _require_guardian_checkout(engine, arguments)

@@ -77,6 +77,7 @@ DOCUMENT_TYPES = {
     "gate",
     "session",
     "documentation",
+    "transaction",
 }
 
 LIFECYCLE_STATES = {
@@ -200,6 +201,7 @@ DOCUMENT_TYPE_AUTHORITIES = {
     "gate": {"state_authority"},
     "session": {"routing"},
     "documentation": {"architecture_authority", "operating_contract"},
+    "transaction": {"execution_evidence"},
 }
 
 DEFAULT_DOCUMENT_ROOTS = [

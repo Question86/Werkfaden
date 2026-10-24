@@ -39,7 +39,8 @@
         "router",
         "gate",
         "session",
-        "documentation"
+        "documentation",
+        "transaction"
       ]
     },
     "revision": { "type": "integer", "minimum": 1 },

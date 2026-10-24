@@ -152,7 +152,7 @@ def validate_metadata(metadata: dict[str, Any]) -> None:
     source_time = datetime.strptime(metadata["updated_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     if source_time > datetime.now(timezone.utc) + timedelta(minutes=5):
         raise HeaderError("updated_at cannot be more than five minutes in the future")
-    scoped_types = {"task", "report", "bug", "code", "decision", "research"}
+    scoped_types = {"task", "report", "bug", "code", "decision", "research", "transaction"}
     has_scope_fields = any(key in metadata for key in ("task", "goal", "milestone"))
     if document_type in scoped_types or has_scope_fields:
         scoped = {}
