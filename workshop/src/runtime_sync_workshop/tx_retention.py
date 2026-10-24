@@ -231,7 +231,14 @@ def assert_verified_snapshot(engine: Any, transaction_id: str) -> None:
             rows = info.get("files") or {}
             if not isinstance(rows, dict) or not rows:
                 continue
-            if not any(relative.startswith("work/") for relative in rows):
+            archived_work = {relative: entry for relative, entry in rows.items() if relative.startswith("work/")}
+            if not archived_work:
+                continue
+            current_work = {path.relative_to(root).as_posix(): path for path in _safe_files(root / "work")}
+            if set(current_work) != set(archived_work):
+                continue
+            if any(_sha256_file(current_work[relative]) != entry.get("sha256")
+                   for relative, entry in archived_work.items()):
                 continue
             for relative, entry in rows.items():
                 blob = _object_path(vault_dir(engine), str(entry.get("sha256", "")))

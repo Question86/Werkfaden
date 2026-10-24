@@ -153,13 +153,31 @@ def assert_projected(engine: Any, transaction_id: str) -> None:
             "Workshop state is already persisted but the transaction document projection is pending. Do not repeat Apply; reconcile the document.",
             details=json.loads(marker.read_text(encoding="utf-8")),
         )
-    # Missing documents are not silently considered synchronized.
+    # The persisted source and SQL projection must match the actual terminal
+    # state, not just share an artifact identity from an earlier heartbeat.
     from kairos.transaction_document import document_path, document_id
+    from kairos.promoter import prepare_document
+    from kairos.frontmatter import split_frontmatter
+
     path = engine.config.kairos_workspace / document_path(transaction_id)
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         raise WorkshopError("TX_DOCUMENT_MISSING", "transaction lifecycle document not found")
+    _, state = engine._load_transaction(transaction_id)
+    metadata = split_frontmatter(path.read_text(encoding="utf-8")).metadata
+    if (metadata.get("id") != document_id(transaction_id)
+            or metadata.get("transaction_id") != transaction_id
+            or metadata.get("workshop_state") != state.get("state")
+            or metadata.get("type") != "transaction"):
+        raise WorkshopError("TX_DOCUMENT_STALE", "transaction Markdown does not describe current Workshop state")
+    prepared = prepare_document(path, engine.config.kairos_workspace)
     with sqlite3.connect(engine.config.kairos_database) as con:
-        row = con.execute("SELECT count(*) FROM artifacts WHERE artifact_id=? AND document_type='transaction'",
-                          (document_id(transaction_id),)).fetchone()
-    if not row or row[0] != 1:
-        raise WorkshopError("TX_DOCUMENT_NOT_PROJECTED", "transaction lifecycle document is not in KAIROS SQL")
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            "SELECT revision,content_sha256,path,metadata_json FROM artifacts WHERE artifact_id=? AND document_type='transaction'",
+            (document_id(transaction_id),),
+        ).fetchone()
+    if (row is None or int(row["revision"]) != metadata["revision"]
+            or row["content_sha256"] != prepared.content_sha256
+            or row["path"] != document_path(transaction_id)
+            or json.loads(row["metadata_json"]).get("workshop_state") != state.get("state")):
+        raise WorkshopError("TX_DOCUMENT_NOT_PROJECTED", "exact transaction revision and lifecycle state are not in KAIROS SQL")

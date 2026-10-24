@@ -18,6 +18,8 @@ class FakeEngine:
     def __init__(self, root):
         self.config = SimpleNamespace(
             state_directory=root / "state", transaction_directory=root / "transactions",
+            kairos_workspace=root / "workspace",
+            kairos_database=root / "workspace" / ".kairos" / "kairos.db",
             raw={"tx_retention_required": True, "transaction_documents_required": True,
                  "tx_max_materialized": 2},
         )
