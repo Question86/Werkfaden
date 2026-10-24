@@ -82,7 +82,12 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         checkout = fixture.checkout()
         fixture.stage_behavior(checkout)
         fixture.prepare_and_verify(checkout)
-        receipt = fixture.engine.apply(checkout["transaction_id"])
+        try:
+            receipt = fixture.engine.apply(checkout["transaction_id"])
+        except Exception as exc:
+            marker = fixture.engine.config.state_directory / "transaction-document-pending" / (checkout["transaction_id"] + ".json")
+            details = marker.read_text(encoding="utf-8") if marker.is_file() else "no pending marker"
+            self.fail(f"apply/document integration failed: {exc}; pending={details}")
         self.assertEqual(receipt["state"], "POSTCHECK_VERIFIED")
         path = fixture.workspace / document_path(checkout["transaction_id"])
         header = split_frontmatter(path.read_text(encoding="utf-8")).metadata
