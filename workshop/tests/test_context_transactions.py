@@ -432,7 +432,10 @@ class ContextTransactionTests(unittest.TestCase):
                 self.assertEqual(live_doc.read_bytes(), work_doc.read_bytes())
                 raise OSError("injected interruption after context copy and before heartbeat")
 
-        with patch.dict(self.engine.apply.__func__.__globals__, {"copy_exact": interrupted_copy}):
+        # The public guarded Engine now wraps the synchronization core; inject into
+        # the actual core copy boundary, not the public admission wrapper.
+        core_apply = super(type(self.engine), self.engine).apply
+        with patch.dict(core_apply.__func__.__globals__, {"copy_exact": interrupted_copy}):
             with self.assertRaises(WorkshopError) as raised:
                 self.engine.apply(checkout["transaction_id"])
         self.assertTrue(interrupted)
