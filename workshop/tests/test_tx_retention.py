@@ -70,7 +70,9 @@ class TransactionRetentionTests(unittest.TestCase):
         with self.assertRaises(WorkshopError) as caught:
             compact(self.engine, txid)
         self.assertIn(caught.exception.code, {"TX_DOCUMENT_MISSING", "TX_DOCUMENT_NOT_PROJECTED"})
-        with patch("runtime_sync_workshop.tx_retention._assert_document_projected"):
+        with patch("runtime_sync_workshop.tx_retention._assert_document_projected"), \
+                patch("runtime_sync_workshop.tx_documents.update_document"), \
+                patch("runtime_sync_workshop.tx_documents.assert_projected"):
             result = compact(self.engine, txid)
         self.assertFalse((root / "work").exists())
         self.assertTrue((root / "state.json").is_file())
@@ -91,7 +93,9 @@ class TransactionRetentionTests(unittest.TestCase):
     def test_terminal_tx_can_release_a_slot_after_documented_archive(self):
         txid_a, root_a = self.make_tx("e", "ABORTED")
         txid_b, root_b = self.make_tx("f", "CHECKED_OUT")
-        with patch("runtime_sync_workshop.tx_retention._assert_document_projected"):
+        with patch("runtime_sync_workshop.tx_retention._assert_document_projected"), \
+                patch("runtime_sync_workshop.tx_documents.update_document"), \
+                patch("runtime_sync_workshop.tx_documents.assert_projected"):
             status = enforce_pool_limit(self.engine)
         self.assertEqual(status["materialized"], 1)
         self.assertFalse((root_a / "work").exists())

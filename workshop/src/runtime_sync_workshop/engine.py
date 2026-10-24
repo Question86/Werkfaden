@@ -237,6 +237,46 @@ class WorkshopEngine(_CoreWorkshopEngine):
             assert_projected(self, transaction_id)
         return result
 
+    def annotate_transaction(self, transaction_id: str, *, kind: str, summary: str,
+                             evidence: str, atomic_id: str = "", source_tx: str = "") -> dict[str, Any]:
+        # These are declared observations, NOT verified code or release receipts.
+        allowed = {"observation", "hypothesis", "failure", "reused_candidate",
+                   "discarded_candidate", "next_action", "verification"}
+        if kind not in allowed:
+            raise WorkshopError("TX_NOTE_KIND_INVALID", "unsupported transaction annotation type")
+        if len(summary.strip()) < 12 or len(summary) > 2000:
+            raise WorkshopError("TX_NOTE_INVALID", "TX annotation must be 12-2000 characters")
+        if not evidence.strip() or len(evidence) > 2000:
+            raise WorkshopError("TX_NOTE_EVIDENCE_MISSING", "every annotation requires an explicit evidence locator")
+        root, state = self._load_transaction(transaction_id)
+        terminal = state.get("state") in {"POSTCHECK_VERIFIED", "ABORTED", "ROLLED_BACK",
+                                          "ABORTED_STALE_BASELINE", "ABORTED_ORPHANED_CHECKOUT"}
+        if terminal:
+            if self.lease_path.is_file():
+                raise WorkshopError("TX_NOTE_LEASE_ACTIVE", "terminal TX annotation cannot be written while a Workshop lease is held")
+        else:
+            self._require_lease(transaction_id)
+        entries = state.setdefault("transaction_notes", [])
+        if len(entries) >= 128:
+            raise WorkshopError("TX_NOTE_LIMIT", "transaction has reached the bounded note limit")
+        entries.append({"kind": kind, "summary": summary.strip(), "evidence_locator": evidence.strip(),
+                        "atomic_id": atomic_id.strip(), "source_transaction": source_tx.strip(),
+                        "verification": "DECLARED_NOT_INDEPENDENTLY_VERIFIED"})
+        if terminal:
+            # Guardian has already released this transaction. Update the retained
+            # history, not the former active Guardian patch-session authority.
+            super()._save_transaction(root, state, event="TX_NOTE",
+                                      details={"kind": kind, "evidence": evidence.strip()})
+            if self.config.raw.get("transaction_documents_required", False) is True:
+                update_document(self, state, event="TX_NOTE")
+        else:
+            self._save_transaction(root, state, event="TX_NOTE",
+                                   details={"kind": kind, "evidence": evidence.strip()})
+        if self.config.raw.get("transaction_documents_required", False) is True:
+            assert_projected(self, transaction_id)
+        return {"transaction_id": transaction_id, "kind": kind,
+                "notes": len(entries), "documented": self.config.raw.get("transaction_documents_required", False) is True}
+
     def transaction_pool_status(self) -> dict[str, Any]:
         return {
             "materialized_count": len(materialized_worktrees(self)),

@@ -168,12 +168,19 @@ def _compact_locked(engine: Any, transaction_id: str) -> dict[str, Any]:
                 reclaimed += path.stat().st_size
             shutil.rmtree(directory)
     marker = root / "compaction.json"
-    atomic_write_json(marker, {
+    record = {
         "schema": "werkfaden-tx-compaction/v1",
         "transaction_id": transaction_id, "source_state": state["state"],
         "complete_manifest": saved["manifest"], "manifest_sha256": saved["sha256"],
         "reclaimed_worktree_bytes": reclaimed,
-    })
+    }
+    atomic_write_json(marker, record)
+    state["compaction"] = record
+    atomic_write_json(root / "state.json", state)
+    if engine.config.raw.get("transaction_documents_required", False) is True:
+        from .tx_documents import update_document, assert_projected
+        update_document(engine, state, event="TX_COMPACTED")
+        assert_projected(engine, transaction_id)
     return {"transaction_id": transaction_id, "reclaimed_worktree_bytes": reclaimed, "archive": saved}
 
 

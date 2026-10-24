@@ -155,6 +155,14 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("transaction_id")
         command.add_argument("--manifest", required=True)
         command.add_argument("--destination", required=True)
+    if "tx-note" not in sub.choices:
+        command = sub.add_parser("tx-note", help="append an explicitly evidenced, non-authoritative finding or reuse annotation to a TX")
+        command.add_argument("transaction_id")
+        command.add_argument("--kind", required=True, choices=("observation", "hypothesis", "failure", "reused_candidate", "discarded_candidate", "next_action", "verification"))
+        command.add_argument("--summary", required=True)
+        command.add_argument("--evidence", required=True)
+        command.add_argument("--atomic-id", default="")
+        command.add_argument("--source-tx", default="")
 
     return parser
 
@@ -244,6 +252,10 @@ def execute(arguments: argparse.Namespace) -> dict:
         return engine.compact_transaction(arguments.transaction_id)
     if command == "tx-rehydrate":
         return engine.rehydrate_transaction(arguments.transaction_id, Path(arguments.manifest), Path(arguments.destination))
+    if command == "tx-note":
+        return engine.annotate_transaction(arguments.transaction_id, kind=arguments.kind,
+                                           summary=arguments.summary, evidence=arguments.evidence,
+                                           atomic_id=arguments.atomic_id, source_tx=arguments.source_tx)
 
     if command == "checkout":
         guardian_id, ticket = _require_guardian_checkout(engine, arguments)

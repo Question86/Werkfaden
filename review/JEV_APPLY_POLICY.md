@@ -37,11 +37,44 @@ projects remain unchanged until this policy is deliberately enabled.
 - Missing historical receipts require new bounded reviews; old JSON must not be
   silently upgraded to approval.
 
-## Deferred, not implemented by this branch
+## Transaction lifecycle and retention
 
-The required persistent `transaction` document type, automatic heartbeat
-projection on checkout/abort/apply, immutable recovery-safe candidate extraction,
-disk retention accounting, ten-worktree quota, safe compaction and object-store
-garbage collection are **not implemented** here. They must be delivered only after
-the lifecycle/recovery and authority contracts are tested. Do not delete any
-existing transaction data based on this experimental JEV admission.
+A separate opt-in lifecycle implementation exists on this feature branch:
+
+- `transaction_documents_required=true`: checkout and terminal states
+  publish one `type=transaction` Markdown source in the existing managed
+  `reports/` root. The document follows the 18 fixed implementation-method
+  anchors; sections without proven knowledge say `none`. The normal KAIROS
+  heartbeat validates and projects it into existing SQLite artifacts,
+  revisions, sections, FTS and relations (no new tables required).
+  Document publication failures are recorded in durable pending markers;
+  new work is blocked until `tx-document-reconcile` succeeds. Apply is
+  **never repeated** solely to repair a transaction document.
+- `tx_retention_required=true`: implies the document policy must also be
+  enabled. A post-verify candidate snapshot is stored as SHA-addressed
+  immutable blobs. Before a new checkout, a configurable
+  `tx_max_materialized=10` cap makes the pool compact only terminal,
+  projected records. All transaction bytes are saved and re-read before
+  large working directories are discarded. If no safe eviction exists,
+  checkout fails closed rather than deleting protected candidate work.
+- `tx-note` records explicitly attributed findings, failed approaches,
+  inherited atomic references and next actions. Entries are declared
+  observations, **not verified gate evidence or deployment receipts**.
+- `tx-pool-status`, `tx-compact`, `tx-rehydrate` expose the retention
+  and restoration operations. The vault does not garbage-collect shared
+  content and it does not grant a new candidate a former candidate's
+  verification.
+
+All three flags default to **false** for compatibility with existing
+installed projects. Do not enable on a live `Kairos_main` instance before
+verifying the exact local environment, migrations, recovery paths and required
+provider credentials. Existing historical TX are not automatically imported.
+
+Current limitations: only the ordinary public Apply has the opt-in JEV
+admission check; other mutation kinds still require separate JEV integration.
+JEV responses are unsigned local JSON and cannot supply cryptographic
+provider provenance. The document path records the Workshop's own postcheck,
+not process/binary deployment. Automatic extraction of *sub-patch atomics*
+from a combined candidate, smart relevance selection, provider-attested
+JEV responses, cross-project migrations and shared-vault object garbage
+collection remain open.
