@@ -24,6 +24,7 @@
   "dependent_test_root": "tests",
   "dependent_test_suffixes": [".c", ".cc", ".cpp", ".cxx", ".cu"],
   "guardian_required": false,
+  "jev_apply_required": false,
   "guardian_memory_file": "",
   "guardian_memory_requirements": {},
   "state_directory": ".state",

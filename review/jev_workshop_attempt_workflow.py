@@ -11,6 +11,7 @@ transaction candidate before a fresh Jev review can be started.
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -36,7 +37,7 @@ DEFAULT_CONTEXT_LINES = 0
 # The TypeSafe gate materializes blueprints only to discard them before sending
 # the review state.  The re-entry guard must hash the same reviewable surface;
 # a blueprint-only edit must not masquerade as a revised code attempt.
-CANDIDATE_ROOTS = ("runtime", "tests")
+CANDIDATE_ROOTS = ("runtime", "tests", "blueprints", "managed", "documents", "authority", "machine")
 
 DEFAULT_POSITIVE_QUESTIONS = ()
 DEFAULT_NEGATIVE_QUESTIONS = ()
@@ -79,12 +80,19 @@ def run_script_entry(
 
 
 def numeric_score(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
-        return float(value)
+        score = float(value)
+        return score if math.isfinite(score) and 0.0 <= score <= 1.0 else None
     if isinstance(value, dict):
         for key in ("noul", "score", "value"):
-            if isinstance(value.get(key), (int, float)):
-                return float(value[key])
+            candidate = value.get(key)
+            if isinstance(candidate, bool):
+                return None
+            if isinstance(candidate, (int, float)):
+                score = float(candidate)
+                return score if math.isfinite(score) and 0.0 <= score <= 1.0 else None
     return None
 
 
@@ -98,7 +106,9 @@ def sha256_file(path: Path) -> str:
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # Receipts are evidence. Never overwrite a previous review iteration.
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
 def candidate_fingerprint(workshop_root: Path, transaction_id: str) -> dict[str, Any]:
@@ -113,20 +123,15 @@ def candidate_fingerprint(workshop_root: Path, transaction_id: str) -> dict[str,
         raise WorkflowError(f"transaction candidate work tree not found: {work_root}")
 
     files: list[dict[str, Any]] = []
-    for root_name in CANDIDATE_ROOTS:
-        base = work_root / root_name
-        if not base.is_dir():
-            continue
-        for path in sorted(p for p in base.rglob("*") if p.is_file()):
-            relative = path.relative_to(work_root).as_posix()
-            data = path.read_bytes()
-            files.append(
-                {
-                    "path": relative,
-                    "size": len(data),
-                    "sha256": hashlib.sha256(data).hexdigest(),
-                }
-            )
+    # Bind the whole Workshop candidate, not only source/test roots; documents and
+    # generated implementation mirrors can change after a review. Nothing in this
+    # fingerprint implies that Jev has semantically assessed every captured file.
+    for path in sorted(p for p in work_root.rglob("*") if p.is_file()):
+        if path.is_symlink():
+            raise WorkflowError(f"candidate contains a linked file: {path}")
+        relative = path.relative_to(work_root).as_posix()
+        data = path.read_bytes()
+        files.append({"path": relative, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
     if not files:
         raise WorkflowError(f"transaction candidate work tree has no supported files: {work_root}")
 
@@ -274,6 +279,8 @@ def run_attempt_gate(
     if not attempt_script.is_file():
         raise WorkflowError(f"attempt-gate script not found: {attempt_script}")
     attempt_out.parent.mkdir(parents=True, exist_ok=True)
+    if attempt_out.exists():
+        raise WorkflowError(f"refusing to overwrite existing Jev evidence: {attempt_out}")
     script_args = [
         transaction_id,
         "--workshop-root",
@@ -339,6 +346,8 @@ def run_tomography(
         raise WorkflowError(f"adaptive tomography script not found: {tree_script}")
     tree_json.parent.mkdir(parents=True, exist_ok=True)
     tree_md.parent.mkdir(parents=True, exist_ok=True)
+    if tree_json.exists() or tree_md.exists():
+        raise WorkflowError("refusing to overwrite an existing Jev tomography result")
     script_args = [
         transaction_id,
         "--workshop-root",
@@ -621,9 +630,10 @@ def main() -> int:
             }
 
         if args.attempt_review:
-            attempt_review_path = resolve_path(args.attempt_review)
-            attempt_review = read_json(attempt_review_path)
-            attempt_source = {"mode": "provided", "path": str(attempt_review_path)}
+            # An externally supplied response has no provider-validated binding to
+            # this candidate. Keep that historical diagnostic file, but refuse to
+            # convert it into approval. Only a fresh direct request is admissible.
+            raise WorkflowError("--attempt-review cannot authorize a candidate; use a fresh direct Jev call")
         else:
             attempt_review, attempt_review_path, attempt_source = run_attempt_gate(
                 attempt_script=attempt_script,
@@ -636,6 +646,9 @@ def main() -> int:
                 timeout_seconds=args.attempt_timeout,
             )
 
+        after_review = candidate_fingerprint(workshop_root, args.transaction_id)
+        if after_review["sha256"] != current_candidate["sha256"]:
+            raise WorkflowError("candidate changed while Jev was reviewing; the response is not valid for the current work tree")
         review_transaction_id = str(attempt_review.get("transaction_id", "")).strip()
         if review_transaction_id != args.transaction_id:
             raise WorkflowError(

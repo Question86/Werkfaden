@@ -12,6 +12,7 @@ _CoreWorkshopEngine, PRE_APPLY_STATES, TERMINAL_STATES = load_engine_core()
 from .corpus import build_corpus_manifest
 from .guardian import InvestigationGuardian, guardian_required
 from .util import WorkshopError, read_json
+from .jev_admission import require_candidate_jev_clearance
 
 
 class WorkshopEngine(_CoreWorkshopEngine):
@@ -181,6 +182,14 @@ class WorkshopEngine(_CoreWorkshopEngine):
         if self._guardian_enabled():
             raise WorkshopError("GUARDIAN_CONTEXT_DOCUMENTS_UNSUPPORTED", "Guardian v2 requires separately proven auxiliary document scope")
         return super().include_documents(transaction_id, documents, reason=reason)
+
+    def apply(self, transaction_id: str) -> dict[str, Any]:
+        # Check at the authoritative public Engine boundary (not merely CLI).
+        # Never treat a standalone Jev workflow result as an implicit approval.
+        root, state = self._load_transaction(transaction_id)
+        if self.config.raw.get("jev_apply_required", False) is True:
+            require_candidate_jev_clearance(self.config, root, state)
+        return super().apply(transaction_id)
 
     def authority_recover(self, transaction_id: str, **kwargs: Any) -> dict[str, Any]:
         result = super().authority_recover(transaction_id, **kwargs)

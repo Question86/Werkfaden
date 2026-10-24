@@ -139,9 +139,7 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(tree.TreeError):
                 tree.ask_nodes_and_evidence([node], {}, score_cache={})
 
-    def test_characterization_supplied_review_has_no_candidate_binding(self):
-        # Existing local gap: --attempt-review checks transaction ID but accepts
-        # an old result for changed candidate bytes. It is never Apply authority.
+    def test_supplied_review_cannot_authorize_candidate(self):
         candidate = self.root / "transactions" / "TXN_fixture" / "work" / "runtime" / "example.py"
         candidate.parent.mkdir(parents=True)
         candidate.write_text("candidate B")
@@ -149,15 +147,13 @@ class ReviewTests(unittest.TestCase):
         review.write_text(json.dumps({"transaction_id": "TXN_fixture", "scores": {"P": .99, "bad": .01}, "candidate": "A"}))
         output = self.root / "workflow.json"
         args = ["workflow", "TXN_fixture", "--workshop-root", str(self.root), "--config", str(self.root / "config.json"), "--attempt-review", str(review), "--out", str(output), "--require-positive", "P", "--reject-positive", "bad"]
-        with patch.object(sys, "argv", args), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(workflow.main(), 0)
-        result = json.loads(output.read_text())
-        self.assertEqual(result["decision"], "APPROVED_FOR_NEXT_ACTION")
-        self.assertFalse(result["live_apply_authorized"])
+        with patch.object(sys, "argv", args), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(workflow.main(), 2)
+        self.assertFalse(output.exists())
 
-    def test_characterization_response_scores_are_not_strictly_validated(self):
-        # Preserve and expose the deployed behavior; do not claim schema validation.
-        self.assertEqual(workflow.review_scores({"scores": {"P": 99, "Q": True}}), {"P": 1.0, "Q": 1.0})
+    def test_invalid_scores_do_not_become_approvals(self):
+        self.assertEqual(workflow.review_scores({"scores": {"P": 99, "Q": True, "R": .95}}), {"R": .95})
+        self.assertFalse(workflow.evaluate_attempt_vector({"P": float("nan"), "bad": 0}, positive_questions=("P",), negative_questions=("bad",), threshold=.9)["passed"])
 
 
 if __name__ == "__main__":

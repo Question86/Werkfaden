@@ -2,7 +2,7 @@ name: JEV review port and combined Workshop regression
 
 on:
   push:
-    branches: ['codex/typed-ai-review-gate', 'feat/typed-ai-review-gate']
+    branches: ['codex/typed-ai-review-gate', 'feat/typed-ai-review-gate', 'feat/tx-lifecycle-and-jev-binding']
   pull_request:
     paths: ['review/**', 'workshop/**', 'kairos/**', 'kickstart/**', 'docs/WORKSHOP.md']
 
