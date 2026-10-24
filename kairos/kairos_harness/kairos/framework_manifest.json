@@ -75,7 +75,7 @@
     {
       "artifact_id": "KAIROS_WORKSHOP",
       "path": "docs/WORKSHOP.md",
-      "sha256": "a238af0c9492f5f152b9a154b8f6ef725cf64b983efc379ad2c8989634771126"
+      "sha256": "897e077516d5fd0ebd247a253904605a46c06279fdb55216db690c06a8c8e5bb"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
@@ -115,12 +115,12 @@
     {
       "artifact_id": "KAIROS_WORKSHOP_README",
       "path": "workshop/README.md",
-      "sha256": "cbb72a110aa6069f5d68264bdace9004a3f5375ab1714c92bc63a5c4b9849ef2"
+      "sha256": "e1b3b9fafb0d1e8996e1083236d93a73e3e633d78f43988a92ff8aef1977f474"
     },
     {
       "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
       "path": "workshop/OPERATIONS.md",
-      "sha256": "4b0141e46f7da68299469a51a6cb4932b45c4b0bbd5321c338c0918889e1d023"
+      "sha256": "6eb30f048344ec0869fd49b08ff3c5ba2168473fe2a371394c4e80a5d67769ae"
     },
     {
       "artifact_id": "KAIROS_SECURITY_BOUNDARY",
