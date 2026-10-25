@@ -27,6 +27,192 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
 
+    def historical_scope_fixture(self, *, recorded=True):
+        from kairos.workspace import load_config
+        fixture = self.fixture()
+        tx = "TXN_" + "d" * 24
+        root = fixture.engine._transaction_path(tx)
+        root.mkdir(parents=True)
+        scope = {"workspace_id": load_config(fixture.workspace)["workspace_id"],
+                 "goal_id": "GOAL_HISTORICAL", "milestone_id": "MILESTONE_HISTORICAL",
+                 "task_id": "TASK_HISTORICAL", "loop": 3}
+        state = {"transaction_id": tx, "state": "ABORTED", "baseline_package_sha256": "b" * 64}
+        if recorded:
+            state["original_scope"] = scope
+        # Synthetic legacy controlled state in an isolated unit fixture only.
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return fixture, tx, root, state, scope
+
+    def test_existing_document_declaration_alone_does_not_become_checkout_evidence(self):
+        from kairos.transaction_document import render_transaction_document
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        path = fixture.workspace / document_path(tx)
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(render_transaction_document(
+            transaction=state, workspace_id=scope["workspace_id"], goal_id=scope["goal_id"],
+            milestone_id=scope["milestone_id"], task_id=scope["task_id"], loop=scope["loop"]), encoding="utf-8")
+        before = path.read_bytes()
+        result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(result["status"], "MISSING")
+        self.assertEqual(result["observed_claims"], scope)
+        self.assertIsNone(result["scope"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(result["automatic_binding"])
+
+    def test_pinned_evidence_tiers_are_ordered_and_preserve_exact_file_identity(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        state["historical_scope_receipts"] = []
+        sources = (("TRANSACTION_DOCUMENT", fixture.workspace, "reports/history.json"),
+                   ("LOOP_ARCHIVE", fixture.workspace, "archive/history.json"),
+                   ("TASK_GOAL", fixture.workspace, "tasks/history.json"),
+                   ("TX_STATE", root, "baseline/history.json"))
+        for tier, owner, relative in sources:
+            path = owner / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            raw = json.dumps({"schema": "werkfaden-historical-scope-receipt/v1", "transaction_id": tx,
+                              "workspace_id": scope["workspace_id"], "scope": scope}).encode()
+            path.write_bytes(raw)
+            state["historical_scope_receipts"].append({"tier": tier, "path": relative,
+                                                      "sha256": hashlib.sha256(raw).hexdigest()})
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        result = fixture.engine.inspect_transaction_scope(tx)
+        eligible = [row for row in result["evidence"] if row.get("binding_eligible")]
+        self.assertEqual([row["tier"] for row in eligible],
+                         ["TX_STATE", "TASK_GOAL", "LOOP_ARCHIVE", "TRANSACTION_DOCUMENT"])
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["scope"], scope)
+        for row in eligible:
+            self.assertEqual(len(row["source"]["sha256"]), 64)
+        self.assertFalse(result["automatic_binding"])
+
+    def test_historical_inspection_detects_transaction_change_during_discovery(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture()
+        original = Path.read_bytes
+        reads = [0]
+        def concurrent_observation(path):
+            raw = original(path)
+            if path == root / "state.json":
+                reads[0] += 1
+                if reads[0] == 2:
+                    return raw.replace(b'"loop": 3', b'"loop": 4')
+            return raw
+        with patch.object(Path, "read_bytes", concurrent_observation):
+            result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(result["status"], "CONFLICT")
+        self.assertIsNone(result["scope"])
+        self.assertTrue(any("changed during historical discovery" in row["reason"] for row in result["evidence"]))
+
+    def test_historical_inspection_retains_loop_three_without_reading_live_scope(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture()
+        before = (root / "state.json").read_bytes()
+        original = Path.read_bytes
+        def no_current(path):
+            if path.name in {"current.json", "runtime_state.json"}:
+                raise AssertionError("Historical inspection must not read active scope")
+            return original(path)
+        with patch.object(Path, "read_bytes", no_current):
+            first = fixture.engine.inspect_transaction_scope(tx)
+            second = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(first["status"], "VERIFIED")
+        self.assertEqual(first["scope"], scope)
+        self.assertEqual(first["scope"]["loop"], 3)
+        self.assertFalse(first["automatic_binding"])
+        self.assertEqual(first["report_sha256"], second["report_sha256"])
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.assertFalse((fixture.workspace / document_path(tx)).exists())
+
+    def test_missing_historical_scope_stays_unresolved(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(result["status"], "MISSING")
+        self.assertEqual(result["scope_status"], "SCOPE_UNRESOLVED")
+        self.assertIsNone(result["scope"])
+        self.assertFalse(result["automatic_binding"])
+        self.assertEqual([row["tier"] for row in result["evidence"]],
+                         ["TX_STATE", "GUARDIAN", "TASK_GOAL", "LOOP_ARCHIVE", "TRANSACTION_DOCUMENT"])
+
+    def test_pinned_snapshot_is_identified_but_conflicting_receipts_are_not_merged(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        payload = {"schema": "werkfaden-historical-scope-receipt/v1", "transaction_id": tx,
+                   "workspace_id": scope["workspace_id"], "scope": scope}
+        path = root / "baseline" / "historical-scope.json"
+        path.parent.mkdir()
+        raw = json.dumps(payload).encode()
+        path.write_bytes(raw)
+        state["historical_scope_receipts"] = [{"tier": "TX_STATE", "path": "baseline/historical-scope.json",
+                                                "sha256": hashlib.sha256(raw).hexdigest()}]
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["scope"]["loop"], 3)
+        identified = next(row for row in result["evidence"] if row.get("binding_eligible"))
+        self.assertEqual(identified["source"]["sha256"], hashlib.sha256(raw).hexdigest())
+        state["original_scope"] = {**scope, "loop": 11}
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        conflict = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(conflict["status"], "CONFLICT")
+        self.assertIsNone(conflict["scope"])
+        self.assertEqual(conflict["conflicts"][0]["field"], "loop")
+        self.assertFalse(conflict["automatic_binding"])
+
+    def test_historical_reference_hash_identity_path_and_missing_file_fail_closed(self):
+        for failure in ("hash", "identity", "path", "missing"):
+            with self.subTest(failure=failure):
+                fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+                path = root / "baseline" / "scope.json"
+                path.parent.mkdir()
+                payload = {"schema": "werkfaden-historical-scope-receipt/v1", "transaction_id": tx,
+                           "workspace_id": scope["workspace_id"], "scope": scope}
+                if failure == "identity":
+                    payload["transaction_id"] = "TXN_" + "e" * 24
+                raw = json.dumps(payload).encode()
+                if failure != "missing":
+                    path.write_bytes(raw)
+                state["historical_scope_receipts"] = [{"tier": "TX_STATE",
+                    "path": "../current.json" if failure == "path" else "baseline/scope.json",
+                    "sha256": "0" * 64 if failure == "hash" else hashlib.sha256(raw).hexdigest()}]
+                (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+                result = fixture.engine.inspect_transaction_scope(tx)
+                self.assertEqual(result["status"], "MISSING" if failure == "missing" else "CONFLICT")
+                self.assertIsNone(result["scope"])
+
+    def test_legacy_guardian_scope_cannot_invent_loop_or_authorize_reassignment(self):
+        from runtime_sync_workshop.util import canonical_json, sha256_text
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        directory = fixture.engine.config.state_directory / "guardian-v2"
+        directory.mkdir(parents=True)
+        guardian_id = "GRD2_" + "a" * 24
+        event = {"sequence": 1, "kind": "TX_BIND", "prev_hash": "0" * 64,
+                 "details": {"transaction_id": tx, "baseline_package_sha256": state["baseline_package_sha256"]}}
+        event["event_hash"] = sha256_text(canonical_json(event))
+        payload = {"schema": "werkfaden-guardian/v2", "guardian_id": guardian_id,
+                   "events": [event], "head_hash": event["event_hash"],
+                   "project_scope": {key: scope[key] for key in ("goal_id", "milestone_id", "task_id")},
+                   "patch_session": {"transactions": [{"transaction_id": tx}]}}
+        path = directory / (guardian_id + ".json")
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(result["status"], "MISSING")
+        self.assertNotIn("loop", result["observed_claims"])
+        self.assertEqual(result["observed_claims"]["task_id"], scope["task_id"])
+        event["details"]["transaction_id"] = "TXN_" + "f" * 24
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        corrupt = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(corrupt["status"], "CONFLICT")
+        self.assertIsNone(corrupt["scope"])
+
+    def test_historical_guardian_scan_budget_is_explicit_and_not_an_absence_proof(self):
+        fixture, tx, root, state, scope = self.historical_scope_fixture()
+        directory = fixture.engine.config.state_directory / "guardian-v2"
+        directory.mkdir(parents=True)
+        for index in range(257):
+            (directory / ("GRD2_" + format(index, "024x") + ".json")).write_text("{}", encoding="utf-8")
+        result = fixture.engine.inspect_transaction_scope(tx)
+        self.assertFalse(result["discovery_complete"])
+        self.assertEqual(result["status"], "MISSING")
+        self.assertIsNone(result["scope"])
+        self.assertTrue(any("256-file budget" in row["reason"] for row in result["evidence"]))
+
     def test_orphan_retirement_stamps_and_projects_a_new_event_without_a_lease(self):
         fixture = self.fixture()
         tx = fixture.checkout()["transaction_id"]

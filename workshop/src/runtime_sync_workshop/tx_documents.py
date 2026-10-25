@@ -114,6 +114,211 @@ def _sync_scope(workspace: Path, old_metadata: dict[str, Any] | None,
     return historical or empty
 
 
+
+HISTORICAL_SCOPE_TIERS = ("TX_STATE", "GUARDIAN", "TASK_GOAL", "LOOP_ARCHIVE", "TRANSACTION_DOCUMENT")
+_SCOPE_KEYS = ("workspace_id", "goal_id", "milestone_id", "task_id", "loop")
+
+
+def inspect_historical_scope(engine: Any, transaction_id: str) -> dict[str, Any]:
+    """Read bounded historical evidence without mutating state or assigning ownership.
+
+    VERIFIED means byte-identified, complete recorded scope with no observed
+    contradiction. It is not independent attestation of historical execution.
+    Referenced receipts must already be hash-bound in the authoritative TX;
+    current.json and current task state are never candidate evidence.
+
+    Optional state.historical_scope_receipts entries contain tier, path and
+    raw-file sha256. Paths use forward slashes. TX_STATE receipts live below
+    the transaction baseline; TASK_GOAL, LOOP_ARCHIVE and TRANSACTION_DOCUMENT
+    receipts live below workspace tasks/goals, archive and reports respectively.
+    Their schema is werkfaden-historical-scope-receipt/v1 with transaction_id,
+    workspace_id and scope containing all five _SCOPE_KEYS. Guardian evidence
+    uses bounded native ledger discovery, never an unvalidated caller path.
+    Limits: 64 pinned references, 256 Guardian candidates, 1 MiB per source,
+    8 MiB total reads. A truncated search cannot establish complete provenance.
+    These receipts are inspected only; this API creates no receipt, modifies no
+    scope, and does not implement a verified reassignment or legacy intake.
+    """
+    import hashlib
+    from itertools import islice
+    from pathlib import PurePosixPath
+    from .util import reject_link_components
+    engine._import_kairos()
+    from kairos.workspace import load_config
+    from kairos.frontmatter import split_frontmatter
+    from kairos.transaction_document import document_path
+    from .guardian_ledger import GuardianLedgerMixin
+
+    root = engine._transaction_path(transaction_id)
+    workspace = engine.config.kairos_workspace
+    workspace_id = str(load_config(workspace)["workspace_id"])
+    rows: list[dict[str, Any]] = []
+    complete = True
+    remaining_bytes = 8 * 1024 * 1024
+
+    def read(path: Path) -> tuple[bytes, dict[str, Any]]:
+        nonlocal remaining_bytes
+        reject_link_components(path, label="historical scope evidence")
+        info = path.stat()
+        if not path.is_file() or info.st_nlink != 1 or info.st_size > 1024 * 1024 or info.st_size > remaining_bytes:
+            raise ValueError("historical evidence must be a single-link regular file within byte budgets")
+        raw = path.read_bytes()
+        if len(raw) != info.st_size or path.stat().st_mtime_ns != info.st_mtime_ns:
+            raise ValueError("historical evidence changed during inspection")
+        remaining_bytes -= len(raw)
+        return raw, {"path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+    def record(tier: str, scope: Any, source: dict[str, Any], *, eligible: bool, note: str) -> None:
+        if not isinstance(scope, dict):
+            rows.append({"tier": tier, "status": "CONFLICT", "source": source, "reason": "scope is not an object"})
+            return
+        claims = {key: scope[key] for key in _SCOPE_KEYS if scope.get(key) not in (None, "")}
+        invalid = [key for key, value in claims.items() if not (
+            (type(value) is int and value > 0) if key == "loop" else
+            (isinstance(value, str) and bool(value.strip())))]
+        if invalid or (claims.get("workspace_id") and claims["workspace_id"] != workspace_id):
+            rows.append({"tier": tier, "status": "CONFLICT", "scope": claims, "source": source,
+                         "reason": "invalid fields or foreign workspace", "invalid_fields": invalid})
+            return
+        rows.append({"tier": tier, "status": "VERIFIED" if len(claims) == len(_SCOPE_KEYS) and eligible else "MISSING",
+                     "scope": claims, "source": source, "binding_eligible": eligible and len(claims) == len(_SCOPE_KEYS),
+                     "verification_kind": "SOURCE_IDENTITY_AND_RECORDED_SCOPE_ONLY", "reason": note})
+
+    raw, state_source = read(root / "state.json")
+    state = json.loads(raw)
+    if not isinstance(state, dict) or state.get("transaction_id") != transaction_id:
+        raise WorkshopError("TX_SCOPE_STATE_INVALID", "transaction state has a different identity")
+    if state.get("original_scope") is not None:
+        record("TX_STATE", state["original_scope"], state_source, eligible=True,
+               note="Authoritative transaction records this original scope; historical execution is not independently attested")
+    else:
+        rows.append({"tier": "TX_STATE", "status": "MISSING", "source": state_source,
+                     "reason": "transaction has no recorded original scope"})
+
+    references = state.get("historical_scope_receipts", [])
+    if not isinstance(references, list) or len(references) > 64:
+        rows.append({"tier": "TX_STATE", "status": "CONFLICT", "reason": "invalid or over-budget pinned receipt list"})
+        references = []
+    if any(not isinstance(ref, dict) or ref.get("tier") not in HISTORICAL_SCOPE_TIERS for ref in references):
+        rows.append({"tier": "TX_STATE", "status": "CONFLICT", "reason": "receipt list contains an unsupported tier or malformed reference"})
+    for tier in HISTORICAL_SCOPE_TIERS:
+        for ref in references:
+            if not isinstance(ref, dict) or ref.get("tier") != tier:
+                continue
+            source = {"declared_reference": ref}
+            try:
+                reference_path = str(ref.get("path") or "")
+                relative = PurePosixPath(reference_path)
+                if (not reference_path or not relative.parts or relative.is_absolute() or ".." in relative.parts
+                        or ":" in reference_path or "\\" in reference_path):
+                    raise ValueError("receipt path must be bounded and relative")
+                owner = root if tier == "TX_STATE" else workspace
+                allowed = {"TX_STATE": {"baseline"}, "GUARDIAN": set(), "TASK_GOAL": {"tasks", "goals"},
+                           "LOOP_ARCHIVE": {"archive"}, "TRANSACTION_DOCUMENT": {"reports"}}[tier]
+                if relative.parts[0] not in allowed:
+                    raise ValueError("receipt is outside its tier's historical source root")
+                raw, source = read(owner / Path(*relative.parts))
+                if source["sha256"] != ref.get("sha256"):
+                    raise ValueError("pinned historical receipt hash mismatch")
+                payload = json.loads(raw)
+                if (not isinstance(payload, dict) or payload.get("schema") != "werkfaden-historical-scope-receipt/v1"
+                        or payload.get("transaction_id") != transaction_id
+                        or payload.get("workspace_id") != workspace_id):
+                    raise ValueError("historical receipt has unsupported schema or different transaction/workspace")
+                scope = payload.get("scope")
+                record(tier, scope, source, eligible=True,
+                       note="Exact pinned receipt records this transaction scope; hash proves identity, not historical truth")
+            except FileNotFoundError as exc:
+                complete = False
+                rows.append({"tier": tier, "status": "MISSING", "source": source, "reason": str(exc)})
+            except (OSError, ValueError, TypeError, KeyError, WorkshopError) as exc:
+                rows.append({"tier": tier, "status": "CONFLICT", "source": source, "reason": str(exc)})
+
+        if tier == "GUARDIAN":
+            directory = engine.config.state_directory / "guardian-v2"
+            try:
+                reject_link_components(directory, label="historical Guardian discovery")
+                paths = sorted(islice(directory.glob("GRD2_*.json"), 257)) if directory.is_dir() else []
+            except WorkshopError as exc:
+                complete = False
+                paths = []
+                rows.append({"tier": tier, "status": "CONFLICT", "reason": str(exc)})
+            if len(paths) > 256:
+                complete = False
+                rows.append({"tier": tier, "status": "MISSING", "reason": "Guardian discovery exceeds 256-file budget; no exhaustive absence claim"})
+            for path in paths[:256]:
+                related = False
+                try:
+                    raw, source = read(path)
+                    payload = json.loads(raw)
+                    records = (payload.get("patch_session") or {}).get("transactions") or []
+                    if not any(row.get("transaction_id") == transaction_id for row in records if isinstance(row, dict)):
+                        continue
+                    related = True
+                    if payload.get("schema") != "werkfaden-guardian/v2" or path.stem != payload.get("guardian_id"):
+                        raise ValueError("Guardian identity mismatch")
+                    GuardianLedgerMixin._verify_chain(None, payload)
+                    bound = [event for event in payload.get("events", []) if event.get("kind") == "TX_BIND"
+                             and event.get("details", {}).get("transaction_id") == transaction_id]
+                    if len(bound) != 1:
+                        raise ValueError("Guardian has no unique hash-chained transaction binding")
+                    if (state.get("baseline_package_sha256") and
+                            bound[0].get("details", {}).get("baseline_package_sha256") != state["baseline_package_sha256"]):
+                        rows.append({"tier": tier, "status": "CONFLICT", "source": source,
+                                     "reason": "Guardian TX binding names a different baseline package"})
+                        continue
+                    record(tier, payload.get("project_scope", {}), source, eligible=False,
+                           note="Guardian ledger and TX binding checked; legacy project_scope lacks a bound workspace/loop observation and cannot authorize reassignment")
+                except (OSError, ValueError, TypeError, KeyError, AttributeError, WorkshopError) as exc:
+                    complete = False
+                    rows.append({"tier": tier, "status": "CONFLICT" if related else "MISSING", "source": {"path": str(path)}, "reason": str(exc)})
+        if tier == "TRANSACTION_DOCUMENT":
+            path = workspace / document_path(transaction_id)
+            if path.is_file():
+                try:
+                    raw, source = read(path)
+                    metadata = split_frontmatter(raw.decode("utf-8")).metadata
+                    if metadata.get("transaction_id") != transaction_id or metadata.get("type") != "transaction":
+                        raise ValueError("associated document has a different transaction identity")
+                    scope = {"workspace_id": metadata.get("workspace"), "goal_id": metadata.get("goal"),
+                             "milestone_id": metadata.get("milestone"), "task_id": metadata.get("task"), "loop": metadata.get("loop")}
+                    record(tier, scope, source, eligible=False,
+                           note="Existing document declaration is retained as evidence, not promoted to a checkout observation")
+                except (OSError, ValueError, TypeError, KeyError, WorkshopError) as exc:
+                    rows.append({"tier": tier, "status": "CONFLICT", "source": {"path": str(path)}, "reason": str(exc)})
+        if not any(row["tier"] == tier for row in rows):
+            rows.append({"tier": tier, "status": "MISSING", "reason": "no pinned historical evidence for this tier"})
+
+    try:
+        _, latest_state_source = read(root / "state.json")
+        if latest_state_source["sha256"] != state_source["sha256"]:
+            rows.append({"tier": "TX_STATE", "status": "CONFLICT", "source": latest_state_source,
+                         "reason": "transaction changed during historical discovery"})
+    except (OSError, ValueError, WorkshopError) as exc:
+        complete = False
+        rows.append({"tier": "TX_STATE", "status": "MISSING", "reason": str(exc)})
+    ordered = sorted(rows, key=lambda row: HISTORICAL_SCOPE_TIERS.index(row["tier"]))
+    observed: dict[str, Any] = {}
+    conflicts = []
+    for row in ordered:
+        for key, value in row.get("scope", {}).items():
+            if key in observed and observed[key] != value:
+                conflicts.append({"field": key, "first": observed[key], "other": value, "source": row.get("source")})
+            else:
+                observed[key] = value
+    eligible = [row for row in ordered if row.get("binding_eligible")]
+    status = "CONFLICT" if conflicts or any(row["status"] == "CONFLICT" for row in rows) else (
+        "VERIFIED" if complete and eligible else "MISSING")
+    report = {"schema": "werkfaden-historical-scope-inspection/v1", "transaction_id": transaction_id,
+              "status": status, "scope_status": "SCOPE_UNRESOLVED" if status != "VERIFIED" else "RECORDED_SCOPE_VERIFIED",
+              "scope": dict(eligible[0]["scope"]) if status == "VERIFIED" else None,
+              "observed_claims": observed, "conflicts": conflicts, "evidence": ordered,
+              "discovery_complete": complete, "automatic_binding": False,
+              "claim_boundary": "Read-only identity and recorded-scope consistency inspection; not historical execution attestation, Apply or verified reassignment"}
+    report["report_sha256"] = hashlib.sha256(json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return report
+
+
 def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     # Import through the project's configured harness binding. No second DB writer.
     engine._import_kairos()

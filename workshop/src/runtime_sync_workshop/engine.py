@@ -352,6 +352,11 @@ class WorkshopEngine(_CoreWorkshopEngine):
     def rehydrate_transaction(self, transaction_id: str, manifest_path: Path, destination: Path) -> dict[str, Any]:
         return rehydrate(self, transaction_id, manifest_path, destination)
 
+    def inspect_transaction_scope(self, transaction_id: str) -> dict[str, Any]:
+        """Read historical provenance without touching current scope or TX state."""
+        from .tx_documents import inspect_historical_scope
+        return inspect_historical_scope(self, transaction_id)
+
     def reconcile_transaction_document(self, transaction_id: str) -> dict[str, Any]:
         from .tx_documents import publish, pending_path
         root, state = self._load_transaction(transaction_id)
