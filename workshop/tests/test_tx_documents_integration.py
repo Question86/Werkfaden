@@ -1496,7 +1496,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                     rows.append((relative, node.name, "direct-state:" + event_arg.value))
         self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
         fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
-        self.assertEqual(fingerprint, "b98604da39da23f832a3e3b59c921387b4544a83bf261a2b050bebca194866c0",
+        self.assertEqual(fingerprint, "81cbc098d75c6ef7f7c9fa5b4bb172c58ace38179b479bd3300b192b68aee81c",
                          f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def test_same_event_reconcile_is_read_only_and_keeps_revision(self):

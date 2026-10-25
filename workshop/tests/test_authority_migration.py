@@ -96,6 +96,82 @@ def edit_semantic_blueprint(work: Path, needle: str, replacement: str) -> None:
 
 
 class AuthorityMigrationTests(unittest.TestCase):
+    def compiler_sealed_interruption(self, *, point, fault=None):
+        from unittest.mock import patch
+        from runtime_sync_workshop import migration as module
+        original = AuthorityMigration.apply
+        seen = []
+        def interrupted(owner, tx):
+            root, state = owner.engine._load_transaction(tx)
+            if owner._work_package(root, state)["package_sha256"] != state["verified_work_package_sha256"]:
+                return original(owner, tx)
+            write, save = module.atomic_write_json, owner.engine._save_transaction
+            def interrupt_seal(path, payload):
+                write(path, payload)
+                if path == owner.engine.seal_path:
+                    raise OSError("isolated interruption after compiler postcheck seal")
+            def interrupt_source(root, state, *, event, details=None):
+                if event == "AUTHORITY_POSTCHECK_VERIFIED":
+                    raise OSError("isolated interruption before compiler postcheck source commit")
+                return save(root, state, event=event, details=details)
+            context = patch.object(module, "atomic_write_json", side_effect=interrupt_seal) if point == "seal" else patch.object(owner.engine, "_save_transaction", side_effect=interrupt_source)
+            with context:
+                with self.assertRaises(WorkshopError) as caught:
+                    original(owner, tx)
+            self.assertEqual(caught.exception.code, "RECOVERY_REQUIRED")
+            _, failed = owner.engine._load_transaction(tx)
+            self.assertEqual(failed["state"], "RECOVERY_REQUIRED")
+            self.assertTrue(owner.engine.lease_path.exists())
+            assert_projected(owner.engine, tx)
+            if point == "seal":
+                self.assertNotIn("postcheck_package_sha256", failed)
+            if fault:
+                source = root / "review" / "metadata_audit.json" if fault == "work" else owner.engine.seal_path
+                before = source.read_bytes()
+                saved_state = (root / "state.json").read_bytes()
+                if fault == "work":
+                    source.write_bytes(before + b"\n")
+                else:
+                    wrong = json.loads(before)
+                    wrong["transaction_id"] = "TXN_" + "f" * 24
+                    source.write_text(json.dumps(wrong), encoding="utf-8")
+                try:
+                    with self.assertRaises(WorkshopError) as caught:
+                        owner.engine.recover(tx)
+                    expected = "AUTHORITY_RECOVERY_WORK_DRIFT" if fault == "work" else "AUTHORITY_RECOVERY_SEAL_MISMATCH"
+                    self.assertEqual(caught.exception.code, expected)
+                    self.assertEqual((root / "state.json").read_bytes(), saved_state)
+                    self.assertTrue(owner.engine.lease_path.exists())
+                finally:
+                    source.write_bytes(before)  # Restore only the isolated fault fixture.
+            with patch.object(module, "copy_exact", side_effect=AssertionError("Recovery cannot recopy Apply targets")):
+                with patch.object(owner, "apply", side_effect=AssertionError("Recovery cannot Apply")):
+                    result = owner.engine.recover(tx)
+            _, final = owner.engine._load_transaction(tx)
+            self.assertEqual(final["state"], "POSTCHECK_VERIFIED")
+            self.assertEqual(final["terminal_receipt"]["status"], "COMMITTED")
+            self.assertEqual(final["recovery_verification"]["seal_transaction_id"], tx)
+            self.assertTrue(final["heartbeat"]["verified"])
+            self.assertFalse(owner.engine.lease_path.exists())
+            assert_projected(owner.engine, tx)
+            seen.append(tx)
+            return result
+        case = AuthorityMigrationTests("test_header_add_remove_and_source_change_migrate_atomically")
+        with patch.object(AuthorityMigration, "apply", interrupted):
+            case.test_header_add_remove_and_source_change_migrate_atomically()
+        self.assertEqual(len(seen), 1)
+
+    def test_sealed_compiler_result_recovers_after_seal_or_source_interruption(self):
+        for point in ("seal", "source"):
+            with self.subTest(point=point):
+                self.compiler_sealed_interruption(point=point)
+
+    def test_sealed_compiler_recovery_refuses_changed_verified_work(self):
+        self.compiler_sealed_interruption(point="seal", fault="work")
+
+    def test_sealed_compiler_recovery_refuses_foreign_transaction_seal(self):
+        self.compiler_sealed_interruption(point="seal", fault="seal")
+
     def test_terminal_receipt_outage_recovers_exact_postcheck_without_second_migration(self):
         from unittest.mock import patch
         from runtime_sync_workshop import engine as engine_module

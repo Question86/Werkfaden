@@ -1501,8 +1501,49 @@ class AuthorityMigration:
         root, state = self.engine._load_transaction(transaction_id)
         if state.get("transaction_kind") != "authority_migration":
             raise WorkshopError("TRANSACTION_KIND_INVALID", "transaction is not a compiler authority migration")
-        if state["state"] != "POSTCHECK_VERIFIED" or not state.get("terminal_receipt"):
-            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "only exact postcheck receipt recovery is available; incomplete source/heartbeat recovery requires its separate proven route")
+        from .tx_documents import capture_projection_source
+        capture_projection_source(self.engine, state)
+        if state["state"] == "POSTCHECK_VERIFIED" and state.get("terminal_receipt"):
+            return self.engine._finish_transaction_receipt(root, state, kind="authority-postcheck", payload=self._receipt_payload(state))
+        self.engine._require_lease(transaction_id)
+        if state["state"] not in {"APPLYING", "RECOVERY_REQUIRED", "POSTCHECK_VERIFIED"}:
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "compiler recovery requires an interrupted Apply or postcheck finalization")
+        verified = state.get("verified_work_package_sha256")
+        if (not verified or verified != state.get("prepared_work_package_sha256")
+                or self._work_package(root, state)["package_sha256"] != verified):
+            raise WorkshopError("AUTHORITY_RECOVERY_WORK_DRIFT", "preserved compiler work/review no longer equals the verified candidate")
+        # A compiler postcheck seal is written only after exact source/config
+        # projection, verified heartbeat and health. Never adopt an older or
+        # foreign seal, and never copy Apply targets during this route.
+        current = self.engine._verified_package(require_seal=True)
+        seal = read_json(self.engine.seal_path)
+        if (seal.get("transaction_id") != transaction_id or seal.get("authority_migration") is not True
+                or (state.get("postcheck_package_sha256") and state["postcheck_package_sha256"] != current)):
+            raise WorkshopError("AUTHORITY_RECOVERY_SEAL_MISMATCH", "no matching compiler TX postcheck seal proves this result")
+        governance, heartbeat = self.engine._import_kairos()
+        receipt = heartbeat.run_heartbeat(self.engine.config.kairos_workspace,
+            requested_mode="verify", changed_paths=[], use_reconciliation=True,
+            trigger=f"authority-sealed-recovery:{transaction_id}")
+        if not receipt.get("verified"):
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "fresh recovery heartbeat is not verified", details=receipt)
+        health = importlib.import_module("kairos.health").health_audit(self.engine.config.kairos_workspace, full=True)
+        if health.get("verdict") != "PASS":
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "fresh recovery health is not PASS", details=health.get("failures"))
+        # Recheck after the derived verification work, before source finalization.
+        if (self.engine._verified_package(require_seal=True) != current
+                or read_json(self.engine.seal_path) != seal
+                or self._work_package(root, state)["package_sha256"] != verified):
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "compiler result, seal or work changed during recovery verification")
+        state["recovery_verification"] = {
+            "schema": "werkfaden-compiler-sealed-recovery/v1", "observed_at": utc_now(),
+            "prior_state": state["state"], "verified_work_package_sha256": verified,
+            "postcheck_package_sha256": current, "seal_transaction_id": transaction_id,
+            "heartbeat_id": receipt.get("heartbeat_id"), "health": {"verdict": "PASS", "failure_count": 0}}
+        state["state"] = "POSTCHECK_VERIFIED"
+        state["postcheck_package_sha256"] = current
+        state["heartbeat"] = receipt
+        state["health"] = {"verdict": "PASS", "failure_count": 0}
+        self.engine._save_transaction(root, state, event="AUTHORITY_RECOVERY_POSTCHECK_VERIFIED", details=state["recovery_verification"])
         return self.engine._finish_transaction_receipt(root, state, kind="authority-postcheck", payload=self._receipt_payload(state))
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
