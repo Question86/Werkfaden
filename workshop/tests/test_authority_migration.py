@@ -96,6 +96,42 @@ def edit_semantic_blueprint(work: Path, needle: str, replacement: str) -> None:
 
 
 class AuthorityMigrationTests(unittest.TestCase):
+    def test_terminal_receipt_outage_recovers_exact_postcheck_without_second_migration(self):
+        from unittest.mock import patch
+        from runtime_sync_workshop import engine as engine_module
+        original = AuthorityMigration.apply
+        observed = []
+        def receipt_outage(owner, tx):
+            root, state = owner.engine._load_transaction(tx)
+            if owner._work_package(root, state)["package_sha256"] != state["verified_work_package_sha256"]:
+                return original(owner, tx)  # Preserve the original candidate-tamper refusal.
+            writer = engine_module.atomic_write_json
+            def fail_receipt(path, payload):
+                if path.name.startswith("AUTHORITY-POSTCHECK_"):
+                    raise OSError("isolated compiler terminal receipt outage")
+                return writer(path, payload)
+            with patch.object(engine_module, "atomic_write_json", side_effect=fail_receipt):
+                with self.assertRaises(WorkshopError) as caught:
+                    original(owner, tx)
+            self.assertEqual(caught.exception.code, "TX_TERMINAL_RECEIPT_PENDING")
+            _, after = owner.engine._load_transaction(tx)
+            self.assertEqual(after["state"], "POSTCHECK_VERIFIED")
+            self.assertEqual(after["terminal_receipt"]["status"], "PENDING")
+            self.assertTrue(owner.engine.lease_path.exists())
+            assert_projected(owner.engine, tx)
+            with patch.object(owner, "apply", side_effect=AssertionError("Recovery cannot migrate twice")):
+                result = owner.engine.recover(tx)
+            _, final = owner.engine._load_transaction(tx)
+            self.assertEqual(final["terminal_receipt"]["status"], "COMMITTED")
+            self.assertFalse(owner.engine.lease_path.exists())
+            assert_projected(owner.engine, tx)
+            observed.append(result["terminal_receipt_id"])
+            return result
+        case = AuthorityMigrationTests("test_header_add_remove_and_source_change_migrate_atomically")
+        with patch.object(AuthorityMigration, "apply", receipt_outage):
+            case.test_header_add_remove_and_source_change_migrate_atomically()
+        self.assertEqual(len(observed), 1)
+
     def test_header_add_remove_and_source_change_migrate_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

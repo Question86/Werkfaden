@@ -181,7 +181,8 @@ def render_transaction_document(
                     + "\n- Heartbeat: " + str((transaction.get("heartbeat") or {}).get("heartbeat_id") or "none")
                     + "\n- Recycling decisions: " + json.dumps(dispositions, sort_keys=True)
                     + "\n- Preserved vault manifest: " + str(recycle.get("vault_manifest_sha256") or "none")
-                    + "\n- Compaction: " + _json(transaction.get("compaction") or "none", 1400),
+                    + "\n- Compaction: " + _json(transaction.get("compaction") or "none", 1400)
+                    + "\n- Terminal receipt: " + _json({key: value for key, value in (transaction.get("terminal_receipt") or {}).items() if key != "payload"} or "none", 1400),
         "s-failures": "- Recorded failure: " + _json(transaction.get("failure") or "none", 1400)
                       + "\n- Outcome rationale: " + str(recycle.get("outcome_reason") or "not yet reviewed")
                       + "\n- Rejected code or approaches:\n" + (rejected or "none"),

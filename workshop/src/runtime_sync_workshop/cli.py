@@ -142,6 +142,11 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser("guard-reconcile", help="reconcile a provable Workshop/Guardian crash window without adopting unverified bytes")
         command.add_argument("guardian_id")
 
+    for name, help_text in (("auxiliary-recover", "verify existing auxiliary result and resume its exact terminal receipt"),
+                            ("authority-migration-recover", "resume the exact compiler migration terminal receipt without Apply")):
+        command = sub.add_parser(name, help=help_text)
+        command.add_argument("transaction_id")
+
     command = sub.add_parser("tx-scope-inspect", help="inspect bounded historical scope evidence without mutation")
     command.add_argument("transaction_id")
     for name in ("tx-history-intake", "tx-scope-bind"):
@@ -271,6 +276,11 @@ def execute(arguments: argparse.Namespace) -> dict:
         )
     if command == "guard-reconcile":
         return engine.guardian_reconcile(arguments.guardian_id)
+
+    if command == "auxiliary-recover":
+        return AuxiliaryDocumentTransaction(engine).recover(arguments.transaction_id)
+    if command == "authority-migration-recover":
+        return AuthorityMigration(engine).recover(arguments.transaction_id)
 
     if command == "tx-scope-inspect":
         return engine.inspect_transaction_scope(arguments.transaction_id)

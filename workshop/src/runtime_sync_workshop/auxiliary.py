@@ -9,6 +9,7 @@ from .util import (
     WorkshopError,
     atomic_write_json,
     copy_exact,
+    file_facts,
     package_hash,
     read_json,
     sha256_bytes,
@@ -132,6 +133,7 @@ class AuxiliaryDocumentTransaction:
                 "documents": selected,
                 "baseline_documents": baselines,
                 "baseline_package_sha256": manifest["package_sha256"],
+                "baseline_seal": seal,
                 "baseline_runtime": _runtime_tree_manifest(self.config),
                 "journal": [],
             }
@@ -187,6 +189,15 @@ class AuxiliaryDocumentTransaction:
                 })
         if not changed:
             raise WorkshopError("TRANSACTION_NO_CHANGES", "auxiliary verify found no document changes")
+        # Bind the complete prospective corpus, including unchanged authority.
+        baseline = build_corpus_manifest(self.config)
+        authority = dict(baseline["authority"])
+        authority["auxiliary_documents"] = dict(authority["auxiliary_documents"])
+        for row in changed:
+            facts = file_facts(root / "work" / row["filename"])
+            facts["path"] = (self.config.blueprint_root / row["filename"]).as_posix()
+            authority["auxiliary_documents"][row["filename"]] = facts
+        state["expected_post_package_sha256"] = package_hash({"authority": authority, "records": baseline["records"]})
         state["state"] = "SHADOW_VERIFIED"
         state["changed_documents"] = changed
         self.engine._save_transaction(
@@ -214,6 +225,11 @@ class AuxiliaryDocumentTransaction:
                 f"auxiliary apply requires SHADOW_VERIFIED, found {state['state']}",
             )
         self._assert_baseline(state)
+        if not state.get("expected_post_package_sha256"):
+            raise WorkshopError("AUXILIARY_FRESH_VERIFY_REQUIRED", "repeat native verification to bind the complete expected result")
+        for row in state["changed_documents"]:
+            if sha256_bytes((root / "work" / row["filename"]).read_bytes()) != row["staged_sha256"]:
+                raise WorkshopError("WORK_CHANGED_AFTER_VERIFY", "auxiliary work no longer equals the verified candidate")
         backups: list[dict[str, Any]] = []
         for row in state["changed_documents"]:
             filename = row["filename"]
@@ -234,6 +250,7 @@ class AuxiliaryDocumentTransaction:
             event="AUXILIARY_APPLY_STARTED",
             details={"documents": [row["filename"] for row in backups]},
         )
+        postcheck_sealed = False
         try:
             for row in state["changed_documents"]:
                 filename = row["filename"]
@@ -248,7 +265,7 @@ class AuxiliaryDocumentTransaction:
                     "Runtime changed during auxiliary document apply",
                 )
             post = build_corpus_manifest(self.config)
-            if not post["verified"]:
+            if not post["verified"] or post["package_sha256"] != state["expected_post_package_sha256"]:
                 raise WorkshopError(
                     "AUXILIARY_POSTCHECK_FAILED",
                     "corpus failed verification after auxiliary document apply",
@@ -281,6 +298,7 @@ class AuxiliaryDocumentTransaction:
                 "runtime_package_sha256": runtime["package_sha256"],
             }
             atomic_write_json(self.engine.seal_path, seal)
+            postcheck_sealed = True
             state["state"] = "POSTCHECK_VERIFIED"
             state["postcheck_package_sha256"] = post["package_sha256"]
             state["runtime_postcheck"] = runtime
@@ -290,22 +308,10 @@ class AuxiliaryDocumentTransaction:
                 event="AUXILIARY_POSTCHECK_VERIFIED",
                 details={"package_sha256": post["package_sha256"]},
             )
-            self.engine._release_lease(transaction_id)
-            receipt = {
-                "schema": "runtime-sync-auxiliary-postcheck/v1",
-                "transaction_id": transaction_id,
-                "state": "POSTCHECK_VERIFIED",
-                "runtime_write_allowed": False,
-                "runtime_package_sha256_before": state["baseline_runtime"]["package_sha256"],
-                "runtime_package_sha256_after": runtime["package_sha256"],
-                "baseline_package_sha256": state["baseline_package_sha256"],
-                "postcheck_package_sha256": post["package_sha256"],
-                "changed_documents": state["changed_documents"],
-                "bit_exact": True,
-            }
-            path = self.engine._write_receipt("auxiliary-postcheck", receipt)
-            return {**receipt, "receipt": str(path)}
         except Exception as exc:
+            if postcheck_sealed:
+                raise WorkshopError("RECOVERY_REQUIRED", "exact postcheck is sealed; resume state/receipt finalization without another Apply",
+                                    details={"transaction_id": transaction_id, "cause": str(exc)}) from exc
             rollback: list[dict[str, Any]] = []
             for row in reversed(backups):
                 try:
@@ -329,6 +335,10 @@ class AuxiliaryDocumentTransaction:
             }
             runtime_ok = _runtime_tree_manifest(self.config) == state["baseline_runtime"]
             if all(row.get("restored") for row in rollback) and runtime_ok:
+                baseline_seal = state.get("baseline_seal")
+                if not baseline_seal or baseline_seal.get("package_sha256") != state["baseline_package_sha256"]:
+                    raise WorkshopError("RECOVERY_REQUIRED", "rollback bytes restored but the original seal proof is missing; lease retained") from exc
+                atomic_write_json(self.engine.seal_path, baseline_seal)
                 state["state"] = "ROLLED_BACK"
                 state["failure"] = failure
                 self.engine._save_transaction(
@@ -356,6 +366,55 @@ class AuxiliaryDocumentTransaction:
                 "auxiliary apply could not prove exact rollback; lease retained",
                 details={"cause": failure, "rollback": rollback},
             ) from exc
+
+        return self.engine._finish_transaction_receipt(root, state, kind="auxiliary-postcheck", payload=self._receipt_payload(state))
+
+    def _receipt_payload(self, state: dict[str, Any]) -> dict[str, Any]:
+        return {"schema": "runtime-sync-auxiliary-postcheck/v1", "transaction_id": state["transaction_id"],
+                "state": "POSTCHECK_VERIFIED", "runtime_write_allowed": False,
+                "runtime_package_sha256_before": state["baseline_runtime"]["package_sha256"],
+                "runtime_package_sha256_after": state["runtime_postcheck"]["package_sha256"],
+                "baseline_package_sha256": state["baseline_package_sha256"],
+                "postcheck_package_sha256": state["postcheck_package_sha256"],
+                "changed_documents": state["changed_documents"], "bit_exact": True}
+
+    def recover(self, transaction_id: str) -> dict[str, Any]:
+        root, state = self._load(transaction_id)
+        from .tx_documents import capture_projection_source
+        capture_projection_source(self.engine, state)
+        if state["state"] == "POSTCHECK_VERIFIED" and state.get("terminal_receipt"):
+            return self.engine._finish_transaction_receipt(root, state, kind="auxiliary-postcheck", payload=self._receipt_payload(state))
+        self.engine._require_lease(transaction_id)
+        if state["state"] not in {"APPLYING", "RECOVERY_REQUIRED", "POSTCHECK_VERIFIED"}:
+            raise WorkshopError("AUXILIARY_STATE_INVALID", "auxiliary recovery requires an interrupted Apply or terminal acknowledgement")
+        # Recovery observes exact candidate bytes; it never recopies Apply.
+        runtime = _runtime_tree_manifest(self.config)
+        if runtime != state["baseline_runtime"]:
+            raise WorkshopError("RECOVERY_STILL_BLOCKED", "auxiliary Runtime differs from its immutable baseline")
+        for row in state.get("changed_documents", []):
+            live = self.config.blueprint_root / row["filename"]
+            work = root / "work" / row["filename"]
+            if (sha256_bytes(work.read_bytes()) != row["staged_sha256"]
+                    or live.read_bytes() != work.read_bytes()):
+                raise WorkshopError("RECOVERY_STILL_BLOCKED", "auxiliary live/work bytes do not equal the verified candidate")
+        if not state.get("changed_documents"):
+            raise WorkshopError("RECOVERY_STILL_BLOCKED", "auxiliary verified candidate is absent")
+        post = build_corpus_manifest(self.config)
+        if (not post["verified"] or not state.get("expected_post_package_sha256")
+                or post["package_sha256"] != state["expected_post_package_sha256"]):
+            raise WorkshopError("RECOVERY_STILL_BLOCKED", "auxiliary recovered corpus is not the complete verified candidate", details=post["issues"])
+        mirror = self.engine._mirror(post)
+        seal = {"schema": "runtime-sync-seal/v1", "created_at": utc_now(), "package_sha256": post["package_sha256"],
+                "mirror_sha256": mirror["mirror_sha256"],
+                "mirror_manifest": str(self.config.state_directory / "mirrors" / (mirror["mirror_sha256"] + ".json")),
+                "counts": post["counts"], "transaction_id": transaction_id, "document_only": True,
+                "auxiliary_documents": list(state["documents"]), "runtime_package_sha256": runtime["package_sha256"]}
+        atomic_write_json(self.engine.seal_path, seal)
+        state["state"] = "POSTCHECK_VERIFIED"
+        state["postcheck_package_sha256"] = post["package_sha256"]
+        state["runtime_postcheck"] = runtime
+        self.engine._save_transaction(root, state, event="AUXILIARY_RECOVERY_POSTCHECK_VERIFIED")
+        return self.engine._finish_transaction_receipt(root, state, kind="auxiliary-postcheck", payload=self._receipt_payload(state))
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load(transaction_id)

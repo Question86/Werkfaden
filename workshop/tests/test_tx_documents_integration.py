@@ -293,6 +293,201 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
             if enabled:
                 gc.enable()
 
+    def prepared_auxiliary(self):
+        from runtime_sync_workshop.auxiliary import AuxiliaryDocumentTransaction
+        fixture, name = self.auxiliary_fixture()
+        owner = AuxiliaryDocumentTransaction(fixture.engine)
+        checkout = owner.checkout([name], purpose="Verify isolated terminal receipt and recovery boundaries without repeated Apply")
+        tx = checkout["transaction_id"]
+        target = Path(checkout["work_directory"]) / name
+        target.write_text("Verified isolated final authority.\n", encoding="utf-8")
+        owner.verify(tx)
+        return fixture, owner, tx, name, target
+
+    def test_auxiliary_terminal_write_outage_keeps_postcheck_and_recovers_without_apply(self):
+        from runtime_sync_workshop import engine as engine_module
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        writer = engine_module.atomic_write_json
+        def fail_receipt(path, payload):
+            if path.name.startswith("AUXILIARY-POSTCHECK_"):
+                raise OSError("isolated terminal receipt outage")
+            return writer(path, payload)
+        with patch.object(engine_module, "atomic_write_json", side_effect=fail_receipt):
+            with self.assertRaises(WorkshopError) as caught:
+                owner.apply(tx)
+        self.assertEqual(caught.exception.code, "TX_TERMINAL_RECEIPT_PENDING")
+        state = self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertEqual(state["terminal_receipt"]["status"], "PENDING")
+        self.assertTrue(fixture.engine.lease_path.exists())
+        self.assertEqual((fixture.engine.config.blueprint_root / name).read_bytes(), target.read_bytes())
+        self.assertTrue(fixture.engine.status(persist=False)["seal"]["matches_current"])
+        with patch.object(owner.__class__, "apply", side_effect=AssertionError("Recovery must never repeat Apply")):
+            result = fixture.engine.recover(tx)
+        final = self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertEqual(final["terminal_receipt"]["status"], "COMMITTED")
+        self.assertFalse(fixture.engine.lease_path.exists())
+        document = fixture.workspace / document_path(tx)
+        self.assertIn(final["terminal_receipt"]["payload_sha256"], document.read_text(encoding="utf-8"))
+        root, _ = fixture.engine._load_transaction(tx)
+        before = [(root / "state.json").read_bytes(), document.read_bytes(), Path(result["receipt"]).read_bytes()]
+        replay = owner.recover(tx)
+        from runtime_sync_workshop.cli import _parser, execute
+        arguments = _parser().parse_args(["--config", str(fixture.engine.config.config_path), "auxiliary-recover", tx])
+        cli_result = execute(arguments)
+        self.assertTrue(cli_result["replayed"])
+        self.assertEqual(cli_result["terminal_receipt_id"], result["terminal_receipt_id"])
+        self.assertEqual(replay["terminal_receipt_id"], result["terminal_receipt_id"])
+        self.assertEqual([(root / "state.json").read_bytes(), document.read_bytes(), Path(result["receipt"]).read_bytes()], before)
+
+    def test_auxiliary_receipt_write_then_crash_reuses_exact_file_and_event_obligation(self):
+        from runtime_sync_workshop import engine as engine_module
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        writer = engine_module.atomic_write_json
+        paths = []
+        def after_write(path, payload):
+            writer(path, payload)
+            if path.name.startswith("AUXILIARY-POSTCHECK_"):
+                paths.append(path)
+                raise OSError("isolated crash after durable receipt before state acknowledgement")
+        with patch.object(engine_module, "atomic_write_json", side_effect=after_write):
+            with self.assertRaises(WorkshopError) as caught:
+                owner.apply(tx)
+        self.assertEqual(caught.exception.code, "TX_TERMINAL_RECEIPT_PENDING")
+        self.assertEqual(len(paths), 1)
+        original = paths[0].read_bytes()
+        def no_second_write(path, payload):
+            if path == paths[0]:
+                raise AssertionError("Already durable terminal receipt must not be rewritten")
+            return writer(path, payload)
+        with patch.object(engine_module, "atomic_write_json", side_effect=no_second_write):
+            result = owner.recover(tx)
+        self.assertEqual(Path(result["receipt"]), paths[0])
+        self.assertEqual(paths[0].read_bytes(), original)
+        self.assertEqual(len(list(paths[0].parent.glob("AUXILIARY-POSTCHECK_*.json"))), 1)
+        self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+
+    def test_auxiliary_committed_receipt_corruption_is_refused_and_missing_file_is_reconstructed(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        result = owner.apply(tx)
+        receipt = Path(result["receipt"])
+        original = receipt.read_bytes()
+        root, state = fixture.engine._load_transaction(tx)
+        before = (root / "state.json").read_bytes()
+        receipt.write_bytes(b"{}")  # Isolated corruption fixture only.
+        with self.assertRaises(WorkshopError) as caught:
+            owner.recover(tx)
+        self.assertEqual(caught.exception.code, "TX_TERMINAL_RECEIPT_CONFLICT")
+        self.assertEqual(receipt.read_bytes(), b"{}")
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        receipt.unlink()  # Model loss of only this exact temporary receipt.
+        recovered = owner.recover(tx)
+        self.assertTrue(recovered["replayed"])
+        self.assertEqual(receipt.read_bytes(), original)
+        self.assertEqual((root / "state.json").read_bytes(), before)
+
+    def test_auxiliary_candidate_change_after_verify_is_refused_before_live_write(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        live = fixture.engine.config.blueprint_root / name
+        before = live.read_bytes()
+        target.write_text("Unverified replacement authority.\n", encoding="utf-8")
+        with self.assertRaises(WorkshopError) as caught:
+            owner.apply(tx)
+        self.assertEqual(caught.exception.code, "WORK_CHANGED_AFTER_VERIFY")
+        self.assertEqual(live.read_bytes(), before)
+        self.assert_special_projected(fixture, tx, "SHADOW_VERIFIED")
+        owner.abort(tx)
+
+    def test_auxiliary_incomplete_rollback_with_exact_candidate_recovers_without_copying_apply(self):
+        from runtime_sync_workshop import auxiliary as module
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        copy = module.copy_exact
+        def broken_rollback(source, destination):
+            if source.parent.name == "rollback":
+                raise OSError("isolated rollback write outage")
+            return copy(source, destination)
+        with patch.object(fixture.engine, "_mirror", side_effect=OSError("isolated mirror outage")):
+            with patch.object(module, "copy_exact", side_effect=broken_rollback):
+                with self.assertRaises(WorkshopError) as caught:
+                    owner.apply(tx)
+        self.assertEqual(caught.exception.code, "RECOVERY_REQUIRED")
+        self.assert_special_projected(fixture, tx, "RECOVERY_REQUIRED")
+        self.assertTrue(fixture.engine.lease_path.exists())
+        with patch.object(module, "copy_exact", side_effect=AssertionError("Recovery cannot copy Apply targets")):
+            with patch.object(owner, "apply", side_effect=AssertionError("Recovery cannot Apply")):
+                result = owner.recover(tx)
+        self.assertEqual(result["state"], "POSTCHECK_VERIFIED")
+        self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_auxiliary_prepostcheck_failure_restores_baseline_bytes_and_original_seal(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        live = fixture.engine.config.blueprint_root / name
+        before = live.read_bytes()
+        seal = fixture.engine.seal_path.read_bytes()
+        with patch.object(fixture.engine, "_mirror", side_effect=OSError("isolated pre-seal mirror outage")):
+            with self.assertRaises(WorkshopError) as caught:
+                owner.apply(tx)
+        self.assertEqual(caught.exception.code, "APPLY_ROLLED_BACK")
+        self.assertEqual(live.read_bytes(), before)
+        self.assertEqual(fixture.engine.seal_path.read_bytes(), seal)
+        self.assertFalse(fixture.engine.lease_path.exists())
+        self.assert_special_projected(fixture, tx, "ROLLED_BACK")
+        self.assertTrue(fixture.engine.status(persist=False)["seal"]["matches_current"])
+
+    def test_auxiliary_postseal_state_save_failure_keeps_result_and_recovers_without_apply(self):
+        from runtime_sync_workshop import auxiliary as module
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        save = fixture.engine._save_transaction
+        def fail_postcheck(root, state, *, event, details=None):
+            if event == "AUXILIARY_POSTCHECK_VERIFIED":
+                raise OSError("isolated state save interruption after sealing exact result")
+            return save(root, state, event=event, details=details)
+        with patch.object(fixture.engine, "_save_transaction", side_effect=fail_postcheck):
+            with self.assertRaises(WorkshopError) as caught:
+                owner.apply(tx)
+        self.assertEqual(caught.exception.code, "RECOVERY_REQUIRED")
+        self.assert_special_projected(fixture, tx, "APPLYING")
+        self.assertEqual((fixture.engine.config.blueprint_root / name).read_bytes(), target.read_bytes())
+        self.assertTrue(fixture.engine.lease_path.exists())
+        self.assertTrue(fixture.engine.status(persist=False)["seal"]["matches_current"])
+        with patch.object(module, "copy_exact", side_effect=AssertionError("Recovery cannot reapply live files")):
+            result = owner.recover(tx)
+        self.assertEqual(result["state"], "POSTCHECK_VERIFIED")
+        self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_pending_terminal_receipt_refuses_live_drift_without_state_or_receipt_change(self):
+        from runtime_sync_workshop import engine as engine_module
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, owner, tx, name, target = self.prepared_auxiliary()
+        writer = engine_module.atomic_write_json
+        def fail_receipt(path, payload):
+            if path.name.startswith("AUXILIARY-POSTCHECK_"):
+                raise OSError("isolated terminal receipt outage")
+            return writer(path, payload)
+        with patch.object(engine_module, "atomic_write_json", side_effect=fail_receipt):
+            with self.assertRaises(WorkshopError):
+                owner.apply(tx)
+        root, state = fixture.engine._load_transaction(tx)
+        before = (root / "state.json").read_bytes()
+        live = fixture.engine.config.blueprint_root / name
+        live.write_text("Isolated unauthorized live drift.\n", encoding="utf-8")
+        with self.assertRaises(WorkshopError) as caught:
+            owner.recover(tx)
+        self.assertEqual(caught.exception.code, "GUARDIAN_BASELINE_UNSEALED")
+        self.assertEqual((root / "state.json").read_bytes(), before)
+        self.assertTrue(fixture.engine.lease_path.exists())
+        self.assertFalse((fixture.engine.config.state_directory / state["terminal_receipt"]["path"]).exists())
+        live.write_bytes(target.read_bytes())  # Restore only the isolated fault fixture.
+        owner.recover(tx)
+
     def test_legacy_checkpoint_epoch_backfill_preserves_source_revision(self):
         from runtime_sync_workshop.tx_documents import assert_projected
         from runtime_sync_workshop.util import WorkshopError
@@ -1301,7 +1496,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                     rows.append((relative, node.name, "direct-state:" + event_arg.value))
         self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
         fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
-        self.assertEqual(fingerprint, "eabea5ecb3a716cdb3b7089e650a6dce52d101be605c6dc9efca166751ec9942",
+        self.assertEqual(fingerprint, "b98604da39da23f832a3e3b59c921387b4544a83bf261a2b050bebca194866c0",
                          f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def test_same_event_reconcile_is_read_only_and_keeps_revision(self):

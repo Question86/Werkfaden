@@ -1467,25 +1467,8 @@ class AuthorityMigration:
             state["state"] = "POSTCHECK_VERIFIED"
             state["postcheck_package_sha256"] = post["package_sha256"]
             state["heartbeat"] = heartbeat_receipt
+            state["health"] = {"verdict": health.get("verdict"), "failure_count": len(health.get("failures", []))}
             self.engine._save_transaction(root, state, event="AUTHORITY_POSTCHECK_VERIFIED", details={"package_sha256": post["package_sha256"]})
-            self.engine._release_lease(transaction_id)
-            receipt = {
-                "schema": "runtime-sync-authority-postcheck/v1",
-                "transaction_id": transaction_id,
-                "state": "POSTCHECK_VERIFIED",
-                "baseline_package_sha256": state["baseline_package_sha256"],
-                "postcheck_package_sha256": post["package_sha256"],
-                "heartbeat": heartbeat_receipt,
-                "health": {"verdict": health.get("verdict"), "failure_count": len(health.get("failures", []))},
-                "bit_exact": True,
-                "renames": state["renames"],
-                "added_sources": state["added_sources"],
-                "removed_sources": state["removed_sources"],
-                "added_headers": state["added_headers"],
-                "removed_headers": state["removed_headers"],
-            }
-            self.engine._write_receipt("authority-postcheck", receipt)
-            return receipt
         except Exception as exc:
             if heartbeat_started:
                 state["state"] = "RECOVERY_REQUIRED"
@@ -1504,6 +1487,23 @@ class AuthorityMigration:
             state["state"] = "RECOVERY_REQUIRED"
             self.engine._save_transaction(root, state, event="AUTHORITY_ROLLBACK_INCOMPLETE", details=rollback)
             raise WorkshopError("RECOVERY_REQUIRED", "authority migration rollback was incomplete; lease retained", details=rollback) from exc
+
+        return self.engine._finish_transaction_receipt(root, state, kind="authority-postcheck", payload=self._receipt_payload(state))
+
+    def _receipt_payload(self, state: dict[str, Any]) -> dict[str, Any]:
+        return {"schema": "runtime-sync-authority-postcheck/v1", "transaction_id": state["transaction_id"],
+                "state": "POSTCHECK_VERIFIED", "baseline_package_sha256": state["baseline_package_sha256"],
+                "postcheck_package_sha256": state["postcheck_package_sha256"], "heartbeat": state["heartbeat"],
+                "health": state["health"], "bit_exact": True, "renames": state["renames"],
+                **{key: state[key] for key in ("added_sources", "removed_sources", "added_headers", "removed_headers")}}
+
+    def recover(self, transaction_id: str) -> dict[str, Any]:
+        root, state = self.engine._load_transaction(transaction_id)
+        if state.get("transaction_kind") != "authority_migration":
+            raise WorkshopError("TRANSACTION_KIND_INVALID", "transaction is not a compiler authority migration")
+        if state["state"] != "POSTCHECK_VERIFIED" or not state.get("terminal_receipt"):
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "only exact postcheck receipt recovery is available; incomplete source/heartbeat recovery requires its separate proven route")
+        return self.engine._finish_transaction_receipt(root, state, kind="authority-postcheck", payload=self._receipt_payload(state))
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
         root, state = self.engine._load_transaction(transaction_id)

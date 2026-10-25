@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -11,7 +12,7 @@ from ._engine_core_v1 import load_engine_core
 _CoreWorkshopEngine, PRE_APPLY_STATES, TERMINAL_STATES = load_engine_core()
 from .corpus import build_corpus_manifest
 from .guardian import InvestigationGuardian, guardian_required
-from .util import WorkshopError, read_json
+from .util import WorkshopError, read_json, atomic_write_json, canonical_json, sha256_bytes, reject_link_components
 from .jev_admission import require_candidate_jev_clearance
 from .tx_documents import update_document, assert_projected, assert_no_pending
 from .tx_retention import enforce_pool_limit, snapshot, assert_verified_snapshot, compact, materialized_worktrees, rehydrate, storage_inventory
@@ -256,7 +257,21 @@ class WorkshopEngine(_CoreWorkshopEngine):
         return result
 
     def recover(self, transaction_id: str) -> dict[str, Any]:
-        result = super().recover(transaction_id)
+        _, state = self._load_transaction(transaction_id)
+        schema = state.get("schema")
+        if schema == "runtime-sync-auxiliary-transaction/v1":
+            from .auxiliary import AuxiliaryDocumentTransaction
+            result = AuxiliaryDocumentTransaction(self).recover(transaction_id)
+        elif state.get("transaction_kind") == "authority_migration":
+            from .migration import AuthorityMigration
+            result = AuthorityMigration(self).recover(transaction_id)
+        elif schema == "runtime-sync-bootstrap-repair/v1":
+            from .repair import BootstrapRepair
+            result = BootstrapRepair(self).recover(transaction_id)
+        elif schema != "runtime-sync-transaction/v1":
+            raise WorkshopError("TX_RECOVERY_ROUTE_UNSUPPORTED", "no proven recovery route exists for this transaction kind")
+        else:
+            result = super().recover(transaction_id)
         if requires_projection(self, self._load_transaction(transaction_id)[1]):
             assert_projected(self, transaction_id)
         return result
@@ -350,6 +365,103 @@ class WorkshopEngine(_CoreWorkshopEngine):
 
     def rehydrate_transaction(self, transaction_id: str, manifest_path: Path, destination: Path) -> dict[str, Any]:
         return rehydrate(self, transaction_id, manifest_path, destination)
+
+    def _finish_transaction_receipt(self, root: Path, state: dict[str, Any], *,
+                                    kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Acknowledge an already postchecked TX; never execute Apply or rollback.
+
+        The complete payload is staged in source state before immutable receipt
+        I/O. Its identity survives a crash after write and before acknowledgement.
+        """
+        from .tx_retention import _retention_lock
+        from .tx_documents import capture_projection_source
+        with _retention_lock(self):
+            tx = str(state.get("transaction_id", ""))
+            actual_root, actual = self._load_transaction(tx)
+            if root.resolve() != actual_root.resolve() or canonical_json(actual) != canonical_json(state):
+                raise WorkshopError("TX_TERMINAL_SOURCE_MISMATCH", "terminal receipt requires the exact persisted transaction")
+            capture_projection_source(self, actual)
+            if state.get("state") != "POSTCHECK_VERIFIED" or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", kind):
+                raise WorkshopError("TX_TERMINAL_RECEIPT_INVALID", "terminal receipt requires a postchecked transaction and safe receipt kind")
+            payload = json.loads(canonical_json(payload))
+            if (payload.get("transaction_id") != tx or payload.get("state") != "POSTCHECK_VERIFIED"
+                    or payload.get("postcheck_package_sha256") != state.get("postcheck_package_sha256")):
+                raise WorkshopError("TX_TERMINAL_PAYLOAD_MISMATCH", "receipt does not bind the recorded postcheck")
+            lease = read_json(self.lease_path) if self.lease_path.exists() else None
+            owned = isinstance(lease, dict) and lease.get("transaction_id") == tx
+            entry = state.get("terminal_receipt")
+            replayed = entry is not None
+            if entry is None:
+                self._require_lease(tx)
+                package = self._verified_package(require_seal=True)
+                seal = read_json(self.seal_path)
+                if package != state.get("postcheck_package_sha256") or seal.get("transaction_id") != tx:
+                    raise WorkshopError("TX_TERMINAL_POSTCHECK_DRIFT", "current seal does not prove this transaction postcheck")
+                digest = sha256_bytes(canonical_json(payload).encode("utf-8"))
+                technical_event = str(state.get("tx_event_id") or "")
+                identity = {"kind": kind, "transaction_id": tx, "postcheck_event_id": technical_event,
+                            "payload_sha256": digest}
+                receipt_id = kind.upper() + "_" + sha256_bytes(canonical_json(identity).encode("utf-8"))[:32]
+                entry = {"schema": "werkfaden-tx-terminal-receipt/v1", "status": "PENDING", **identity,
+                         "receipt_id": receipt_id, "path": "receipts/" + receipt_id + ".json", "payload": payload}
+                state["terminal_receipt"] = entry
+                self._save_transaction(root, state, event="TX_TERMINAL_RECEIPT_PENDING", details={"receipt_id": receipt_id})
+            if (not isinstance(entry, dict) or entry.get("schema") != "werkfaden-tx-terminal-receipt/v1"
+                    or entry.get("kind") != kind or entry.get("transaction_id") != tx
+                    or entry.get("status") not in {"PENDING", "COMMITTED"}
+                    or canonical_json(entry.get("payload")) != canonical_json(payload)
+                    or entry.get("payload_sha256") != sha256_bytes(canonical_json(payload).encode("utf-8"))):
+                raise WorkshopError("TX_TERMINAL_RECEIPT_CONFLICT", "persisted terminal obligation differs from the exact payload")
+            identity = {key: entry[key] for key in ("kind", "transaction_id", "postcheck_event_id", "payload_sha256")}
+            receipt_id = kind.upper() + "_" + sha256_bytes(canonical_json(identity).encode("utf-8"))[:32]
+            if not identity["postcheck_event_id"] or entry.get("receipt_id") != receipt_id or entry.get("path") != "receipts/" + receipt_id + ".json":
+                raise WorkshopError("TX_TERMINAL_RECEIPT_CONFLICT", "terminal receipt identity/path is invalid")
+            if entry["status"] != "COMMITTED":
+                self._require_lease(tx)
+            if replayed and owned:
+                # A pending live transaction must still own its exact sealed
+                # result. Unleased completed replay is historical evidence only.
+                package = self._verified_package(require_seal=True)
+                if (package != state.get("postcheck_package_sha256")
+                        or read_json(self.seal_path).get("transaction_id") != tx):
+                    raise WorkshopError("TX_TERMINAL_POSTCHECK_DRIFT", "the pending transaction no longer owns its exact sealed result")
+            destination = self.config.state_directory / entry["path"]
+            reject_link_components(destination, label="terminal receipt")
+            record = {**payload, "receipt_id": receipt_id,
+                      "terminal_receipt_schema": entry["schema"],
+                      "terminal_event_id": entry["postcheck_event_id"],
+                      "terminal_payload_sha256": entry["payload_sha256"]}
+            expected = (json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+            if destination.exists():
+                if not destination.is_file() or destination.stat().st_nlink != 1 or destination.read_bytes() != expected:
+                    raise WorkshopError("TX_TERMINAL_RECEIPT_CONFLICT", "immutable terminal receipt bytes differ; no overwrite is allowed")
+            else:
+                if lease is not None and not owned:
+                    raise WorkshopError("TX_TERMINAL_RECEIPT_LEASE_ACTIVE", "another transaction owns receipt recovery authority")
+                try:
+                    atomic_write_json(destination, record)
+                except OSError as exc:
+                    raise WorkshopError("TX_TERMINAL_RECEIPT_PENDING", "postcheck succeeded; terminal receipt storage is pending, do not repeat Apply",
+                                        details={"transaction_id": tx, "event_id": state.get("tx_event_id"), "receipt_id": receipt_id}) from exc
+                if destination.read_bytes() != expected:
+                    raise WorkshopError("TX_TERMINAL_RECEIPT_CONFLICT", "terminal receipt did not persist its exact expected bytes")
+            if entry["status"] != "COMMITTED":
+                entry["status"] = "COMMITTED"
+                self._save_transaction(root, state, event="TX_TERMINAL_RECEIPT_COMMITTED", details={"receipt_id": receipt_id})
+            if requires_projection(self, state):
+                # A crash after source acknowledgement may leave projection
+                # pending. Resume that event, never an Apply operation.
+                try:
+                    assert_projected(self, tx)
+                except WorkshopError:
+                    if lease is not None and not owned:
+                        raise
+                    self.reconcile_transaction_document(tx)
+                    assert_projected(self, tx)
+            if owned:
+                self._release_lease(tx)
+            return {**payload, "receipt": str(destination), "replayed": replayed,
+                    "terminal_receipt_id": receipt_id}
 
     def _save_terminal_history(self, root: Path, state: dict[str, Any], *, event: str,
                                details: Any = None, force_projection: bool = False) -> None:
