@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 import re
 import sqlite3
 import sys
@@ -333,27 +334,22 @@ def _mechanical_header_blueprint_name(relative: str) -> str:
     return str(Path(relative).with_suffix("")).replace("\\", "_").replace("/", "_") + ".md"
 
 
-def _temporary_config(
+def _shadow_config(
     config: WorkshopConfig,
     *,
-    root: Path,
     blueprint_root: Path,
     managed_root: Path,
     workspace: Path,
     database: Path,
-) -> Path:
-    payload = dict(config.raw)
-    payload.update({
-        "blueprint_root": str(blueprint_root),
-        "managed_blueprint_root": str(managed_root),
-        "kairos_workspace": str(workspace),
-        "kairos_database": str(database),
-        "state_directory": str(root / "temporary_state"),
-        "transaction_directory": str(root / "temporary_transactions"),
-    })
-    path = root / "staged.config.json"
-    atomic_write_json(path, payload)
-    return path
+) -> WorkshopConfig:
+    """Read-only verification view retaining the loaded machine/source authority.
+
+    Only document and SQL projection locations differ. Never synthesize another
+    config writer or reinterpret relative source/authority paths below a TX root.
+    """
+    return replace(config, blueprint_root=blueprint_root,
+                   managed_blueprint_root=managed_root,
+                   kairos_workspace=workspace, kairos_database=database)
 
 
 class BootstrapRepair:
@@ -637,15 +633,13 @@ class BootstrapRepair:
                         details=receipt,
                     )
                 promotion_receipts.append(receipt)
-            staged_config_path = _temporary_config(
+            staged_config = _shadow_config(
                 self.config,
-                root=root,
                 blueprint_root=work_blueprints,
                 managed_root=shadow / "code",
                 workspace=shadow,
                 database=shadow / ".kairos" / "kairos.db",
             )
-            staged_config = load_config(staged_config_path)
             staged_manifest = build_corpus_manifest(staged_config)
             if not staged_manifest["verified"] or staged_manifest["issues"]:
                 raise WorkshopError(
@@ -675,18 +669,20 @@ class BootstrapRepair:
                 "created_at": created_at,
                 "updated_at": created_at,
                 "baseline_runtime": runtime_before,
+                "baseline_package_sha256": live_manifest["package_sha256"],
                 "baseline_documents": baseline_documents,
                 "changed_documents": sorted(changed, key=lambda value: value["filename"]),
                 "staged_package_sha256": staged_manifest["package_sha256"],
                 "staged_counts": staged_manifest["counts"],
                 "shadow_promotions": promotion_receipts,
-                "journal": [{
-                    "event": "BOOTSTRAP_SHADOW_VERIFIED",
-                    "at": created_at,
-                    "details": {"changed_documents": len(changed)},
-                }],
+                "journal": [],
             }
-            atomic_write_json(root / "state.json", state)
+            self.engine._save_transaction(root, state, event="BOOTSTRAP_SHADOW_VERIFIED",
+                                          details={"changed_documents": len(changed)})
+            from .tx_lifecycle import requires_projection
+            if requires_projection(self.engine, state):
+                from .tx_documents import assert_projected
+                assert_projected(self.engine, transaction_id)
             receipt_payload = {
                 "schema": "runtime-sync-bootstrap-stage/v1",
                 "transaction_id": transaction_id,
@@ -700,7 +696,9 @@ class BootstrapRepair:
             receipt_path = self.engine._write_receipt("bootstrap-stage", receipt_payload)
             return {**receipt_payload, "receipt": str(receipt_path)}
         except Exception:
-            if self.engine.lease_path.exists():
+            # Once state is durable, keep its lease for native abort/recovery.
+            # A projection failure must not strand an unowned verified TX.
+            if not (root / "state.json").is_file() and self.engine.lease_path.exists():
                 lease = read_json(self.engine.lease_path)
                 if lease.get("transaction_id") == transaction_id:
                     self.engine._release_lease(transaction_id)

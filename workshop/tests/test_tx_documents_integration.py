@@ -27,6 +27,223 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
 
+    def assert_special_projected(self, fixture, tx, expected_state):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        assert_projected(fixture.engine, tx)
+        _, state = fixture.engine._load_transaction(tx)
+        self.assertEqual(state["state"], expected_state)
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        with sqlite3.connect(fixture.database) as con:
+            row = con.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()
+        sql = json.loads(row[0])
+        self.assertEqual(state["tx_event_id"], metadata["tx_event_id"])
+        self.assertEqual(state["tx_event_id"], sql["tx_event_id"])
+        self.assertEqual(state["state"], sql["workshop_state"])
+        return state
+
+    def test_bootstrap_initial_stage_and_abort_have_native_event_and_sql_identity(self):
+        from runtime_sync_workshop.repair import BootstrapRepair, _shadow_config
+        fixture = self.fixture()
+        config = fixture.engine.config
+        source_before = (fixture.project / "app.py").read_bytes()
+        view = _shadow_config(config, blueprint_root=config.blueprint_root,
+                              managed_root=config.managed_blueprint_root,
+                              workspace=config.kairos_workspace, database=config.kairos_database)
+        self.assertIs(view.machine_root, config.machine_root)
+        self.assertIs(view.raw, config.raw)
+        self.assertEqual(view.machine_authority_files, config.machine_authority_files)
+        result = BootstrapRepair(fixture.engine).stage()
+        tx = result["transaction_id"]
+        state = self.assert_special_projected(fixture, tx, "SHADOW_VERIFIED")
+        self.assertEqual(state["tx_event"]["event"], "BOOTSTRAP_SHADOW_VERIFIED")
+        self.assertEqual(state["tx_event_sequence"], 1)
+        self.assertEqual(state["tx_event"]["baseline_sha256"], state["baseline_package_sha256"])
+        self.assertEqual(state["staged_package_sha256"], state["baseline_package_sha256"])
+        self.assertFalse((fixture.engine._transaction_path(tx) / "staged.config.json").exists())
+        BootstrapRepair(fixture.engine).abort(tx)
+        after = self.assert_special_projected(fixture, tx, "ABORTED")
+        self.assertEqual(after["tx_event_sequence"], 2)
+        self.assertEqual(after["tx_event"]["previous_event_id"], state["tx_event_id"])
+        self.assertEqual((fixture.project / "app.py").read_bytes(), source_before)
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_bootstrap_stage_projection_failure_retains_recoverable_lease_and_event(self):
+        from runtime_sync_workshop.repair import BootstrapRepair
+        from runtime_sync_workshop.tx_documents import pending_path
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        with patch("kairos.heartbeat.run_heartbeat", return_value={"verified": False, "failures": ["isolated projection outage"]}):
+            with self.assertRaises(WorkshopError) as caught:
+                BootstrapRepair(fixture.engine).stage()
+        self.assertEqual(caught.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+        lease = json.loads(fixture.engine.lease_path.read_text(encoding="utf-8"))
+        tx = lease["transaction_id"]
+        _, state = fixture.engine._load_transaction(tx)
+        pending = json.loads(pending_path(fixture.engine, tx).read_text(encoding="utf-8"))
+        self.assertEqual(pending["event_id"], state["tx_event_id"])
+        with patch.object(fixture.engine, "apply", side_effect=AssertionError("Projection recovery cannot Apply")):
+            fixture.engine.reconcile_transaction_document(tx)
+        self.assert_special_projected(fixture, tx, "SHADOW_VERIFIED")
+        BootstrapRepair(fixture.engine).abort(tx)
+        self.assert_special_projected(fixture, tx, "ABORTED")
+
+    def test_bootstrap_shadow_failure_before_state_releases_only_its_lease(self):
+        from runtime_sync_workshop.repair import BootstrapRepair
+        fixture = self.fixture()
+        with patch("runtime_sync_workshop.repair._shadow_config", side_effect=RuntimeError("isolated shadow failure")):
+            with self.assertRaisesRegex(RuntimeError, "isolated shadow failure"):
+                BootstrapRepair(fixture.engine).stage()
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_supported_transaction_constructors_do_not_drift(self):
+        from runtime_sync_workshop import _engine_core_v1
+        package = Path(_engine_core_v1.__file__).resolve().parent
+        sources = [_engine_core_v1._SOURCE, *[package / name for name in (
+            "engine.py", "auxiliary.py", "migration.py", "universal_migration.py", "repair.py",
+            "tx_recycling.py", "tx_retention.py")]]
+        rows = []
+        for source in sources:
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                        and any(isinstance(t, ast.Name) and t.id == "state" for t in node.targets)):
+                    continue
+                values = {k.value: v for k, v in zip(node.value.keys, node.value.values) if isinstance(k, ast.Constant)}
+                if "transaction_id" not in values:
+                    continue
+                schema = values.get("schema")
+                kind = values.get("transaction_kind", ast.Constant(None))
+                self.assertIsInstance(schema, ast.Constant, "New/dynamic TX constructor requires explicit schema review")
+                self.assertIsInstance(kind, ast.Constant, "Dynamic TX kind requires explicit constructor review")
+                rows.append((source.relative_to(package).as_posix(), schema.value, kind.value))
+        self.assertEqual(sorted(rows), sorted([
+            ("quarantine/engine_metadata_v2.py.txt", "runtime-sync-transaction/v1", None),
+            ("auxiliary.py", "runtime-sync-auxiliary-transaction/v1", None),
+            ("migration.py", "runtime-sync-authority-migration/v1", "authority_migration"),
+            ("universal_migration.py", "runtime-sync-universal-source-set/v1", "universal_source_set"),
+            ("repair.py", "runtime-sync-bootstrap-repair/v1", None),
+        ]), "Supported TX constructors changed; review kind and direct lifecycle/SQL coverage")
+
+    def auxiliary_fixture(self):
+        from dataclasses import replace
+        fixture = self.fixture()
+        config = fixture.engine.config
+        name = "PROCESS_AUTHORITY.md"
+        (config.blueprint_root / name).write_text("Initial isolated process authority.\n", encoding="utf-8")
+        # Isolated initial fixture authority, not a live consumer config repair.
+        fixture.engine.config = replace(config, auxiliary_documents=(name,),
+                                        blueprint_ignore=config.blueprint_ignore | {name})
+        fixture.engine.seal()
+        return fixture, name
+
+    def test_auxiliary_direct_api_checkout_verify_apply_projects_each_event(self):
+        from runtime_sync_workshop.auxiliary import AuxiliaryDocumentTransaction
+        fixture, name = self.auxiliary_fixture()
+        owner = AuxiliaryDocumentTransaction(fixture.engine)
+        checkout = owner.checkout([name], purpose="Update the isolated process authority with native lifecycle evidence")
+        tx = checkout["transaction_id"]
+        previous = self.assert_special_projected(fixture, tx, "CHECKED_OUT")
+        target = Path(checkout["work_directory"]) / name
+        target.write_text("Reviewed isolated process authority.\n", encoding="utf-8")
+        owner.verify(tx)
+        verified = self.assert_special_projected(fixture, tx, "SHADOW_VERIFIED")
+        self.assertGreater(verified["tx_event_sequence"], previous["tx_event_sequence"])
+        result = owner.apply(tx)
+        self.assertEqual(result["state"], "POSTCHECK_VERIFIED")
+        final = self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertGreater(final["tx_event_sequence"], verified["tx_event_sequence"])
+        self.assertEqual((fixture.engine.config.blueprint_root / name).read_bytes(), target.read_bytes())
+        self.assertEqual((fixture.project / "app.py").read_bytes(), b"value = 1\n")
+
+    def test_auxiliary_direct_abort_projects_a_new_terminal_event(self):
+        from runtime_sync_workshop.auxiliary import AuxiliaryDocumentTransaction
+        fixture, name = self.auxiliary_fixture()
+        owner = AuxiliaryDocumentTransaction(fixture.engine)
+        tx = owner.checkout([name], purpose="Abort an isolated auxiliary transaction without changing authority")["transaction_id"]
+        previous = self.assert_special_projected(fixture, tx, "CHECKED_OUT")
+        owner.abort(tx)
+        final = self.assert_special_projected(fixture, tx, "ABORTED")
+        self.assertEqual(final["tx_event"]["previous_event_id"], previous["tx_event_id"])
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_universal_source_set_direct_api_projects_checkout_prepare_verify_apply(self):
+        from runtime_sync_workshop.universal_migration import UniversalSourceSetMigration
+        fixture = self.fixture()
+        owner = UniversalSourceSetMigration(fixture.engine)
+        checkout = owner.checkout(purpose="Add one isolated Python source through native source membership migration")
+        tx = checkout["transaction_id"]
+        previous = self.assert_special_projected(fixture, tx, "CHECKED_OUT")
+        (Path(checkout["candidate_root"]) / "added.py").write_text("answer = 42\n", encoding="utf-8")
+        for operation, state in ((owner.prepare, "PREPARED"), (owner.verify, "SHADOW_VERIFIED"), (owner.apply, "POSTCHECK_VERIFIED")):
+            operation(tx)
+            current = self.assert_special_projected(fixture, tx, state)
+            self.assertGreater(current["tx_event_sequence"], previous["tx_event_sequence"])
+            previous = current
+        self.assertEqual((fixture.project / "added.py").read_text(encoding="utf-8"), "answer = 42\n")
+
+    def test_compiler_intake_rejects_unbound_projection_policy_mutation(self):
+        from workshop.tests import test_authority_migration as authority_tests
+        from runtime_sync_workshop.util import WorkshopError
+        original = authority_tests.WorkshopEngine
+        def unbound_policy_engine(path):
+            engine = original(path)
+            # Isolated negative fixture: config policy cannot silently change
+            # after compiler-backed intake has bound its configuration hash.
+            engine.config.raw["transaction_documents_required"] = True
+            return engine
+        case = authority_tests.AuthorityMigrationTests("test_header_add_remove_and_source_change_migrate_atomically")
+        with patch.object(authority_tests, "WorkshopEngine", side_effect=unbound_policy_engine):
+            with self.assertRaises(WorkshopError) as caught:
+                case.test_header_add_remove_and_source_change_migrate_atomically()
+        self.assertEqual(caught.exception.code, "CORPUS_NOT_VERIFIED")
+        self.assertIn("PROJECT_INTAKE_CONFIG_HASH_MISMATCH", {row["code"] for row in caught.exception.details})
+        # Positive mandatory-policy compiler migration requires policy to be
+        # generated and hash-bound at intake; that acceptance remains separate.
+
+    def test_bootstrap_repairs_native_indexed_legacy_blank_noise_without_source_write(self):
+        import re
+        from runtime_sync_workshop.repair import BootstrapRepair
+        from kairos.governance import issue_external_edit_permit
+        from kairos.heartbeat import run_heartbeat
+        from workshop.tests import test_context_transactions as context_tests
+        initialize = context_tests.initialize_universal_markdown
+        def initial_two_line_project(**kwargs):
+            # Define the initial fixture source before native intake/seal.
+            (Path(kwargs["project_root"]) / "app.py").write_bytes(b"value = 1\nother = 2\n")
+            return initialize(**kwargs)
+        with patch.object(context_tests, "initialize_universal_markdown", side_effect=initial_two_line_project):
+            fixture = self.fixture()
+        config = fixture.engine.config
+        external = next(config.blueprint_root.glob("PROJECT_CODE_*.md"))
+        managed = config.managed_blueprint_root / external.name
+        original = managed.read_text(encoding="utf-8")
+        incomplete = re.sub(r"(?m)^revision = 1$", "revision = 2", original, count=1)
+        incomplete, removed = re.subn(r"(?m)^(C:0001[^\n]*\n)(C:0002)", r"\1\n\2", incomplete, count=1)
+        self.assertEqual(removed, 1)
+        relative = "code/" + external.name
+        issue_external_edit_permit(fixture.workspace, paths=[relative],
+                                   reason="Isolated historical blank-noise ledger fixture before native bootstrap repair")
+        # Explicit corruption fixture in its temporary project only. SQL is
+        # populated by native heartbeat, never fabricated or hand-edited.
+        managed.write_text(incomplete, encoding="utf-8")
+        external.write_text(incomplete, encoding="utf-8")
+        receipt = run_heartbeat(fixture.workspace, requested_mode="verify", changed_paths=[relative],
+                                use_reconciliation=True, trigger="isolated-legacy-ledger-fixture")
+        self.assertTrue(receipt["verified"], receipt)
+        source_before = (fixture.project / "app.py").read_bytes()
+        owner = BootstrapRepair(fixture.engine)
+        result = owner.stage()
+        tx = result["transaction_id"]
+        self.assertTrue(result["changed_documents"])
+        self.assert_special_projected(fixture, tx, "SHADOW_VERIFIED")
+        applied = owner.apply(tx)
+        self.assertEqual(applied["state"], "POSTCHECK_VERIFIED")
+        self.assertTrue(applied["bit_exact"])
+        self.assert_special_projected(fixture, tx, "POSTCHECK_VERIFIED")
+        self.assertEqual((fixture.project / "app.py").read_bytes(), source_before)
+        self.assertEqual(external.read_bytes(), managed.read_bytes())
+        self.assertIn("### SOURCE", managed.read_text(encoding="utf-8"))
+
     def test_legacy_checkpoint_epoch_backfill_preserves_source_revision(self):
         from runtime_sync_workshop.tx_documents import assert_projected
         from runtime_sync_workshop.util import WorkshopError
@@ -1018,13 +1235,14 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                 # Terminal history is written without a released Guardian lease.
                 # Its raw state commits still require the common lifecycle stamp.
                 for call in ast.walk(node):
-                    if not (relative in {"tx_recycling.py", "tx_retention.py"}
-                            and isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
                             and call.func.id == "atomic_write_json" and call.args
                             and isinstance(call.args[0], ast.BinOp)
                             and isinstance(call.args[0].right, ast.Constant)
                             and call.args[0].right.value == "state.json"):
                         continue
+                    if relative == "quarantine/engine_metadata_v2.py.txt" and node.name == "_save_transaction":
+                        continue  # Base atomic writer is wrapped by the public engine owner.
                     staged = [item for item in ast.walk(node)
                               if isinstance(item, ast.Call) and isinstance(item.func, ast.Name)
                               and item.func.id == "stage_lifecycle_event"]
@@ -1034,7 +1252,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                     rows.append((relative, node.name, "direct-state:" + event_arg.value))
         self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
         fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
-        self.assertEqual(fingerprint, "ce7eab579aa05ae46677f7645934e778d9a0c65a8dee457247d4f28ae46f3de9",
+        self.assertEqual(fingerprint, "eabea5ecb3a716cdb3b7089e650a6dce52d101be605c6dc9efca166751ec9942",
                          f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def test_same_event_reconcile_is_read_only_and_keeps_revision(self):
