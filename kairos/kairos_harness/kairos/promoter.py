@@ -642,6 +642,13 @@ def promote_document(
                     now,
                 ),
             )
+            # Transactional derived path-name search. It follows the same
+            # artifact identity/revision as the canonical metadata upsert.
+            connection.execute("DELETE FROM artifact_path_fts WHERE artifact_id=?", (metadata["id"],))
+            connection.execute(
+                "INSERT INTO artifact_path_fts(artifact_id,path) VALUES(?,?)",
+                (metadata["id"], document.relative_path),
+            )
             connection.execute("DELETE FROM section_fts WHERE artifact_id=?", (metadata["id"],))
             connection.execute("DELETE FROM query_handles WHERE artifact_id=?", (metadata["id"],))
             connection.execute("DELETE FROM relations WHERE source_artifact_id=?", (metadata["id"],))

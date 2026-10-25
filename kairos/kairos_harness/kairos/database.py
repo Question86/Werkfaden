@@ -84,6 +84,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS section_fts USING fts5(
     tokenize='unicode61 remove_diacritics 2'
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS artifact_path_fts USING fts5(
+    artifact_id UNINDEXED,
+    path,
+    tokenize='unicode61 remove_diacritics 2'
+);
+
 CREATE TABLE IF NOT EXISTS query_handles (
     artifact_id TEXT NOT NULL,
     section_id TEXT NOT NULL,
@@ -598,6 +604,21 @@ class KnowledgeDatabase:
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version',?)",
                 (DATABASE_SCHEMA_VERSION,),
             )
+            # Existing workspaces created before path FTS are migrated once.
+            # Thereafter the promoter maintains the derived index atomically.
+            path_index = connection.execute(
+                "SELECT value FROM schema_meta WHERE key='artifact_path_fts_bootstrapped'"
+            ).fetchone()
+            if path_index is None:
+                connection.execute("DELETE FROM artifact_path_fts")
+                connection.execute(
+                    "INSERT INTO artifact_path_fts(artifact_id,path) "
+                    "SELECT artifact_id,path FROM artifacts"
+                )
+                connection.execute(
+                    "INSERT INTO schema_meta(key,value) "
+                    "VALUES('artifact_path_fts_bootstrapped','1')"
+                )
             connection.commit()
             connection.execute("PRAGMA optimize")
         finally:

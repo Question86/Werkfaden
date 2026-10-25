@@ -419,6 +419,18 @@ def health_audit(
             failures.append(
                 f"section FTS parity failed: missing={fts_missing} orphans={fts_orphans}"
             )
+        path_index_missing = int(connection.execute(
+            "SELECT count(*) FROM (SELECT artifact_id,path FROM artifacts "
+            "EXCEPT SELECT artifact_id,path FROM artifact_path_fts)"
+        ).fetchone()[0])
+        path_index_orphans = int(connection.execute(
+            "SELECT count(*) FROM (SELECT artifact_id,path FROM artifact_path_fts "
+            "EXCEPT SELECT artifact_id,path FROM artifacts)"
+        ).fetchone()[0])
+        if path_index_missing or path_index_orphans:
+            failures.append(
+                f"path FTS parity failed: missing={path_index_missing} orphans={path_index_orphans}"
+            )
         if counts["retrieval_traces"] > MAX_RETRIEVAL_TRACES:
             failures.append(
                 f"retrieval trace retention exceeded: {counts['retrieval_traces']}"

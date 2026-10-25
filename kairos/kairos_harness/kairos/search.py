@@ -139,23 +139,46 @@ def _path_rows(connection, frame: QueryFrame, candidate_limit: int):
     tokens = [token for token in frame.tokens if len(token) >= 4][:12]
     if not tokens:
         return []
-    compounds: list[str] = []
-    for index, left in enumerate(tokens):
-        for right in tokens[index + 1:]:
-            compounds.append(f"%{left}_{right}%")
-    patterns = compounds[:24] or [f"%{token}%" for token in tokens[:8]]
-    clause = " OR ".join("a.path LIKE ?" for _ in patterns)
-    documents = connection.execute(
-        f"""
-        SELECT a.artifact_id, count(*) AS hits
-        FROM artifacts a
-        WHERE {clause}
-        GROUP BY a.artifact_id
-        ORDER BY hits DESC, a.path
-        LIMIT ?
-        """,
-        (*patterns, MAX_PATH_DOCUMENTS),
-    ).fetchall()
+    # Indexed name/route discovery before any legacy wildcard scan. The
+    # additive index is maintained with artifact promotion, not rebuilt per
+    # query. Older uninitialized databases retain the legacy fallback.
+    indexed = []
+    try:
+        indexed = connection.execute(
+            """
+            SELECT artifact_id, -bm25(artifact_path_fts) AS hits
+            FROM artifact_path_fts
+            WHERE artifact_path_fts MATCH ?
+            ORDER BY bm25(artifact_path_fts), artifact_id
+            LIMIT ?
+            """,
+            (fts_match(tuple(tokens)), MAX_PATH_DOCUMENTS),
+        ).fetchall()
+    except Exception as exc:
+        # Missing optional index on a read-only historical DB may fall back;
+        # all other SQL errors remain visible rather than masquerading as no hit.
+        if "no such table" not in str(exc).casefold():
+            raise
+    if indexed:
+        documents = indexed
+    else:
+        compounds: list[str] = []
+        for index, left in enumerate(tokens):
+            for right in tokens[index + 1:]:
+                compounds.append(f"%{left}_{right}%")
+        patterns = compounds[:24] or [f"%{token}%" for token in tokens[:8]]
+        clause = " OR ".join("a.path LIKE ?" for _ in patterns)
+        documents = connection.execute(
+            f"""
+            SELECT a.artifact_id, count(*) AS hits
+            FROM artifacts a
+            WHERE {clause}
+            GROUP BY a.artifact_id
+            ORDER BY hits DESC, a.path
+            LIMIT ?
+            """,
+            (*patterns, MAX_PATH_DOCUMENTS),
+        ).fetchall()
     if not documents:
         return []
     identifiers = [str(row["artifact_id"]) for row in documents]
