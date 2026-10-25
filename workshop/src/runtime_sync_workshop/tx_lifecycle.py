@@ -117,15 +117,10 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
     state["tx_event_id"] = event_id
     state["tx_event"] = {**payload, "event_id": event_id}
     if engine.config.raw.get("transaction_documents_required", False) is True:
-        from .tx_documents import pending_path
+        from .tx_documents import pending_path, pending_record
         marker = pending_path(engine, txid)
         marker.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(marker, {
-            "transaction_id": txid,
-            "event": event,
-            "event_id": event_id,
-            "state": current,
-            "pending": True,
-            "reason": "lifecycle event saved to outbox before state commit",
-        })
+        atomic_write_json(marker, pending_record(
+            state, event=event, reason="lifecycle event saved to outbox before state commit",
+        ))
     return state["tx_event"]

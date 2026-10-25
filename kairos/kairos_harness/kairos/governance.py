@@ -409,6 +409,7 @@ def issue_action_permit(
     paths: Iterable[str] = (),
     reason: str,
     ttl_seconds: int = 120,
+    _scope_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if phase not in PHASES:
         raise GovernanceError(f"unknown governance phase: {phase}")
@@ -418,7 +419,7 @@ def issue_action_permit(
     issued = _now()
     permit_id = _identifier("GAP")
     nonce = secrets.token_hex(16)
-    scope_payload = {"paths": sorted(set(paths))}
+    scope_payload = {**(_scope_payload or {}), "paths": sorted(set(paths))}
     database = _database(workspace)
     with database.transaction() as connection:
         connection.execute(
@@ -810,6 +811,8 @@ def issue_external_edit_permit(
     paths: Iterable[str],
     reason: str,
     ttl_seconds: int = 900,
+    publication_id: str | None = None,
+    expected_sha256: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     normalized = sorted({_managed_relative(workspace, str(value)) for value in paths})
     if not normalized:
@@ -823,9 +826,47 @@ def issue_external_edit_permit(
         raise GovernanceError(
             f"external edit permit requires active task scope; missing {', '.join(missing)}"
         )
+    publication = None
+    if publication_id is not None or expected_sha256 is not None:
+        if (not isinstance(publication_id, str) or not publication_id.strip()
+                or len(publication_id) > 200 or not isinstance(expected_sha256, dict)
+                or set(expected_sha256) != set(normalized)
+                or any(not isinstance(value, str) or len(value) != 64
+                       or any(char not in "0123456789abcdef" for char in value)
+                       for value in expected_sha256.values())):
+            raise GovernanceError("publication requires a stable identity and exact lowercase SHA256 for every path")
+        publication = {"id": publication_id, "expected_sha256": expected_sha256}
     snapshots = [_file_snapshot(workspace, relative) for relative in normalized]
     database = _database(workspace)
     with database.transaction() as connection:
+        # This is an explicit resume of one publication, not a new grant and
+        # not a search for arbitrary historical bytes. Never renew its TTL.
+        if publication:
+            rows = connection.execute(
+                "SELECT * FROM action_permits WHERE command_name='external-edit' ORDER BY issued_at DESC"
+            ).fetchall()
+            for row in rows:
+                payload = json.loads(row["scope_json"])
+                if payload.get("publication", {}).get("id") != publication_id:
+                    continue
+                if (payload.get("publication") != publication or payload.get("paths") != normalized
+                        or any(row[key] != scope.get(key) for key in
+                               ("goal_id", "milestone_id", "task_id", "criterion_id"))):
+                    raise GovernanceError("publication resume identity or scope conflict")
+                if row["status"] not in {"ACTIVE", "CONSUMED", "SUPERSEDED"}:
+                    raise GovernanceError("publication permit is not resumable")
+                if row["status"] == "ACTIVE" and _parse_time(row["expires_at"]) <= _now():
+                    raise GovernanceError("publication permit expired before its edit")
+                before = {item["path"]: item for item in payload.get("pre_edit_snapshots", [])}
+                for now in snapshots:
+                    previous = before.get(now["path"], {})
+                    unchanged = (now.get("exists") == previous.get("exists")
+                                 and now.get("sha256") == previous.get("sha256"))
+                    intended = now.get("exists") and now.get("sha256") == expected_sha256[now["path"]]
+                    if not intended and not (row["status"] == "ACTIVE" and unchanged):
+                        raise GovernanceError("publication resume found bytes outside its original or intended hash")
+                return {"permit_id": row["permit_id"], "status": row["status"],
+                        "scope": payload, "publication_replayed": True}
         active = connection.execute(
             """
             SELECT permit_id,scope_json FROM action_permits
@@ -838,24 +879,16 @@ def issue_external_edit_permit(
                 raise GovernanceError(
                     f"an active external edit permit already covers this scope: {row['permit_id']}"
                 )
+    payload = {"pre_edit_snapshots": snapshots}
+    if publication:
+        payload["publication"] = publication
+    # Identity, original bytes and grant commit together. A crash must not
+    # leave an active path grant without the publication key needed to resume.
     permit = issue_action_permit(
-        workspace,
-        phase="MUTATION",
-        command_name="external-edit",
-        scope=scope,
-        paths=normalized,
-        reason=reason,
-        ttl_seconds=ttl_seconds,
+        workspace, phase="MUTATION", command_name="external-edit", scope=scope,
+        paths=normalized, reason=reason, ttl_seconds=ttl_seconds,
+        _scope_payload=payload,
     )
-    payload = {
-        "paths": normalized,
-        "pre_edit_snapshots": snapshots,
-    }
-    with database.transaction() as connection:
-        connection.execute(
-            "UPDATE action_permits SET scope_json=? WHERE permit_id=?",
-            (json_dumps(payload, pretty=False), permit["permit_id"]),
-        )
     permit["scope"].update(payload)
     permit["reason"] = reason
     return permit
@@ -948,6 +981,9 @@ def _consume_matching_external_permit(
         if not before:
             return None
         after = _file_snapshot(workspace, relative)
+        intended = selected["scope"].get("publication", {}).get("expected_sha256", {}).get(relative)
+        if intended and after.get("sha256") != intended:
+            raise GovernanceError("publication edit does not match its exact intended hash")
         if before.get("exists") == after.get("exists") and before.get("sha256") == after.get("sha256"):
             raise GovernanceError(f"external edit permit has no observable change for {relative}")
     action = consume_action_permit(
@@ -962,7 +998,8 @@ def _consume_matching_external_permit(
         workspace,
         action,
         success=True,
-        result={"accepted_paths": selected_paths, "reason": selected["reason"]},
+        result={"accepted_paths": selected_paths, "reason": selected["reason"],
+                "accepted_snapshots": [_file_snapshot(workspace, path) for path in selected_paths]},
     )
     return {
         "permit_id": selected["permit_id"],
@@ -1094,12 +1131,56 @@ def _resolve_attributed_path_quarantine(
     return resolved
 
 
+
+def _resume_publication_attribution(workspace: Path, *, permit_id: str,
+                                    relative_paths: list[str], scope: dict[str, Any]) -> dict[str, str]:
+    """Replay successful attribution only for an explicitly selected publication.
+
+    Authority comes from the consumed permit and successful observed-byte
+    receipt; a matching historical file hash alone never grants recovery.
+    """
+    database = _database(workspace)
+    connection = database.connect(read_only=True)
+    try:
+        row = connection.execute(
+            "SELECT p.*,r.status AS action_status,r.result_json FROM action_permits p "
+            "LEFT JOIN governed_action_receipts r ON r.action_id=p.action_id WHERE p.permit_id=?",
+            (permit_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if not row or row["command_name"] != "external-edit":
+        raise GovernanceError("publication recovery permit does not exist")
+    payload = json.loads(row["scope_json"])
+    publication = payload.get("publication")
+    if (not publication or any(row[key] != scope.get(key) for key in
+            ("goal_id", "milestone_id", "task_id", "criterion_id"))):
+        raise GovernanceError("publication recovery requires its exact original task scope")
+    if row["status"] == "ACTIVE":
+        return {}  # The normal consumer must validate and consume fresh authority.
+    if row["status"] not in {"CONSUMED", "SUPERSEDED"} or row["action_status"] != "SUCCESS":
+        raise GovernanceError("publication recovery has no successful original attribution")
+    receipt = json.loads(row["result_json"] or "{}")
+    observed = {item["path"]: item for item in receipt.get("accepted_snapshots", [])}
+    recovered = {}
+    for relative in sorted(set(relative_paths).intersection(payload.get("paths", []))):
+        target = publication.get("expected_sha256", {}).get(relative)
+        now = _file_snapshot(workspace, relative)
+        before = observed.get(relative, {})
+        if (not target or not now.get("exists") or now.get("sha256") != target
+                or not before.get("exists") or before.get("sha256") != target):
+            raise GovernanceError("publication recovery bytes differ from successful original attribution")
+        recovered[relative] = str(row["action_id"])
+    return recovered
+
+
 def guard_freshness_changes(
     workspace: Path,
     *,
     changed: Iterable[Path],
     missing: Iterable[str],
     reason: str,
+    resume_publication_permit_id: str | None = None,
 ) -> dict[str, Any]:
     relative_paths = _changed_relative_paths(workspace, changed, missing)
     if not relative_paths:
@@ -1121,6 +1202,14 @@ def guard_freshness_changes(
     attribution_actions: dict[str, str] = {}
     external_actions: list[dict[str, Any]] = []
     remaining = sorted(set(relative_paths))
+    if resume_publication_permit_id:
+        recovered = _resume_publication_attribution(
+            workspace, permit_id=resume_publication_permit_id,
+            relative_paths=remaining, scope=scope,
+        )
+        attributed.extend(recovered)
+        attribution_actions.update(recovered)
+        remaining = sorted(set(remaining) - set(recovered))
     while remaining:
         external = _consume_matching_external_permit(
             workspace,

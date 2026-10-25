@@ -252,20 +252,22 @@ def _resume_compaction_locked(engine: Any, transaction_id: str) -> dict[str, Any
     atomic_write_json(root / "compaction.json", record)
     if state.get("compaction") != record:
         state["compaction"] = record
+        state["updated_at"] = utc_now()
+        state.setdefault("journal", []).append({
+            "event": "TX_COMPACTED", "at": state["updated_at"],
+            "details": {"manifest_sha256": record["manifest_sha256"]},
+        })
+        from .tx_lifecycle import stage_lifecycle_event
+        stage_lifecycle_event(engine, root, state, event="TX_COMPACTED")
         atomic_write_json(root / "state.json", state)
     if engine.config.raw.get("transaction_documents_required", False) is True:
         from .tx_documents import update_document, assert_projected
-        # A previous partial failure may already have published the same state.
-        from .tx_documents import pending_path
-        if pending_path(engine, transaction_id).is_file():
-            from .tx_documents import publish
-            publish(engine, state)
-            pending_path(engine, transaction_id).unlink(missing_ok=True)
-        else:
-            try:
-                assert_projected(engine, transaction_id)
-            except WorkshopError:
-                update_document(engine, state, event="TX_COMPACTED")
+        # One publication consumer handles both first delivery and pending
+        # replay. It preserves the common event-bound failure record.
+        try:
+            assert_projected(engine, transaction_id)
+        except WorkshopError:
+            update_document(engine, state, event="TX_COMPACTED")
         assert_projected(engine, transaction_id)
     # Release capacity only AFTER the exact document/SQL projection is verified.
     # The commit marker survives a crash before staging GC and is independent

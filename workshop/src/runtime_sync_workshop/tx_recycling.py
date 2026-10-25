@@ -429,6 +429,8 @@ def submit(engine: Any, transaction_id: str, analysis_path: Path) -> dict[str, A
             "event": "TX_RECYCLE_REVIEWED", "at": state["updated_at"],
             "details": {"analysis_sha256": digest, "inventory_sha256": manifest["inventory_sha256"]},
         })
+        from .tx_lifecycle import stage_lifecycle_event
+        stage_lifecycle_event(engine, root, state, event="TX_RECYCLE_REVIEWED")
         atomic_write_json(root / "state.json", state)
         update_document(engine, state, event="TX_RECYCLE_REVIEWED")
         assert_projected(engine, transaction_id)
@@ -492,6 +494,8 @@ def retire_orphan(engine: Any, transaction_id: str, *, reason: str) -> dict[str,
         state.setdefault("journal", []).append({"event": "TX_RECYCLING_ORPHAN_RETIRED",
                                                 "at": state["updated_at"],
                                                 "details": state["orphan_retirement"]})
+        from .tx_lifecycle import stage_lifecycle_event
+        stage_lifecycle_event(engine, root, state, event="TX_RECYCLING_ORPHAN_RETIRED")
         atomic_write_json(root / "state.json", state)
         from .tx_documents import update_document, assert_projected
         update_document(engine, state, event="TX_RECYCLING_ORPHAN_RETIRED")

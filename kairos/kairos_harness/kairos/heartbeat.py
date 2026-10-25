@@ -227,6 +227,7 @@ def run_heartbeat(
     use_reconciliation: bool = True,
     metrics: dict[str, Any] | None = None,
     trigger: str = "explicit",
+    resume_publication_permit_id: str | None = None,
 ) -> dict[str, Any]:
     workspace = workspace.resolve()
     with workspace_write_lock(workspace):
@@ -237,6 +238,7 @@ def run_heartbeat(
             use_reconciliation=use_reconciliation,
             metrics=metrics,
             trigger=trigger,
+            resume_publication_permit_id=resume_publication_permit_id,
         )
 
 
@@ -248,6 +250,7 @@ def _run_heartbeat_locked(
     use_reconciliation: bool,
     metrics: dict[str, Any] | None,
     trigger: str,
+    resume_publication_permit_id: str | None = None,
 ) -> dict[str, Any]:
     workspace = workspace.resolve()
     load_config(workspace)
@@ -267,6 +270,7 @@ def _run_heartbeat_locked(
         changed=(*reconciliation.changed, *goal_reconciliation.changed),
         missing=(*reconciliation.missing, *goal_reconciliation.missing),
         reason=f"heartbeat:{trigger}",
+        resume_publication_permit_id=resume_publication_permit_id,
     )
     sync_goal_files(workspace, database)
     state.update(_validated_metrics(metrics))
