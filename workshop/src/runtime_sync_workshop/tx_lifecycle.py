@@ -10,10 +10,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .util import atomic_write_json
+from .util import WorkshopError, atomic_write_json, utc_now
 
 PHASES = {
     "CHECKED_OUT": "CREATED",
+    "AWAITING_METADATA_REVIEW": "EDITING",
     "CHECKOUT_STAGING": "CREATED",
     "CHECKOUT_FAILED": "RECOVERY_REQUIRED",
     "PREPARED": "PREPARED",
@@ -53,6 +54,7 @@ def scope_from_checkout(workspace: Path) -> dict[str, Any] | None:
                 or type(scope["loop"]) is not int or scope["loop"] < 1):
             return None
         return {**scope,
+                "observed_at": utc_now(),
                 "source_path": "current.json",
                 "source_receipt_sha256": hashlib.sha256(raw).hexdigest(),
                 "binding_kind": "CHECKOUT_OBSERVED"}
@@ -80,6 +82,12 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
             state["original_scope"] = original
     previous = str(old.get("state") or "")
     current = str(state.get("state") or "")
+    if current not in PHASES:
+        raise WorkshopError(
+            "TX_LIFECYCLE_UNKNOWN_STATE",
+            "transaction state has no supported lifecycle phase",
+            details={"phase": "UNKNOWN_UNSUPPORTED", "state": current, "event": event},
+        )
     required = ((current in PROJECTED_STATES and current != previous)
                 or event in MATERIAL_ANNOTATIONS)
     if not required:
@@ -92,10 +100,13 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
         "tx_kind": str(state.get("transaction_kind") or state.get("schema") or "normal"),
         "sequence": seq,
         "event": event,
-        "phase": PHASES.get(current, "EDITING"),
+        "phase": PHASES.get(current, "UNKNOWN_UNSUPPORTED"),
         "state_before": previous,
         "state_after": current,
-        "candidate_sha256": str(state.get("verified_work_package_sha256") or ""),
+        "candidate_sha256": str(state.get("verified_work_package_sha256") or state.get("prepared_work_package_sha256") or ""),
+        "baseline_sha256": str(state.get("baseline_package_sha256") or ""),
+        "occurred_at": utc_now(),
+        "required_projection": engine.config.raw.get("transaction_documents_required", False) is True,
         "previous_event_id": str(old.get("tx_event_id") or ""),
         "scope_receipt_sha256": str((state.get("original_scope") or {}).get("source_receipt_sha256") or ""),
     }

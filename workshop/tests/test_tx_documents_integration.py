@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import ast
+import hashlib
+from datetime import datetime
 import sqlite3
 import sys
 import unittest
@@ -23,6 +26,87 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
+
+    def test_metadata_review_transition_has_editing_event_and_exact_projection(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        state_path = fixture.engine.config.transaction_directory / tx / "state.json"
+        before = json.loads(state_path.read_text(encoding="utf-8"))
+        with self.assertRaises(WorkshopError):
+            fixture.engine.prepare(tx)
+        after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(after["state"], "AWAITING_METADATA_REVIEW")
+        self.assertEqual(after["tx_event"]["phase"], "EDITING")
+        self.assertEqual(after["tx_event_sequence"], before["tx_event_sequence"] + 1)
+        self.assertEqual(after["tx_event"]["baseline_sha256"], after["baseline_package_sha256"])
+        self.assertTrue(after["tx_event"]["required_projection"])
+        self.assertIsNotNone(datetime.fromisoformat(after["tx_event"]["occurred_at"].replace("Z", "+00:00")).tzinfo)
+        self.assertIsNotNone(datetime.fromisoformat(after["original_scope"]["observed_at"].replace("Z", "+00:00")).tzinfo)
+        header = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(header["workshop_state"], after["state"])
+        self.assertEqual(header["tx_event_id"], after["tx_event_id"])
+        fixture.engine.abort(tx)
+
+    def test_unknown_lifecycle_state_is_rejected_without_writing_state_or_outbox(self):
+        from runtime_sync_workshop.tx_lifecycle import stage_lifecycle_event
+        from runtime_sync_workshop.tx_documents import pending_path
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        root = fixture.engine.config.transaction_directory / tx
+        before = (root / "state.json").read_bytes()
+        for unsupported in ("UNREGISTERED_TRANSITION", "", None):
+            with self.subTest(state=unsupported):
+                candidate = json.loads(before)
+                candidate["state"] = unsupported
+                with self.assertRaises(WorkshopError) as caught:
+                    stage_lifecycle_event(fixture.engine, root, candidate, event="UNREGISTERED_EVENT")
+                self.assertEqual(caught.exception.code, "TX_LIFECYCLE_UNKNOWN_STATE")
+                self.assertEqual(caught.exception.details["phase"], "UNKNOWN_UNSUPPORTED")
+                self.assertEqual((root / "state.json").read_bytes(), before)
+                self.assertFalse(pending_path(fixture.engine, tx).exists())
+        fixture.engine.abort(tx)
+
+    def test_authoritative_save_inventory_and_state_phase_contract_do_not_drift(self):
+        from runtime_sync_workshop import _engine_core_v1
+        from runtime_sync_workshop.tx_lifecycle import PHASES
+        package = Path(_engine_core_v1.__file__).resolve().parent
+        # This is a snapshot of declared write sites, not an alternative
+        # runtime permission list or a claim of compiler/source membership.
+        sources = [_engine_core_v1._SOURCE, *[package / name for name in (
+            "engine.py", "auxiliary.py", "migration.py", "universal_migration.py", "repair.py",
+        )]]
+        rows = []
+        states = set()
+        for source in sources:
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            relative = source.relative_to(package).as_posix()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                    for target in node.targets:
+                        if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                                and target.value.id == "state" and isinstance(target.slice, ast.Constant)
+                                and target.slice.value == "state" and isinstance(node.value.value, str)):
+                            states.add(node.value.value)
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for call in ast.walk(node):
+                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                            and call.func.attr == "_save_transaction"):
+                        continue
+                    keyword = next((value for value in call.keywords if value.arg == "event"), None)
+                    if keyword and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+                        event = keyword.value.value
+                    else:
+                        self.assertEqual((relative, node.name), ("engine.py", "_save_transaction"),
+                                         "Unreviewed dynamic lifecycle event writer")
+                        event = "<forwarded>"
+                    rows.append((relative, node.name, event))
+        self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
+        fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
+        self.assertEqual(fingerprint, "1908291fa281cde5770a4849d4ce019c040b0763b0323b099120be82cc8ced8d",
+                         f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def test_same_event_reconcile_is_read_only_and_keeps_revision(self):
         fixture = self.fixture()
