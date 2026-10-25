@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kairos:schema:heartbeat-receipt:v1",
+  "title": "KAIROS heartbeat receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "heartbeat_id",
+    "sequence",
+    "lifecycle_before",
+    "lifecycle_after",
+    "mode",
+    "mode_rationale",
+    "trigger",
+    "changed_candidates",
+    "changed_goal_sources",
+    "promoted",
+    "promotion_receipts",
+    "failures",
+    "missing_sources",
+    "pending_count",
+    "failed_count",
+    "verified",
+    "created_at"
+  ],
+  "properties": {
+    "schema": { "const": "kairos-heartbeat-receipt/v1" },
+    "heartbeat_id": { "type": "string", "pattern": "^HB_[a-f0-9]{32}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "lifecycle_before": { "type": "string", "minLength": 1 },
+    "lifecycle_after": { "enum": ["ACTIVE", "BLOCKED"] },
+    "mode": { "enum": ["auto", "work", "depth", "breadth", "breathe", "verify"] },
+    "mode_rationale": { "type": "string", "minLength": 1 },
+    "trigger": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "changed_candidates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "changed_goal_sources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "promoted": { "type": "array", "items": { "type": "string" } },
+    "promotion_receipts": { "type": "array", "items": { "type": "string", "pattern": "^PR_[a-f0-9]{32}$" } },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "error"],
+        "properties": {
+          "path": { "type": "string" },
+          "error": { "type": "string" }
+        }
+      }
+    },
+    "missing_sources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "pending_count": { "type": "integer", "minimum": 0 },
+    "failed_count": { "type": "integer", "minimum": 0 },
+    "verified": { "type": "boolean" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

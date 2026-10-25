@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "For technical results, cite the exact KAIROS engine release and commit. Werkfaden is the public project name; the branding branch is not a new sealed engine release."
+type: software
+title: "Werkfaden: project context and controlled changes for AI coding agents"
+authors:
+  - family-names: Wende
+    given-names: Yannick
+repository-code: "https://github.com/Question86/Werkfaden"
+url: "https://github.com/Question86/Werkfaden"
+version: "0.1.0-alpha.6"
+commit: "13db71aa841c7859e68f5728d0c925ea76343e20"
+date-released: 2026-09-10
+keywords:
+  - AI coding
+  - context engineering
+  - project context
+  - source-linked documentation
+  - verified transactions

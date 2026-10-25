@@ -1,0 +1,221 @@
+{
+  "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
+  "build_epoch": "2000-01-01T00:00:00Z",
+  "database_content_sha256": "ffe1584d012b4de5d6198a142036b4a043bad3a70ebac8e7bbe3887a66670318",
+  "database_file": "framework.db",
+  "database_sha256": "59fbd6ef4b0e0517b8f5427b143e1775e169f699f5e90359a84fabc11fcb6fff",
+  "derived": true,
+  "document_count": 25,
+  "documents": [
+    {
+      "artifact_id": "KAIROS_FRAMEWORK_RULES",
+      "path": "AGENTS.md",
+      "sha256": "3ca2c80dbd8341ed430c9d2c067f1ce56962c35234befe1c93529cd855566d0c"
+    },
+    {
+      "artifact_id": "WERKFADEN_EVIDENCE_BASED_AI_REVIEW",
+      "path": "workspace/docs/EVIDENCE_BASED_AI_REVIEW.md",
+      "sha256": "6e06ae4fca1281ad0ac6ba29a64366a61099a397b2b60c4fba54ad4178adc6b7"
+    },
+    {
+      "artifact_id": "KAIROS_README",
+      "path": "README.md",
+      "sha256": "0bf4e6e7ed248ab494cce18540b4a80d27492d63118e1a0df179d0a66499926f"
+    },
+    {
+      "artifact_id": "KAIROS_ARCHITECTURE",
+      "path": "docs/ARCHITECTURE.md",
+      "sha256": "8d4516d70fb8a054ce7e92f0a2cd9e3ba98fafba20da6a226c3fca6f7b5dacd2"
+    },
+    {
+      "artifact_id": "KAIROS_CANONICAL_DOCUMENTS",
+      "path": "docs/CANONICAL_DOCUMENTS.md",
+      "sha256": "d1d6c966278f890c70487e1d57c1d62a0c94ba9ac03ddc0e49a9b127cf44d566"
+    },
+    {
+      "artifact_id": "KAIROS_DATABASE_DYNAMICS",
+      "path": "docs/DATABASE_AND_DYNAMICS.md",
+      "sha256": "0b5f8a73d2963d705ed6e017fa0fe474ac446c430e94c1f8aa0a4a016edf6d0f"
+    },
+    {
+      "artifact_id": "KAIROS_EXTERNAL_AUDIT_SCOPE",
+      "path": "docs/EXTERNAL_AUDIT_SCOPE.md",
+      "sha256": "97b5f339b196f11da7fdc22809d089dc739827ce0de42ddabe4bb195c1d38ea5"
+    },
+    {
+      "artifact_id": "KAIROS_FRAMEWORK_BOOTSTRAP",
+      "path": "docs/FRAMEWORK_BOOTSTRAP.md",
+      "sha256": "06593ad53e4e6e5d3d9530c21e26fb911603711988d793971e2f4c4ba5690fda"
+    },
+    {
+      "artifact_id": "KAIROS_KNOWN_LIMITATIONS",
+      "path": "docs/KNOWN_LIMITATIONS.md",
+      "sha256": "3a8de9c7595cc63dd6d89d20e9fa72b6ca2bc15357e53c255827fb1194edfa09"
+    },
+    {
+      "artifact_id": "KAIROS_LOOP_PROCEDURE",
+      "path": "docs/LOOP_PROCEDURE.md",
+      "sha256": "92860c72e887f75d17c5604eeb7b461c9f078cce27951b63a8195c3e475a6ab9"
+    },
+    {
+      "artifact_id": "KAIROS_OPERATING_MODEL",
+      "path": "docs/OPERATING_MODEL.md",
+      "sha256": "9de6f865d74cca5c05229e858fe2559131f72eacf9f8bfc1d2507feb8f5bc7e7"
+    },
+    {
+      "artifact_id": "KAIROS_PORTABILITY_SCOPE",
+      "path": "docs/PORTABILITY_SCOPE.md",
+      "sha256": "b9d8523671de330a7190997a0ceb908a5369551585023b6720d1bb1a932392f7"
+    },
+    {
+      "artifact_id": "KAIROS_PROJECT_KICKSTART",
+      "path": "docs/PROJECT_KICKSTART.md",
+      "sha256": "29e8524c579343fdeba2214ec503a2681f86e1c6e12dd6c63d50617b7af3ee04"
+    },
+    {
+      "artifact_id": "KAIROS_UNIVERSAL_ONBOARDING",
+      "path": "docs/UNIVERSAL_ONBOARDING.md",
+      "sha256": "ca20881ce6b4b9dc435925a014e6cb4d58578d58015d4ec5cabc7b25e2c5da55"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP",
+      "path": "docs/WORKSHOP.md",
+      "sha256": "c0a74cbbff3998d28d76850c06ddea22655074645dfdc810b8cef27824fdd2a0"
+    },
+    {
+      "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
+      "path": "kairos/kairos_harness/docs/CONTEXT_HEADER_SPEC.md",
+      "sha256": "b420cdd2cb9b7588a16fb3cc763f79489becbfadbb00cf2a4326054c325acfb9"
+    },
+    {
+      "artifact_id": "KAIROS_INGESTED_DOCUMENT_SPEC",
+      "path": "kairos/kairos_harness/docs/INGESTED_DOCUMENT_SPEC.md",
+      "sha256": "86fc6d07e81272b11ca5675a0ab632bdeab1f0c8242991ec7f926b2e4cf098ba"
+    },
+    {
+      "artifact_id": "KAIROS_LLM_OPERATING_CONTRACT",
+      "path": "kairos/kairos_harness/docs/LLM_OPERATING_CONTRACT.md",
+      "sha256": "b86a1d7fa85836af044af67d44728dcd2153cccb57db1b6ee2ac52da4c5f62d8"
+    },
+    {
+      "artifact_id": "KAIROS_OPERATIONS",
+      "path": "kairos/kairos_harness/docs/OPERATIONS.md",
+      "sha256": "4093f16edc4e4ece3b79ea9c926ef7568f24b5885daaa5f4a9f86f92fa49f6aa"
+    },
+    {
+      "artifact_id": "KAIROS_RETRIEVAL_METHOD",
+      "path": "kairos/kairos_harness/docs/RETRIEVAL_METHOD.md",
+      "sha256": "fd9a3cc771c45aa6720f3a306a811bb1253a6550549fdad29ebc099438727250"
+    },
+    {
+      "artifact_id": "KAIROS_SEARCH_INDEX",
+      "path": "kairos/kairos_harness/docs/SEARCH_INDEX.md",
+      "sha256": "c6b6ac40f5a30f4a5928cb435f10230143654ace1675dffda0979fb82b832d1b"
+    },
+    {
+      "artifact_id": "KAIROS_SYSTEM_SYNTHESIS",
+      "path": "kairos/kairos_harness/docs/SYSTEM_SYNTHESIS.md",
+      "sha256": "1f3e8cfcb77ecce14957fbfccbff6accbcb1d7d2f3e8bd8c423231842359f121"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_README",
+      "path": "workshop/README.md",
+      "sha256": "e1b3b9fafb0d1e8996e1083236d93a73e3e633d78f43988a92ff8aef1977f474"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
+      "path": "workshop/OPERATIONS.md",
+      "sha256": "2acd2236cc7a45ab0ce46a13621fe04cdb504ef73afc796c2ad4672ea3ef4b6a"
+    },
+    {
+      "artifact_id": "KAIROS_SECURITY_BOUNDARY",
+      "path": "workshop/SECURITY_BOUNDARY.md",
+      "sha256": "9a6defc711691dbe485fb68807382eaf40876b67fcec724836ede7c5e390171e"
+    }
+  ],
+  "gold_queries": [
+    {
+      "expected": [
+        "KAIROS_FRAMEWORK_BOOTSTRAP#s-before-project-intake"
+      ],
+      "primary": "KAIROS_FRAMEWORK_BOOTSTRAP#s-before-project-intake",
+      "query": "How do I query KAIROS rules before a project workspace exists?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_README#s-start-a-real-project"
+      ],
+      "primary": "KAIROS_README#s-start-a-real-project",
+      "query": "How do I start a real project with KAIROS?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_ARCHITECTURE#s-overview"
+      ],
+      "primary": "KAIROS_ARCHITECTURE#s-overview",
+      "query": "What owns translation-unit membership?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSHOP#s-authority-migration"
+      ],
+      "primary": "KAIROS_WORKSHOP#s-authority-migration",
+      "query": "When is authority migration required?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_KNOWN_LIMITATIONS#s-verification-boundary"
+      ],
+      "primary": "KAIROS_KNOWN_LIMITATIONS#s-verification-boundary",
+      "query": "What does a successful KAIROS Workshop postcheck not prove?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_UNIVERSAL_ONBOARDING#s-cold-onboarding"
+      ],
+      "primary": "KAIROS_UNIVERSAL_ONBOARDING#s-cold-onboarding",
+      "query": "How do I onboard an arbitrary existing codebase into KAIROS?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_UNIVERSAL_ONBOARDING#s-single-mutation-boundary"
+      ],
+      "primary": "KAIROS_UNIVERSAL_ONBOARDING#s-single-mutation-boundary",
+      "query": "After KAIROS seals a project, what is allowed to modify source code or Markdown?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_UNIVERSAL_ONBOARDING#s-source-set-transactions"
+      ],
+      "primary": "KAIROS_UNIVERSAL_ONBOARDING#s-source-set-transactions",
+      "query": "How do I create delete or rename governed source files after seal?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_LLM_OPERATING_CONTRACT#s-context-policy"
+      ],
+      "primary": "KAIROS_LLM_OPERATING_CONTRACT#s-context-policy",
+      "query": "How should an LLM acquire context in KAIROS?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSHOP#s-metadata-aftercheck"
+      ],
+      "primary": "KAIROS_WORKSHOP#s-metadata-aftercheck",
+      "query": "How must I check metadata before applying a source patch?",
+      "required_top_k": 1
+    }
+  ],
+  "schema": "kairos-framework-index/v1",
+  "version": "0.1.0-alpha.6",
+  "workspace_id": "KAIROS_FRAMEWORK"
+}

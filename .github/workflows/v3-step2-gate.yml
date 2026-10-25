@@ -1,0 +1,61 @@
+name: V3 step2 cold bootstrap gate
+
+on:
+  push:
+    branches: [v3]
+    paths:
+      - .github/workflows/v3-step2-gate.yml
+      - docs/V3_WORKLOG.md
+      - docs/UNIVERSAL_ONBOARDING.md
+      - docs/FRAMEWORK_BOOTSTRAP.md
+      - docs/PROJECT_KICKSTART.md
+      - docs/WORKSHOP.md
+      - AGENTS.md
+      - kickstart/universal_init.py
+      - kairos/kairos_harness/kairos/framework.py
+      - kairos/kairos_harness/kairos/framework.db
+      - kairos/kairos_harness/kairos/framework_manifest.json
+      - scripts/build_framework_index.py
+      - scripts/v3_cold_bootstrap_gate.py
+
+permissions:
+  contents: read
+
+jobs:
+  cold-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify bundled framework projection
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          python - <<'PY'
+          from kairos.framework import FRAMEWORK_VERSION, verify_framework_bundle
+          result = verify_framework_bundle()
+          assert result["verified"]
+          assert result["version"] == FRAMEWORK_VERSION
+          print(result)
+          PY
+      - name: Rebuild framework projection independently
+        run: |
+          mkdir -p /tmp/kairos-framework-check
+          python scripts/build_framework_index.py \
+            --output /tmp/kairos-framework-check/framework.db \
+            --manifest /tmp/kairos-framework-check/framework_manifest.json \
+            --verify-determinism \
+            --compare-content-with kairos/kairos_harness/kairos/framework.db
+      - name: Create fresh release-style archive
+        run: |
+          rm -rf /tmp/kairos-cold
+          mkdir -p /tmp/kairos-cold
+          git archive --format=tar HEAD | tar -x -C /tmp/kairos-cold
+          test ! -d /tmp/kairos-cold/.git
+      - name: Run zero-state search-to-postcheck bootstrap
+        working-directory: /tmp/kairos-cold
+        run: python scripts/v3_cold_bootstrap_gate.py

@@ -1,0 +1,23 @@
+name: V3 universal intake gate
+
+on:
+  push:
+    branches: [v3]
+  pull_request:
+    branches: [v3]
+
+permissions:
+  contents: read
+
+jobs:
+  universal-intake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Python sources
+        run: python -m compileall -q kickstart kairos/kairos_harness workshop/src
+      - name: Run kickstart tests
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v

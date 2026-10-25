@@ -1,0 +1,45 @@
+name: Alpha5 source-set hardening
+
+on:
+  push:
+    branches: [alpha5-include-edge-authority]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: alpha5-include-edge-authority
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply idempotent source-set hardening patch
+        run: python scripts/alpha5_source_set_hardening.py
+      - name: Compile patched surfaces
+        run: python -m compileall -q kickstart workshop/src
+      - name: Run source-set regression
+        env:
+          PYTHONPATH: workshop/src
+        run: python -m unittest kickstart.tests.test_universal_source_set -v
+      - name: Run full Kickstart regression
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+      - name: Run full Workshop regression
+        env:
+          PYTHONPATH: workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+      - name: Commit verified source-set hardening
+        run: |
+          if git diff --quiet; then
+            echo 'Patch already committed.'
+            exit 0
+          fi
+          git config user.name 'Q86'
+          git config user.email '113774086+Question86@users.noreply.github.com'
+          git add kickstart/universal.py kickstart/tests/test_universal_source_set.py workshop/src/runtime_sync_workshop/universal_migration.py workshop/src/runtime_sync_workshop/cli.py
+          git commit -m 'fix: harden source-set checkout isolation and orphan recovery'
+          git push origin HEAD:alpha5-include-edge-authority

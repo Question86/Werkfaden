@@ -1,0 +1,65 @@
+name: First-use feedback
+description: Tell us where Werkfaden became useful or confusing.
+title: "[First use]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying Werkfaden (the KAIROS engine). A clear failure report is useful.
+        This issue is public. Do not upload private source, credentials, customer data, workspace databases or restricted material.
+        Follow the repository LICENSE; this form grants no additional usage or redistribution permission.
+  - type: input
+    id: version
+    attributes:
+      label: Engine release or commit
+      description: The executable still uses the KAIROS name.
+      placeholder: v0.1.0-alpha.6 / 13db71aa...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Python version
+    validations:
+      required: true
+  - type: input
+    id: ecosystem
+    attributes:
+      label: Project ecosystem
+      placeholder: Python, Rust, TypeScript, mixed C++ and Python, or framework query only
+    validations:
+      required: true
+  - type: dropdown
+    id: last_step
+    attributes:
+      label: Last successful step
+      options:
+        - Reading the landing page
+        - Downloading or cloning
+        - Framework search
+        - Reviewed intent contract
+        - Detect
+        - Initial intake
+        - Project seal
+        - Workshop candidate
+        - Shadow verification
+        - POSTCHECK_VERIFIED
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: What did you expect and what actually happened?
+      description: Include a sanitized command or short diagnostic where helpful. Do not attach a full workspace.
+    validations:
+      required: true
+  - type: input
+    id: discovery
+    attributes:
+      label: Where did you find the project?
+      description: Optional. For example X, Bluesky, GitHub search or a recommendation. No personal tracking identifier is needed.
+  - type: textarea
+    id: clarity
+    attributes:
+      label: What did the name and first page make you think the tool does?
+      description: Optional. Your own words are more useful than a rating.

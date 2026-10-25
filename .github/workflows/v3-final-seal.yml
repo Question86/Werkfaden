@@ -1,0 +1,266 @@
+name: V3 alpha.6 final seal
+
+on:
+  push:
+    branches: [v3]
+
+env:
+  RELEASE_VERSION: 0.1.0-alpha.6
+  RELEASE_TAG: v0.1.0-alpha.6
+  EXPECTED_HARNESS_COUNT: '148'
+  EXPECTED_KICKSTART_COUNT: '34'
+  EXPECTED_WORKSHOP_COUNT: '31'
+  EXPECTED_REGRESSION_TOTAL: '213'
+
+jobs:
+  eligibility:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      ready: ${{ steps.ready.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: ready
+        name: Check explicit final-seal marker and immutable tag binding
+        shell: bash
+        run: |
+          ready=false
+          if grep -Fq 'FINAL_SEAL_READY_ALPHA6: true' docs/RELEASE_NOTES_0.1.0_ALPHA6.md; then
+            git fetch --tags --force
+            if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+              existing=$(git rev-list -n 1 "$RELEASE_TAG")
+              if [ "$existing" = "$GITHUB_SHA" ]; then
+                ready=true
+              else
+                echo "Release tag $RELEASE_TAG is already sealed at $existing; current commit $GITHUB_SHA is post-release and will not be resealed."
+              fi
+            else
+              ready=true
+            fi
+          fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+
+  seal:
+    needs: eligibility
+    if: needs.eligibility.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Require clean exact source commit
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --exit-code
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Compile every Python surface
+        run: python -m compileall -q kickstart kairos/kairos_harness workshop/src scripts
+
+      - name: Verify release identity
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from kairos.framework import FRAMEWORK_VERSION
+
+          manifest = json.loads(
+              Path('kairos/kairos_harness/kairos/framework_manifest.json').read_text(encoding='utf-8')
+          )
+          expected = os.environ['RELEASE_VERSION']
+          if FRAMEWORK_VERSION != expected or manifest.get('version') != expected:
+              raise SystemExit(
+                  f'release identity mismatch: workflow={expected!r}, '
+                  f'framework={FRAMEWORK_VERSION!r}, manifest={manifest.get("version")!r}'
+              )
+          print(f'Release identity verified: {expected}')
+          PY
+
+      - name: Audit sole post-seal write boundary
+        run: python scripts/v3_write_boundary_audit.py | tee /tmp/write-boundary.json
+
+      - name: Run and count full KAIROS harness regression
+        shell: bash
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          set -o pipefail
+          python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v 2>&1 | tee /tmp/harness.log
+          count=$(grep -Eo 'Ran [0-9]+ tests' /tmp/harness.log | tail -1 | awk '{print $2}')
+          test "$count" = "$EXPECTED_HARNESS_COUNT"
+          echo "HARNESS_COUNT=$count" >> "$GITHUB_ENV"
+
+      - name: Run and count full Kickstart regression
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s kickstart/tests -p 'test_*.py' -v 2>&1 | tee /tmp/kickstart.log
+          count=$(grep -Eo 'Ran [0-9]+ tests' /tmp/kickstart.log | tail -1 | awk '{print $2}')
+          test "$count" = "$EXPECTED_KICKSTART_COUNT"
+          echo "KICKSTART_COUNT=$count" >> "$GITHUB_ENV"
+
+      - name: Run and count full Workshop regression
+        shell: bash
+        env:
+          PYTHONPATH: workshop/src
+        run: |
+          set -o pipefail
+          python -m unittest discover -s workshop/tests -p 'test_*.py' -v 2>&1 | tee /tmp/workshop.log
+          count=$(grep -Eo 'Ran [0-9]+ tests' /tmp/workshop.log | tail -1 | awk '{print $2}')
+          test "$count" = "$EXPECTED_WORKSHOP_COUNT"
+          echo "WORKSHOP_COUNT=$count" >> "$GITHUB_ENV"
+
+      - name: Verify complete regression census
+        shell: bash
+        run: |
+          total=$((HARNESS_COUNT + KICKSTART_COUNT + WORKSHOP_COUNT))
+          echo "Regression test total: $total"
+          test "$total" = "$EXPECTED_REGRESSION_TOTAL"
+          echo "REGRESSION_TOTAL=$total" >> "$GITHUB_ENV"
+
+      - name: Verify deterministic framework projection against bundle
+        shell: bash
+        run: |
+          rm -rf /tmp/kairos-v3-framework-seal
+          mkdir -p /tmp/kairos-v3-framework-seal
+          python scripts/build_framework_index.py \
+            --output /tmp/kairos-v3-framework-seal/framework.db \
+            --manifest /tmp/kairos-v3-framework-seal/framework_manifest.json \
+            --verify-determinism \
+            --compare-content-with kairos/kairos_harness/kairos/framework.db
+
+      - name: Build fresh release-style tree
+        shell: bash
+        run: |
+          rm -rf /tmp/kairos-v3-seal-cold
+          mkdir -p /tmp/kairos-v3-seal-cold
+          git archive --format=tar "$GITHUB_SHA" | tar -x -C /tmp/kairos-v3-seal-cold
+          test ! -d /tmp/kairos-v3-seal-cold/.git
+
+      - name: Prove zero-state search-to-postcheck bootstrap
+        working-directory: /tmp/kairos-v3-seal-cold
+        run: python scripts/v3_cold_bootstrap_gate.py | tee /tmp/cold-bootstrap.json
+
+      - name: Prove cold universal ecosystem matrix
+        working-directory: /tmp/kairos-v3-seal-cold
+        run: python scripts/v3_cold_ecosystem_matrix.py | tee /tmp/cold-matrix.json
+
+      - name: Build deterministic source ZIP twice
+        shell: bash
+        run: |
+          mkdir -p dist
+          name="KAIROS-GOLDEN-v${RELEASE_VERSION}.zip"
+          prefix="KAIROS-GOLDEN-${RELEASE_VERSION}/"
+          git archive --format=zip --prefix="$prefix" "$GITHUB_SHA" -o "dist/$name"
+          git archive --format=zip --prefix="$prefix" "$GITHUB_SHA" -o "/tmp/$name.second"
+          cmp "dist/$name" "/tmp/$name.second"
+          echo "RELEASE_ZIP=$name" >> "$GITHUB_ENV"
+
+      - name: Emit content-addressed seal manifest
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          root = Path('.')
+          archive = root / 'dist' / os.environ['RELEASE_ZIP']
+          framework = json.loads((root / 'kairos/kairos_harness/kairos/framework_manifest.json').read_text(encoding='utf-8'))
+          audit = json.loads(Path('/tmp/write-boundary.json').read_text(encoding='utf-8'))
+          cold = json.loads(Path('/tmp/cold-bootstrap.json').read_text(encoding='utf-8'))
+          matrix = json.loads(Path('/tmp/cold-matrix.json').read_text(encoding='utf-8'))
+          commit_time = subprocess.check_output(
+              ['git', 'show', '-s', '--format=%cI', os.environ['GITHUB_SHA']], text=True
+          ).strip()
+          payload = {
+              'schema': 'kairos-release-seal/v1',
+              'version': os.environ['RELEASE_VERSION'],
+              'tag': os.environ['RELEASE_TAG'],
+              'commit_sha': os.environ['GITHUB_SHA'],
+              'source_commit_time': commit_time,
+              'archive': {
+                  'file': archive.name,
+                  'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+                  'bytes': archive.stat().st_size,
+                  'reproducible_second_build': True,
+              },
+              'framework': {
+                  'database_sha256': framework['database_sha256'],
+                  'document_count': framework['document_count'],
+                  'gold_query_count': len(framework['gold_queries']),
+                  'deterministic_rebuild': True,
+              },
+              'regression': {
+                  'harness': int(os.environ['HARNESS_COUNT']),
+                  'kickstart': int(os.environ['KICKSTART_COUNT']),
+                  'workshop': int(os.environ['WORKSHOP_COUNT']),
+                  'total': int(os.environ['REGRESSION_TOTAL']),
+                  'compileall': True,
+                  'write_boundary_audit': bool(audit['verified']),
+                  'write_boundary_files_scanned': int(audit['python_files_scanned']),
+              },
+              'cold_validation': {
+                  'bootstrap_verified': bool(cold['verified']),
+                  'bootstrap_first_transaction': cold['first_workshop_transaction'],
+                  'bootstrap_bit_exact': bool(cold['bit_exact']),
+                  'ecosystem_matrix_verified': bool(matrix['verified']),
+                  'ecosystem_case_count': int(matrix['case_count']),
+                  'all_cases_postcheck_verified': all(
+                      row.get('state') == 'POSTCHECK_VERIFIED' and row.get('bit_exact')
+                      for row in matrix['cases']
+                  ),
+              },
+              'mutation_invariant': 'After initial seal, verified Workshop transactions are the sole mutation boundary for governed source and governed Markdown.',
+          }
+          if not payload['regression']['write_boundary_audit']:
+              raise SystemExit('write-boundary audit was not verified')
+          if not payload['cold_validation']['bootstrap_verified']:
+              raise SystemExit('cold bootstrap was not verified')
+          if not payload['cold_validation']['ecosystem_matrix_verified'] or not payload['cold_validation']['all_cases_postcheck_verified']:
+              raise SystemExit('cold ecosystem matrix was not fully verified')
+          seal_name = f"KAIROS-GOLDEN-v{os.environ['RELEASE_VERSION']}-seal.json"
+          (root / 'dist' / seal_name).write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(payload, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload sealed release pair
+        uses: actions/upload-artifact@v4
+        with:
+          name: KAIROS-GOLDEN-v${{ env.RELEASE_VERSION }}-seal
+          path: |
+            dist/KAIROS-GOLDEN-v${{ env.RELEASE_VERSION }}.zip
+            dist/KAIROS-GOLDEN-v${{ env.RELEASE_VERSION }}-seal.json
+          if-no-files-found: error
+
+      - name: Tag the exact sealed commit
+        shell: bash
+        run: |
+          tag="$RELEASE_TAG"
+          git fetch --tags --force
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            existing=$(git rev-list -n 1 "$tag")
+            test "$existing" = "$GITHUB_SHA"
+          else
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi

@@ -1,0 +1,56 @@
+name: JEV review port and combined Workshop regression
+
+on:
+  push:
+    branches: ['project-neutral-framework', 'codex/typed-ai-review-gate', 'feat/typed-ai-review-gate', 'feat/tx-lifecycle-and-jev-binding', 'feat/tx-recycling-governance-backlog', 'feat/integrity-consolidation-audit-fixes']
+  pull_request:
+    paths: ['review/**', 'workshop/**', 'kairos/**', 'kickstart/**', 'docs/**', 'workspace/docs/**']
+
+permissions:
+  contents: read
+
+jobs:
+  offline-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline JEV transport, evidence and binding characterization
+        run: python -m unittest discover -s review/tests -v
+      - name: Combined Workshop metadata and Guardian regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+      - name: Harness regression including Guardian bridge
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+      - name: Audit active Python and runtime-loaded quarantined sources
+        run: python scripts/v3_write_boundary_audit.py
+      - name: Kickstart regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+      - name: Verify rebuilt framework projection
+        run: python scripts/build_framework_index.py --output /tmp/rebuilt-framework.db --manifest /tmp/rebuilt-framework.json --verify-determinism --compare-content-with kairos/kairos_harness/kairos/framework.db
+
+  windows-recycling-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Windows NTFS pool/retention and WAL snapshot smoke
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "kairos/kairos_harness;workshop/src"
+          python -m unittest discover -s workshop/tests -p 'test_tx_retention.py' -v
+          python -m unittest discover -s workshop/tests -p 'test_sqlite_snapshot_wal.py' -v
+      - name: Windows KAIROS TX document parser
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "kairos/kairos_harness;workshop/src"
+          python -m unittest discover -s kairos/kairos_harness/tests -p 'test_transaction_document.py' -v

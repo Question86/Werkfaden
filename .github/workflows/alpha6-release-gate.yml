@@ -1,0 +1,127 @@
+name: Alpha6 release preparation gate
+
+on:
+  push:
+    branches: [alpha6-release-fix]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-alpha6:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: alpha6-release-fix
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Advance release identity to alpha.6
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          framework = Path('kairos/kairos_harness/kairos/framework.py')
+          text = framework.read_text(encoding='utf-8')
+          old = 'FRAMEWORK_VERSION = "0.1.0-alpha.5"'
+          new = 'FRAMEWORK_VERSION = "0.1.0-alpha.6"'
+          if old in text:
+              text = text.replace(old, new, 1)
+              framework.write_text(text, encoding='utf-8')
+          elif new not in text:
+              raise SystemExit('unexpected framework version state')
+
+          seal = Path('.github/workflows/v3-final-seal.yml').read_text(encoding='utf-8')
+          required = (
+              'name: V3 alpha.6 final seal',
+              'RELEASE_VERSION: 0.1.0-alpha.6',
+              'RELEASE_TAG: v0.1.0-alpha.6',
+              "FINAL_SEAL_READY_ALPHA6: true",
+          )
+          for marker in required:
+              if marker not in seal:
+                  raise SystemExit(f'alpha.6 final-seal workflow is not armed: {marker}')
+
+          notes = Path('docs/RELEASE_NOTES_0.1.0_ALPHA6.md')
+          notes.write_text('''# KAIROS 0.1.0-alpha.6\n\nAlpha.6 is the corrected sealed release after alpha.5. It preserves the alpha.5 product hardening and direct compiler include-edge authority while fixing the release CI itself.\n\nIncluded release-integrity fixes:\n\n- Step-2 cold bootstrap verification is release-agnostic and checks against the framework's executable release identity instead of a stale hard-coded alpha.4 literal.\n- An already sealed release workflow becomes ineligible on later branch commits instead of attempting to reuse an immutable tag.\n- The release candidate is rebuilt and verified before promotion to `v3`; only the exact promoted commit may be tagged.\n\nProduct functionality retained from alpha.5:\n\n- nested KAIROS workspace pruning during static source-set checkout;\n- recoverable checkout staging and bounded orphan-lease recovery;\n- direct compiler-observed C-family include-edge authority with topology digest;\n- SQLite/Search projection of direct include edges;\n- Workshop and AuthorityMigration propagation of include-edge authority;\n- fail-closed postcheck/tamper validation.\n\nFINAL_SEAL_READY_ALPHA6: true\n''', encoding='utf-8')
+          PY
+
+      - name: Rebuild framework bundle for alpha.6
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          python scripts/build_framework_index.py \
+            --output kairos/kairos_harness/kairos/framework.db \
+            --manifest kairos/kairos_harness/kairos/framework_manifest.json \
+            --verify-determinism
+
+      - name: Prove bundled manifest equals a fresh alpha.6 rebuild
+        shell: bash
+        run: |
+          rm -rf /tmp/alpha6-framework
+          mkdir -p /tmp/alpha6-framework
+          python scripts/build_framework_index.py \
+            --output /tmp/alpha6-framework/framework.db \
+            --manifest /tmp/alpha6-framework/framework_manifest.json \
+            --verify-determinism \
+            --compare-content-with kairos/kairos_harness/kairos/framework.db
+          cmp kairos/kairos_harness/kairos/framework.db /tmp/alpha6-framework/framework.db
+          diff -u kairos/kairos_harness/kairos/framework_manifest.json /tmp/alpha6-framework/framework_manifest.json
+
+      - name: Compile all Python surfaces
+        run: python -m compileall -q kickstart kairos/kairos_harness workshop/src scripts
+
+      - name: Verify framework bundle and alpha.6 identity
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          python - <<'PY'
+          from kairos.framework import FRAMEWORK_VERSION, verify_framework_bundle
+          result = verify_framework_bundle()
+          assert result['verified']
+          assert FRAMEWORK_VERSION == '0.1.0-alpha.6'
+          assert result['version'] == FRAMEWORK_VERSION
+          print(result)
+          PY
+
+      - name: Run full KAIROS harness regression
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+
+      - name: Run full Kickstart regression
+        env:
+          PYTHONPATH: workshop/src
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+
+      - name: Run full Workshop regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+
+      - name: Run zero-state cold bootstrap
+        run: python scripts/v3_cold_bootstrap_gate.py
+
+      - name: Run cold ecosystem matrix
+        run: python scripts/v3_cold_ecosystem_matrix.py
+
+      - name: Commit verified alpha.6 release candidate
+        shell: bash
+        run: |
+          if git diff --quiet && [ -f docs/RELEASE_NOTES_0.1.0_ALPHA6.md ]; then
+            echo 'alpha.6 candidate already prepared.'
+            exit 0
+          fi
+          git config user.name 'Q86'
+          git config user.email '113774086+Question86@users.noreply.github.com'
+          git add \
+            docs/RELEASE_NOTES_0.1.0_ALPHA6.md \
+            kairos/kairos_harness/kairos/framework.py \
+            kairos/kairos_harness/kairos/framework.db \
+            kairos/kairos_harness/kairos/framework_manifest.json
+          git commit -m 'release: prepare corrected alpha.6 seal candidate'
+          git push origin HEAD:alpha6-release-fix

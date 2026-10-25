@@ -1,0 +1,54 @@
+name: V3 step3 release hardening
+
+on:
+  push:
+    branches: [v3]
+
+permissions:
+  contents: read
+
+jobs:
+  hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile every Python surface
+        run: python -m compileall -q kickstart kairos/kairos_harness workshop/src scripts
+      - name: Audit sole post-seal write boundary
+        run: python scripts/v3_write_boundary_audit.py
+      - name: Run full KAIROS harness regression
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+      - name: Run full Kickstart regression
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+      - name: Run full Workshop regression
+        env:
+          PYTHONPATH: workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+      - name: Verify deterministic framework projection against bundle
+        run: |
+          rm -rf /tmp/kairos-v3-framework
+          mkdir -p /tmp/kairos-v3-framework
+          python scripts/build_framework_index.py \
+            --output /tmp/kairos-v3-framework/framework.db \
+            --manifest /tmp/kairos-v3-framework/framework_manifest.json \
+            --verify-determinism \
+            --compare-content-with kairos/kairos_harness/kairos/framework.db
+      - name: Create fresh candidate archive
+        run: |
+          rm -rf /tmp/kairos-v3-release-cold
+          mkdir -p /tmp/kairos-v3-release-cold
+          git archive --format=tar HEAD | tar -x -C /tmp/kairos-v3-release-cold
+          test ! -d /tmp/kairos-v3-release-cold/.git
+      - name: Run cold zero-state bootstrap
+        working-directory: /tmp/kairos-v3-release-cold
+        run: python scripts/v3_cold_bootstrap_gate.py
+      - name: Run cold universal ecosystem matrix
+        working-directory: /tmp/kairos-v3-release-cold
+        run: python scripts/v3_cold_ecosystem_matrix.py

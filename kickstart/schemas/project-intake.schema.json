@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kairos.example/schemas/project-intake/v1",
+  "title": "KAIROS project intake manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "state",
+    "project_root",
+    "workspace",
+    "project_scope",
+    "authority",
+    "translation_units",
+    "blueprints"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kairos-project-intake/v1"
+    },
+    "state": {
+      "enum": [
+        "verified_pending_workshop_audit"
+      ]
+    },
+    "project_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "kind",
+        "compile_commands"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "compile_commands",
+            "cmake_compile_commands"
+          ]
+        },
+        "compile_commands": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "bytes"
+          ]
+        },
+        "cmake_file": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "translation_units": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "relative_path",
+          "facts"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string"
+          },
+          "commands": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "facts": {
+            "type": "object",
+            "required": [
+              "path",
+              "sha256",
+              "bytes"
+            ]
+          }
+        }
+      }
+    },
+    "blueprints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "filename",
+          "artifact_id",
+          "kind",
+          "relative_path"
+        ]
+      }
+    },
+    "project_scope": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "goal_id",
+        "milestone_id",
+        "task_id",
+        "project_intent_sha256"
+      ],
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "goal_id": {
+          "type": "string",
+          "pattern": "^GOAL_"
+        },
+        "milestone_id": {
+          "type": "string",
+          "pattern": "^MILESTONE_"
+        },
+        "task_id": {
+          "type": "string",
+          "pattern": "^TASK_"
+        },
+        "project_intent_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

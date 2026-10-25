@@ -1,0 +1,75 @@
+name: Alpha5 include edge authority
+
+on:
+  push:
+    branches: [alpha5-include-edge-authority]
+
+permissions:
+  contents: write
+
+jobs:
+  include-edges:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: alpha5-include-edge-authority
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply idempotent include-edge patch
+        run: python scripts/alpha5_include_edge_patch.py
+      - name: Apply compatibility and bounded-projection finalizer
+        run: python scripts/alpha5_include_edge_compat.py
+      - name: Bind include edges into authority migration
+        run: python scripts/alpha5_authority_migration_edges.py
+      - name: Compile patched surfaces
+        run: python -m compileall -q kickstart kairos/kairos_harness workshop/src scripts
+      - name: Rebuild alpha5 framework projection
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: |
+          python scripts/build_framework_index.py \
+            --output kairos/kairos_harness/kairos/framework.db \
+            --manifest kairos/kairos_harness/kairos/framework_manifest.json \
+            --verify-determinism
+      - name: Run direct include-edge regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest workshop.tests.test_include_edge_authority -v
+      - name: Run full KAIROS harness regression
+        env:
+          PYTHONPATH: kairos/kairos_harness
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+      - name: Run full Kickstart regression
+        env:
+          PYTHONPATH: workshop/src
+        run: python -m unittest discover -s kickstart/tests -p 'test_*.py' -v
+      - name: Run full Workshop regression
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s workshop/tests -p 'test_*.py' -v
+      - name: Commit verified include-edge implementation
+        run: |
+          if git diff --quiet; then
+            echo 'Include-edge patch already committed.'
+            exit 0
+          fi
+          git config user.name 'Q86'
+          git config user.email '113774086+Question86@users.noreply.github.com'
+          git add \
+            kickstart/binding.py \
+            kickstart/blueprints.py \
+            kickstart/universal_workshop.py \
+            kairos/kairos_harness/kairos/database.py \
+            kairos/kairos_harness/kairos/graph.py \
+            kairos/kairos_harness/kairos/heartbeat.py \
+            kairos/kairos_harness/kairos/framework.py \
+            kairos/kairos_harness/kairos/framework.db \
+            kairos/kairos_harness/kairos/framework_manifest.json \
+            workshop/src/runtime_sync_workshop/corpus.py \
+            workshop/src/runtime_sync_workshop/engine.py \
+            workshop/src/runtime_sync_workshop/migration.py
+          git commit -m 'feat: bind direct compiler include edges through Workshop and Search'
+          git push origin HEAD:alpha5-include-edge-authority

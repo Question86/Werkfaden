@@ -1,0 +1,10 @@
+{
+  "mechanism_preserved": {
+    "type": "noul",
+    "instructions": "Does the supplied candidate preserve the input validation mechanism required by the supplied contract?"
+  },
+  "unsupported_assumption_present": {
+    "type": "noul",
+    "instructions": "Does this candidate rely on a material project fact that is absent from the supplied evidence?"
+  }
+}
