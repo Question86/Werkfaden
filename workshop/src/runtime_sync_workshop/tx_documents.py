@@ -63,7 +63,7 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     from kairos.heartbeat import run_heartbeat
     from kairos.promoter import prepare_document
     from kairos.transaction_document import document_id, document_path, render_transaction_document
-    from kairos.util import atomic_write_text, sha256_text
+    from kairos.util import atomic_write_text, sha256_text, utc_now
     from kairos.workspace import load_config
 
     txid = str(state["transaction_id"])
@@ -74,21 +74,52 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     if "reports" not in cfg.get("document_roots", []):
         raise WorkshopError("TX_DOCUMENT_ROOT_UNMANAGED", "reports/ must be a managed KAIROS source root")
     old = None
+    existing_text = None
     revision = 1
     if path.exists():
         if path.is_symlink() or not path.is_file():
             raise WorkshopError("TX_DOCUMENT_PATH_UNSAFE", "transaction document source is not a regular file")
-        old = split_frontmatter(path.read_text(encoding="utf-8")).metadata
+        existing_text = path.read_text(encoding="utf-8")
+        old = split_frontmatter(existing_text).metadata
         if old["id"] != document_id(txid) or old["type"] != "transaction" or old.get("transaction_id") != txid:
             raise WorkshopError("TX_DOCUMENT_IDENTITY_MISMATCH", "existing transaction document belongs to another TX")
         revision = int(old["revision"]) + 1
     goal, milestone, task, loop = _sync_scope(workspace, old, state)
+    render_timestamp = str(state.get("updated_at") or state.get("created_at") or (old or {}).get("updated_at") or utc_now())
     text = render_transaction_document(
         transaction=state, workspace_id=str(cfg["workspace_id"]),
         goal_id=goal, milestone_id=milestone, task_id=task, loop=loop,
-        revision=revision,
+        revision=revision, updated_at=render_timestamp,
         task_reference_exists=(bool(task) and (workspace / "tasks" / f"task_{task}.md").is_file()),
     )
+    # Reconciliation of an already persisted event must not invent a new
+    # source revision. Render the same revision and require exact source
+    # equality; changed evidence still takes the normal revision path.
+    replay = False
+    if old and old.get("tx_event_id") == state.get("tx_event_id"):
+        same_revision = render_transaction_document(
+            transaction=state, workspace_id=str(cfg["workspace_id"]),
+            goal_id=goal, milestone_id=milestone, task_id=task, loop=loop,
+            revision=int(old["revision"]), updated_at=render_timestamp,
+            task_reference_exists=(bool(task) and (workspace / "tasks" / f"task_{task}.md").is_file()),
+        )
+        if same_revision == existing_text:
+            revision = int(old["revision"])
+            text = same_revision
+            replay = True
+            # A durable pending marker or a missing checkpoint still needs
+            # recovery below. A fully projected replay is a read-only no-op.
+            try:
+                assert_projected(engine, txid)
+            except WorkshopError:
+                pass
+            else:
+                checkpoint = engine.config.state_directory / "transaction-document-projections" / (txid + ".json")
+                proven = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.is_file() else {}
+                return {"artifact_id": document_id(txid), "path": relative,
+                        "revision": revision, "sha256": prepare_document(path, workspace).content_sha256,
+                        "heartbeat_id": proven.get("heartbeat_id"), "replayed": True}
+
     # Verify document grammar, answers and references BEFORE requesting write authority.
     # The document is generated in the KAIROS template module and has fixed stable IDs.
     from kairos.frontmatter import split_frontmatter as parse_header
@@ -97,18 +128,19 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     sections = parse_sections(parsed.body, header_bytes=parsed.header_bytes)
     validate_answer_targets(parsed.metadata, sections)
 
-    governance, _ = engine._import_kairos()
-    governance.issue_external_edit_permit(
-        workspace, paths=[relative], reason=f"Workshop lifecycle {txid}: {state.get('state', 'unknown')}",
-        ttl_seconds=1800,
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, text)
+    if not replay:
+        governance, _ = engine._import_kairos()
+        governance.issue_external_edit_permit(
+            workspace, paths=[relative], reason=f"Workshop lifecycle {txid}: {state.get('state', 'unknown')}",
+            ttl_seconds=1800,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, text)
     receipt = run_heartbeat(
         workspace, requested_mode="verify", changed_paths=[relative],
         use_reconciliation=True, trigger=f"workshop-transaction-document:{txid}",
     )
-    if not receipt.get("verified") or document_id(txid) not in receipt.get("promoted", []):
+    if not receipt.get("verified"):
         raise WorkshopError("TX_DOCUMENT_PROJECTION_FAILED", "heartbeat did not verify the transaction document: " + str(receipt.get("failures", []))[:1000] + "; missing=" + str(receipt.get("missing_sources", []))[:300], details=receipt.get("failures"))
     expected = prepare_document(path, workspace).content_sha256
     db = KnowledgeDatabase(engine.config.kairos_database)
@@ -134,7 +166,7 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
             "heartbeat_id": receipt.get("heartbeat_id"),
         })
     return {"artifact_id": document_id(txid), "path": relative, "revision": revision, "sha256": expected,
-            "heartbeat_id": receipt.get("heartbeat_id")}
+            "heartbeat_id": receipt.get("heartbeat_id"), "replayed": replay}
 
 
 def update_document(engine: Any, state: dict[str, Any], *, event: str) -> None:

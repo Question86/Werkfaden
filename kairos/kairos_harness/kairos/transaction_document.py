@@ -61,6 +61,7 @@ def render_transaction_document(
     loop: int | None,
     revision: int = 1,
     task_reference_exists: bool = False,
+    updated_at: str | None = None,
 ) -> str:
     transaction_id = str(transaction["transaction_id"])
     artifact_id = document_id(transaction_id)
@@ -171,7 +172,7 @@ def render_transaction_document(
         } if not scope_bound else {}),
         # Exact checkout scope bytes remain in TX state and are named below.
 
-        "updated_at": utc_now(),
+        "updated_at": updated_at or transaction.get("updated_at") or transaction.get("created_at") or utc_now(),
         "capsule": f"TX {transaction_id}: {purpose[:125]}; state {status}.",
         "claim_boundary": "Recorded Workshop state and selected evidence only; not JEV authenticity, semantic truth, deployment or criterion closure.",
         "entities": [artifact_id, task_id] if scope_bound else [artifact_id],

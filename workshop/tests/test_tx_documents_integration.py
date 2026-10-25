@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +23,57 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
+
+    def test_same_event_reconcile_is_read_only_and_keeps_revision(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        path = fixture.workspace / document_path(tx)
+        before = path.read_bytes()
+        before_stat = path.stat().st_mtime_ns
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        checkpoint_before = checkpoint.read_bytes()
+        with patch("kairos.transaction_document.utc_now", return_value="2099-01-01T00:00:00Z"):
+            result = fixture.engine.reconcile_transaction_document(tx)
+        self.assertTrue(result["replayed"])
+        self.assertEqual(result["revision"], 2)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(path.stat().st_mtime_ns, before_stat)
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before)
+
+    def test_missing_projection_checkpoint_recovers_without_new_revision(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        path = fixture.workspace / document_path(tx)
+        before = path.read_bytes()
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        checkpoint.unlink()  # Fixture killpoint: SQL committed before its checkpoint.
+        with patch("kairos.transaction_document.utc_now", return_value="2099-01-01T00:00:00Z"):
+            result = fixture.engine.reconcile_transaction_document(tx)
+        self.assertEqual(result["revision"], 2)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertTrue(checkpoint.is_file())
+        restored = json.loads(checkpoint.read_text(encoding="utf-8"))
+        state = json.loads((fixture.engine.config.transaction_directory / tx / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(restored["event_id"], state["tx_event_id"])
+
+    def test_terminal_note_has_new_monotone_lifecycle_identity(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        state_path = fixture.engine.config.transaction_directory / tx / "state.json"
+        before = json.loads(state_path.read_text(encoding="utf-8"))
+        fixture.engine.annotate_transaction(
+            tx, kind="observation", summary="The isolated observation has an explicit evidence boundary",
+            evidence="docs/APP_BEHAVIOR.md#s-behavior",
+        )
+        after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(after["tx_event_sequence"], before["tx_event_sequence"] + 1)
+        self.assertNotEqual(after["tx_event_id"], before["tx_event_id"])
+        self.assertEqual(after["tx_event"]["previous_event_id"], before["tx_event_id"])
+        header = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(header["tx_event_id"], after["tx_event_id"])
 
     def test_checkout_and_abort_are_both_projected(self):
         fixture = self.fixture()

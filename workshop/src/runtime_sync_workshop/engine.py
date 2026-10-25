@@ -289,6 +289,7 @@ class WorkshopEngine(_CoreWorkshopEngine):
         if terminal:
             # Guardian has already released this transaction. Update the retained
             # history, not the former active Guardian patch-session authority.
+            stage_lifecycle_event(self, root, state, event="TX_NOTE")
             super()._save_transaction(root, state, event="TX_NOTE",
                                       details={"kind": kind, "evidence": evidence.strip()})
             if self.config.raw.get("transaction_documents_required", False) is True:
