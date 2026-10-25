@@ -2,7 +2,7 @@ name: JEV review port and combined Workshop regression
 
 on:
   push:
-    branches: ['project-neutral-framework', 'codex/typed-ai-review-gate', 'feat/typed-ai-review-gate', 'feat/tx-lifecycle-and-jev-binding', 'feat/tx-recycling-governance-backlog', 'feat/integrity-consolidation-audit-fixes']
+    branches: ['project-neutral-framework', 'codex/typed-ai-review-gate', 'feat/typed-ai-review-gate', 'feat/tx-lifecycle-and-jev-binding', 'feat/tx-recycling-governance-backlog', 'feat/integrity-consolidation-audit-fixes', 'fix/audit-consolidation-20261026']
   pull_request:
     paths: ['review/**', 'workshop/**', 'kairos/**', 'kickstart/**', 'docs/**', 'workspace/docs/**']
 

@@ -14,7 +14,7 @@ from runtime_sync_workshop.tx_retention import (
     snapshot, compact, rehydrate, enforce_pool_limit, assert_verified_snapshot,
     recover_interrupted_compactions, storage_inventory,
 )
-from runtime_sync_workshop.tx_recycling import pool_status, drain, inventory
+from runtime_sync_workshop.tx_recycling import pool_status, drain, inventory, frontier_source_epoch
 from runtime_sync_workshop.util import WorkshopError
 
 
@@ -68,6 +68,25 @@ class TransactionRetentionTests(unittest.TestCase):
         stack.enter_context(patch("runtime_sync_workshop.tx_documents.update_document"))
         stack.enter_context(patch("runtime_sync_workshop.tx_documents.assert_projected"))
         return stack
+
+    def test_recycling_epoch_changes_with_same_materialized_tx_count(self):
+        txid, root = self.make_tx("a", "ABORTED")
+        first = pool_status(self.engine, publish=True)
+        import json
+        from runtime_sync_workshop.tx_recycling import frontier_source_epoch
+        cached_path = self.engine.config.kairos_workspace / ".kairos" / "tx_recycling_frontier.json"
+        cached = json.loads(cached_path.read_text(encoding="utf-8"))
+        self.assertEqual(cached["source_epoch"], frontier_source_epoch(first))
+        state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+        state["recycling"] = {"status": "REVIEWED"}
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        second = pool_status(self.engine, publish=False)
+        self.assertEqual(first["materialized_count"], second["materialized_count"])
+        self.assertNotEqual(frontier_source_epoch(first), frontier_source_epoch(second))
+        self.assertNotEqual(cached["source_epoch"], frontier_source_epoch(second))
+        pool_status(self.engine, publish=True)
+        updated = json.loads(cached_path.read_text(encoding="utf-8"))
+        self.assertEqual(updated["source_epoch"], frontier_source_epoch(second))
 
     def test_storage_census_and_budget_block_only_new_work(self):
         txid, root = self.make_tx("a", "ABORTED")

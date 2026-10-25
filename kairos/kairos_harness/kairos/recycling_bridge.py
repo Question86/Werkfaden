@@ -5,7 +5,6 @@ and router projections are NEVER substituted for a live capacity decision.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,7 @@ def live_recycling_status(workspace: Path) -> dict[str, Any]:
         return {"configured": False, "reconciliation_required": False}
     try:
         from runtime_sync_workshop.engine import WorkshopEngine
-        from runtime_sync_workshop.tx_recycling import pool_status
+        from runtime_sync_workshop.tx_recycling import pool_status, frontier_source_epoch
         engine = WorkshopEngine(canonical)
         current = pool_status(engine, publish=False)
     except Exception as exc:
@@ -32,20 +31,14 @@ def live_recycling_status(workspace: Path) -> dict[str, Any]:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         cached = {}
-    source_rows = [
-        {"transaction_id": row["transaction_id"], "state": row.get("state"),
-         "stage": row.get("stage")}
-        for row in current["rows"]
-    ]
-    observed_epoch = hashlib.sha256(
-        json.dumps(source_rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    observed_epoch = frontier_source_epoch(current)
     mismatch = (
         current["enabled"] and (
             cached.get("required") != current["required"]
             or cached.get("materialized_count") != current["materialized_count"]
             or cached.get("target_max") != current["target_max"]
             or cached.get("schema") != "werkfaden-tx-recycling-frontier/v1"
+            or cached.get("source_epoch") != observed_epoch
         )
     )
     return {

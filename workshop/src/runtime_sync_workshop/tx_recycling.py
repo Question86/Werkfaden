@@ -122,6 +122,20 @@ def pool_status(engine: Any, *, publish: bool = False) -> dict[str, Any]:
     return result
 
 
+def frontier_source_epoch(status: dict[str, Any]) -> str:
+    """Content-bound identity of the complete observed TX admission inventory.
+
+    A change from ABORTED to REVIEWED with the SAME TX count is material;
+    clients must not treat matching counts as proof that a cached router is fresh.
+    """
+    identity = [
+        {"transaction_id": row["transaction_id"],
+         "state": row.get("state"), "stage": row.get("stage")}
+        for row in status["rows"]
+    ]
+    return hashlib.sha256(_canonical(identity)).hexdigest()
+
+
 def publish_frontier(engine: Any, status: dict[str, Any]) -> dict[str, Any]:
     """Only a derived guidance snapshot. Engine admission rechecks live TX roots."""
     path = engine.config.kairos_workspace / ".kairos" / "tx_recycling_frontier.json"
@@ -135,6 +149,7 @@ def publish_frontier(engine: Any, status: dict[str, Any]) -> dict[str, Any]:
         "next_action": status["next_action"],
         "candidates": [row["transaction_id"] for row in status["rows"]
                        if row["stage"] in {"REVIEWED", "NEEDS_RECYCLING_ANALYSIS"}][:16],
+        "source_epoch": frontier_source_epoch(status),
         "blocked_count": sum(1 for row in status["rows"]
                              if row["stage"] in {"ACTIVE_OR_RECOVERY", "UNREADABLE_NEEDS_RECOVERY"}),
     }
