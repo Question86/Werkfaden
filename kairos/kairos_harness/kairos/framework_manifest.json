@@ -1,9 +1,9 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "435cb1bdbb0f75bd58c8ba85535bc09b875d3005d18ed35c5319f99bc91155af",
+  "database_content_sha256": "49afb6e7cfe7d48b1ef5f6a4125d131ba298595fcfe765afc8bdee5100a3b6b6",
   "database_file": "framework.db",
-  "database_sha256": "a2638642a99dcb627f5121f0471273905426062bc83278498f0c5588296f92b8",
+  "database_sha256": "3af5c76981ce83dddc9faf90be58078e0449deda70f1114277208db7da421c33",
   "derived": true,
   "document_count": 26,
   "documents": [
