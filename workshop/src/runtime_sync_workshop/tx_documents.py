@@ -603,6 +603,32 @@ def ensure_history_contract(engine: Any) -> dict[str, Any]:
     return {"path": HISTORY_METHOD_PATH, "artifact_id": HISTORY_METHOD_ID, "heartbeat_id": result.get("heartbeat_id")}
 
 
+
+def capture_projection_source(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """Capture the actual authoritative bytes; never acknowledge a caller-only view."""
+    from .tx_lifecycle import SOURCE_EPOCH_KIND, source_epoch
+    from .util import canonical_json, reject_link_components, sha256_bytes
+    path = engine._transaction_path(str(state["transaction_id"])) / "state.json"
+    reject_link_components(path, label="projection source state")
+    raw = path.read_bytes()
+    persisted = json.loads(raw)
+    if canonical_json(persisted) != canonical_json(state):
+        raise WorkshopError("TX_DOCUMENT_SOURCE_STATE_MISMATCH", "provided transaction differs from its persisted authoritative state")
+    epoch = source_epoch(persisted)
+    identity = persisted.get("tx_event") or {}
+    if identity.get("source_epoch") and identity["source_epoch"] != epoch:
+        raise WorkshopError("TX_DOCUMENT_SOURCE_EVENT_STALE", "material source changed without a matching lifecycle event")
+    return {"source_epoch": epoch, "source_epoch_kind": SOURCE_EPOCH_KIND,
+            "source_state_sha256": sha256_bytes(raw), "source_state_utf8": raw.decode("utf-8")}
+
+
+def assert_projection_source_unchanged(engine: Any, transaction_id: str, captured: dict[str, Any]) -> None:
+    from .util import sha256_bytes
+    path = engine._transaction_path(transaction_id) / "state.json"
+    if sha256_bytes(path.read_bytes()) != captured["source_state_sha256"]:
+        raise WorkshopError("TX_DOCUMENT_SOURCE_CHANGED", "authoritative state changed before the projection acknowledgement")
+
+
 def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     # Import through the project's configured harness binding. No second DB writer.
     engine._import_kairos()
@@ -633,9 +659,25 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
             raise WorkshopError("TX_DOCUMENT_IDENTITY_MISMATCH", "existing transaction document does not match this transaction/workspace identity")
         revision = int(old["revision"]) + 1
     control = load_scope_transition(engine, state)
+    goal, milestone, task, loop = _sync_scope(workspace, old, state, expected_workspace_id=str(cfg["workspace_id"]), history_control=control)
+    captured = capture_projection_source(engine, state)
     if control:
         ensure_history_contract(engine)
-    goal, milestone, task, loop = _sync_scope(workspace, old, state, expected_workspace_id=str(cfg["workspace_id"]), history_control=control)
+    # A diagnostic-only save may change journal/time bytes without changing
+    # the material projection. Keep the previously acknowledged full snapshot.
+    if old and (old.get("tx_event_id") or "") == (state.get("tx_event_id") or ""):
+        try:
+            assert_projected(engine, txid, ignore_pending=True)
+        except WorkshopError:
+            pass
+        else:
+            assert_projection_source_unchanged(engine, txid, captured)
+            checkpoint = engine.config.state_directory / "transaction-document-projections" / (txid + ".json")
+            proven = json.loads(checkpoint.read_text(encoding="utf-8"))
+            return {"artifact_id": document_id(txid), "path": relative, "revision": old["revision"],
+                    "sha256": prepare_document(path, workspace).content_sha256,
+                    "heartbeat_id": proven["heartbeat_id"], "source_epoch": proven["source_epoch"],
+                    "source_state_sha256": proven["source_state_sha256"], "replayed": True}
     render_timestamp = str(state.get("updated_at") or state.get("created_at") or (old or {}).get("updated_at") or utc_now())
     text = render_transaction_document(
         transaction=state, workspace_id=str(cfg["workspace_id"]),
@@ -647,7 +689,7 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     # source revision. Render the same revision and require exact source
     # equality; changed evidence still takes the normal revision path.
     replay = False
-    if old and old.get("tx_event_id") == state.get("tx_event_id"):
+    if old and (old.get("tx_event_id") or "") == (state.get("tx_event_id") or ""):
         same_revision = render_transaction_document(
             transaction=state, workspace_id=str(cfg["workspace_id"]),
             goal_id=goal, milestone_id=milestone, task_id=task, loop=loop,
@@ -707,20 +749,22 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
         raise WorkshopError("TX_DOCUMENT_SQL_MISMATCH", "transaction document was not projected as the exact expected revision")
     # One replaceable projection checkpoint per TX, not a receipt file per
     # heartbeat. The authoritative event itself remains in state.json.
-    if state.get("tx_event_id"):
-        checkpoint = engine.config.state_directory / "transaction-document-projections" / (txid + ".json")
-        checkpoint.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(checkpoint, {
+    assert_projection_source_unchanged(engine, txid, captured)
+    checkpoint = engine.config.state_directory / "transaction-document-projections" / (txid + ".json")
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(checkpoint, {
             "schema": "werkfaden-tx-projection/v1",
             "transaction_id": txid,
-            "event_id": state["tx_event_id"],
+            "event_id": state.get("tx_event_id") or "",
             "event_sequence": state.get("tx_event_sequence"),
             "document_revision": revision,
             "content_sha256": expected,
             "heartbeat_id": receipt.get("heartbeat_id"),
+            **captured,
         })
     return {"artifact_id": document_id(txid), "path": relative, "revision": revision, "sha256": expected,
-            "heartbeat_id": receipt.get("heartbeat_id"), "replayed": replay}
+            "heartbeat_id": receipt.get("heartbeat_id"), "source_epoch": captured["source_epoch"],
+            "source_state_sha256": captured["source_state_sha256"], "replayed": replay}
 
 
 def update_document(engine: Any, state: dict[str, Any], *, event: str) -> None:
@@ -740,9 +784,9 @@ def update_document(engine: Any, state: dict[str, Any], *, event: str) -> None:
         marker.unlink()
 
 
-def assert_projected(engine: Any, transaction_id: str) -> None:
+def assert_projected(engine: Any, transaction_id: str, *, ignore_pending: bool = False) -> None:
     marker = pending_path(engine, transaction_id)
-    if marker.is_file():
+    if marker.is_file() and not ignore_pending:
         pending = json.loads(marker.read_text(encoding="utf-8"))
         raise WorkshopError(
             "TX_DOCUMENT_SYNC_PENDING",
@@ -789,20 +833,30 @@ def assert_projected(engine: Any, transaction_id: str) -> None:
     if (row is None or int(row["revision"]) != metadata["revision"]
             or row["content_sha256"] != prepared.content_sha256
             or row["path"] != document_path(transaction_id)
-            or json.loads(row["metadata_json"]).get("workshop_state") != state.get("state")):
+            or json.loads(row["metadata_json"]).get("workshop_state") != state.get("state")
+            or json.loads(row["metadata_json"]).get("tx_event_id", "") != (state.get("tx_event_id") or "")):
         raise WorkshopError("TX_DOCUMENT_NOT_PROJECTED", "exact transaction revision and lifecycle state are not in KAIROS SQL")
 
-    if state.get("tx_event_id"):
-        checkpoint = engine.config.state_directory / "transaction-document-projections" / (transaction_id + ".json")
-        try:
-            proven = json.loads(checkpoint.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            proven = {}
-        if (proven.get("event_id") != state.get("tx_event_id")
-                or proven.get("document_revision") != metadata["revision"]
-                or proven.get("content_sha256") != prepared.content_sha256):
-            raise WorkshopError("TX_DOCUMENT_OUTBOX_UNACKNOWLEDGED",
-                                "current event has no matching durable Markdown/SQL projection checkpoint")
+    from .tx_lifecycle import SOURCE_EPOCH_KIND, source_epoch
+    from .util import sha256_bytes
+    checkpoint = engine.config.state_directory / "transaction-document-projections" / (transaction_id + ".json")
+    try:
+        proven = json.loads(checkpoint.read_text(encoding="utf-8"))
+        snapshot_raw = proven["source_state_utf8"].encode("utf-8")
+        snapshot = json.loads(snapshot_raw)
+        valid_source = (sha256_bytes(snapshot_raw) == proven["source_state_sha256"]
+                        and proven["source_epoch_kind"] == SOURCE_EPOCH_KIND
+                        and source_epoch(snapshot) == proven["source_epoch"] == source_epoch(state)
+                        and (snapshot.get("tx_event_id") or "") == (state.get("tx_event_id") or "")
+                        and snapshot.get("tx_event_sequence") == state.get("tx_event_sequence"))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        proven, valid_source = {}, False
+    if (not valid_source or proven.get("event_id") != (state.get("tx_event_id") or "")
+            or proven.get("document_revision") != metadata["revision"]
+            or proven.get("content_sha256") != prepared.content_sha256
+            or not proven.get("heartbeat_id")):
+        raise WorkshopError("TX_DOCUMENT_OUTBOX_UNACKNOWLEDGED",
+                            "current material source has no matching full-state Markdown/SQL projection checkpoint")
     review = state.get("recycling") if isinstance(state.get("recycling"), dict) else {}
     if review.get("status") == "REVIEWED":
         with sqlite3.connect(engine.config.kairos_database) as con:

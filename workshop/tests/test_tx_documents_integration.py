@@ -27,6 +27,146 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
 
+    def test_legacy_checkpoint_epoch_backfill_preserves_source_revision(self):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        document = fixture.workspace / document_path(tx)
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        before = document.read_bytes()
+        old = json.loads(checkpoint.read_text(encoding="utf-8"))
+        for field in ("source_epoch", "source_epoch_kind", "source_state_sha256", "source_state_utf8"):
+            old.pop(field)
+        checkpoint.write_text(json.dumps(old), encoding="utf-8")
+        with self.assertRaises(WorkshopError) as caught:
+            assert_projected(fixture.engine, tx)
+        self.assertEqual(caught.exception.code, "TX_DOCUMENT_OUTBOX_UNACKNOWLEDGED")
+        fixture.engine.reconcile_transaction_document(tx)
+        self.assertEqual(document.read_bytes(), before)
+        assert_projected(fixture.engine, tx)
+        fixture.engine.abort(tx)
+
+    def test_newer_material_source_is_never_acknowledged_as_the_older_projection(self):
+        from kairos import heartbeat
+        from runtime_sync_workshop.util import WorkshopError
+        from runtime_sync_workshop.tx_documents import assert_projected, pending_path
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        original = heartbeat.run_heartbeat
+        changed = [False]
+        def after_sql(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if not changed[0] and kwargs.get("trigger", "").startswith("workshop-transaction-document:"):
+                changed[0] = True
+                root, newer = fixture.engine._load_transaction(tx)
+                newer["fixture_newer_material_fact"] = "observed after the older SQL promotion"
+                fixture.engine._save_transaction(root, newer, event="FIXTURE_NEWER_MATERIAL_SOURCE")
+            return result
+        with patch.object(heartbeat, "run_heartbeat", after_sql):
+            with self.assertRaises(WorkshopError) as caught:
+                fixture.engine.annotate_transaction(tx, kind="observation", summary="The old projection must not acknowledge a newer material state", evidence="docs/APP_BEHAVIOR.md#s-behavior")
+        self.assertEqual(caught.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+        _, actual = fixture.engine._load_transaction(tx)
+        marker = json.loads(pending_path(fixture.engine, tx).read_text(encoding="utf-8"))
+        self.assertNotEqual(marker["event_id"], actual["tx_event_id"])
+        with patch.object(fixture.engine, "apply", side_effect=AssertionError("Projection repair must not Apply")):
+            fixture.engine.reconcile_transaction_document(tx)
+        assert_projected(fixture.engine, tx)
+        self.assertFalse(pending_path(fixture.engine, tx).exists())
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], actual["tx_event_id"])
+        fixture.engine.abort(tx)
+
+    def test_projection_checkpoint_binds_material_epoch_and_full_observed_source(self):
+        from runtime_sync_workshop.tx_lifecycle import SOURCE_EPOCH_KIND, source_epoch
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        root, state = fixture.engine._load_transaction(tx)
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        raw = (root / "state.json").read_bytes()
+        self.assertEqual(receipt["source_state_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(receipt["source_state_utf8"].encode(), raw)
+        self.assertEqual(receipt["source_epoch"], source_epoch(state))
+        self.assertEqual(receipt["source_epoch_kind"], SOURCE_EPOCH_KIND)
+        self.assertEqual(state["tx_event"]["source_epoch"], receipt["source_epoch"])
+        fixture.engine.abort(tx)
+
+    def test_same_phase_material_change_is_a_new_projected_event(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        root, state = fixture.engine._load_transaction(tx)
+        sequence = state["tx_event_sequence"]
+        state["fixture_material_fact"] = {"outcome": "new evidence before phase change"}
+        fixture.engine._save_transaction(root, state, event="FIXTURE_SAME_PHASE_MATERIAL_CHANGE")
+        _, after = fixture.engine._load_transaction(tx)
+        self.assertEqual(after["state"], "CHECKED_OUT")
+        self.assertEqual(after["tx_event_sequence"], sequence + 1)
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], after["tx_event_id"])
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        acknowledged = json.loads(json.loads(checkpoint.read_text(encoding="utf-8"))["source_state_utf8"])
+        self.assertEqual(acknowledged["fixture_material_fact"], state["fixture_material_fact"])
+        fixture.engine.abort(tx)
+
+    def test_diagnostic_save_and_delivery_keep_revision_and_checkpoint_bytes(self):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        root, state = fixture.engine._load_transaction(tx)
+        document = fixture.workspace / document_path(tx)
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        before_doc, before_ack = document.read_bytes(), checkpoint.read_bytes()
+        event = state["tx_event_id"]
+        fixture.engine._save_transaction(root, state, event="FIXTURE_DIAGNOSTIC_ONLY", details={"message": "diagnostic observation only"})
+        _, after = fixture.engine._load_transaction(tx)
+        self.assertEqual(after["tx_event_id"], event)
+        self.assertNotEqual((root / "state.json").read_bytes(), json.loads(before_ack)["source_state_utf8"].encode())
+        assert_projected(fixture.engine, tx)
+        result = fixture.engine.reconcile_transaction_document(tx)
+        self.assertTrue(result["replayed"])
+        self.assertEqual(document.read_bytes(), before_doc)
+        self.assertEqual(checkpoint.read_bytes(), before_ack)
+        fixture.engine.abort(tx)
+
+    def test_epoch_and_snapshot_corruption_are_not_acknowledged_and_reconcile_keeps_revision(self):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        document = fixture.workspace / document_path(tx)
+        checkpoint = fixture.engine.config.state_directory / "transaction-document-projections" / (tx + ".json")
+        before = document.read_bytes()
+        for field, value in (("source_epoch", "0" * 64), ("source_state_utf8", "{}")):
+            corrupted = json.loads(checkpoint.read_text(encoding="utf-8"))
+            corrupted[field] = value  # Isolated receipt-corruption fixture, never a live repair.
+            checkpoint.write_text(json.dumps(corrupted), encoding="utf-8")
+            with self.assertRaises(WorkshopError) as caught:
+                assert_projected(fixture.engine, tx)
+            self.assertEqual(caught.exception.code, "TX_DOCUMENT_OUTBOX_UNACKNOWLEDGED")
+            fixture.engine.reconcile_transaction_document(tx)
+            self.assertEqual(document.read_bytes(), before)
+            assert_projected(fixture.engine, tx)
+        fixture.engine.abort(tx)
+
+    def test_projection_refuses_a_caller_only_state_view(self):
+        from runtime_sync_workshop.tx_documents import update_document, pending_path
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        _, state = fixture.engine._load_transaction(tx)
+        proposed = json.loads(json.dumps(state))
+        proposed["fixture_unpersisted_material_fact"] = True
+        document = fixture.workspace / document_path(tx)
+        before = document.read_bytes()
+        update_document(fixture.engine, proposed, event="FIXTURE_UNPERSISTED_INPUT")
+        marker = json.loads(pending_path(fixture.engine, tx).read_text(encoding="utf-8"))
+        self.assertEqual(marker["code"], "TX_DOCUMENT_SOURCE_STATE_MISMATCH")
+        self.assertEqual(document.read_bytes(), before)
+        fixture.engine.reconcile_transaction_document(tx)
+        self.assertFalse(pending_path(fixture.engine, tx).exists())
+        fixture.engine.abort(tx)
+
     def test_canonical_history_method_is_single_indexed_and_referenced_by_native_records(self):
         from kairos.transaction_document import HISTORY_METHOD_ID, HISTORY_METHOD_PATH
         from kairos.database import KnowledgeDatabase

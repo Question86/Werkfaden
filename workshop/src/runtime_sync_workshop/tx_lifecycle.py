@@ -35,6 +35,27 @@ MATERIAL_ANNOTATIONS = frozenset({
 
 
 
+
+SOURCE_EPOCH_KIND = "werkfaden-tx-material-state/v1"
+
+
+def material_source(state: dict[str, Any]) -> dict[str, Any]:
+    """Exclude diagnostic bookkeeping and event-derived self references only."""
+    value = json.loads(json.dumps(state))
+    for key in ("updated_at", "journal", "tx_event", "tx_event_id", "tx_event_sequence"):
+        value.pop(key, None)
+    history = value.get("historical_scope")
+    if isinstance(history, dict):
+        history.pop("event_id", None)
+        history.pop("event_sequence", None)
+    return value
+
+
+def source_epoch(state: dict[str, Any]) -> str:
+    payload = json.dumps(material_source(state), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def requires_projection(engine: Any, state: dict[str, Any]) -> bool:
     """An explicit history intake cannot later lose its projection obligation."""
     return (engine.config.raw.get("transaction_documents_required", False) is True
@@ -96,6 +117,7 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
             details={"phase": "UNKNOWN_UNSUPPORTED", "state": current, "event": event},
         )
     required = ((current in PROJECTED_STATES and current != previous)
+                or source_epoch(state) != source_epoch(old)
                 or event in MATERIAL_ANNOTATIONS)
     if not required:
         return None
@@ -103,6 +125,8 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
     seq = int(old.get("tx_event_sequence", 0)) + 1
     payload = {
         "schema": "werkfaden-tx-event/v1",
+        "source_epoch": source_epoch(state),
+        "source_epoch_kind": SOURCE_EPOCH_KIND,
         "transaction_id": txid,
         "tx_kind": str(state.get("transaction_kind") or state.get("schema") or "normal"),
         "sequence": seq,
