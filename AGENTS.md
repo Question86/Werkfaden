@@ -2,7 +2,7 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_RULES"
 type = "documentation"
-revision = 5
+revision = 6
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
@@ -38,7 +38,7 @@ target = "s-fail-closed-boundaries"
 [refs]
 bootstrap = "[ref:docs/FRAMEWORK_BOOTSTRAP.md#s-before-project-intake|id:KAIROS_FRAMEWORK_BOOTSTRAP|v:1|rel:requires|tags:bootstrap,retrieval|src:framework]"
 kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-1-project-intent-precedes-code-discovery|id:KAIROS_PROJECT_KICKSTART|v:1|rel:requires|tags:intent,kickstart|src:framework]"
-workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:6|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
+workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:7|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
 
 [[search_contract]]
 query = "How must an agent operate KAIROS?"

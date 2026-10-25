@@ -42,6 +42,7 @@ FRAMEWORK_DOCUMENT_PATHS: tuple[str, ...] = (
     "kairos/kairos_harness/docs/SYSTEM_SYNTHESIS.md",
     "workshop/README.md",
     "workshop/OPERATIONS.md",
+    "workshop/RECYCLING.md",
     "workshop/SECURITY_BOUNDARY.md",
 )
 

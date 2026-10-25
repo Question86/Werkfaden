@@ -2,7 +2,7 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP_OPERATIONS"
 type = "documentation"
-revision = 5
+revision = 6
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
@@ -205,7 +205,7 @@ paths, confirm their terminal state and preserve referenced evidence before dele
 Configured dependent tests and governed Markdown are source artifacts, not disposable Workshop
 outputs. Scratch cleanup does not erase knowledge from the KAIROS database.
 
-Unknown legacy history is `SCOPE_UNRESOLVED`, not the current Task. Missing document projections are durable pending obligations. Pool capacity is released only by `compaction-committed.json` after archive and SQL proof. Supported maintenance entry points: `tx-recycle-status --refresh-loop`, `tx-recycle-inspect`, `tx-recycle-submit`, `tx-recycle-drain`, `tx-document-reconcile`. Full command reference: `workshop/RECYCLING.md` (supplementary non-bootstrap source).
+Unknown legacy history is `SCOPE_UNRESOLVED`, not the current Task. Missing document projections are durable pending obligations. Pool capacity is released only by `compaction-committed.json` after archive and SQL proof. Supported maintenance entry points: `tx-recycle-status --refresh-loop`, `tx-recycle-inspect`, `tx-recycle-submit`, `tx-recycle-drain`, `tx-document-reconcile`. Binding indexed contract: [ref:workshop/RECYCLING.md#s-catch-up|id:KAIROS_WORKSHOP_RECYCLING|v:1|rel:requires|tags:recycling,maintenance|src:framework].
 
 <a id="s-standalone-ai-review"></a>
 ## Standalone AI review and combined branch

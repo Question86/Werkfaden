@@ -1,0 +1,39 @@
+name: Rebuild audited consolidation framework bundle
+on:
+  push:
+    branches: ['fix/audit-consolidation-20261026']
+    paths:
+      - 'AGENTS.md'
+      - 'docs/WORKSHOP.md'
+      - 'workshop/RECYCLING.md'
+      - 'workshop/OPERATIONS.md'
+      - 'kairos/**'
+      - '.github/workflows/audit-consolidation-rebuild.yml'
+permissions:
+  contents: write
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build reproducible Framework DB
+        run: python scripts/build_framework_index.py --output kairos/kairos_harness/kairos/framework.db --manifest kairos/kairos_harness/kairos/framework_manifest.json --verify-determinism
+      - name: Run KAIROS framework tests against new index
+        env:
+          PYTHONPATH: kairos/kairos_harness:workshop/src
+        run: python -m unittest discover -s kairos/kairos_harness/tests -p 'test_*.py' -v
+      - name: Commit only regenerated index and manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kairos/kairos_harness/kairos/framework.db kairos/kairos_harness/kairos/framework_manifest.json
+          if git diff --cached --quiet; then
+            echo "No change in framework bundle"
+          else
+            git commit -m "Rebuild indexed TX recycling operating contract"
+            git push origin HEAD:fix/audit-consolidation-20261026
+          fi

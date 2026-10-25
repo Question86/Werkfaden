@@ -25,6 +25,26 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class FrameworkBootstrapTests(unittest.TestCase):
+    def test_recycling_contract_is_searchable_in_immutable_framework(self):
+        from kairos.framework import search_framework
+        from kairos.frontmatter import split_frontmatter
+        recycling = ROOT / "workshop" / "RECYCLING.md"
+        metadata = split_frontmatter(recycling.read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["id"], "KAIROS_WORKSHOP_RECYCLING")
+        self.assertIn("workshop/RECYCLING.md", FRAMEWORK_DOCUMENT_PATHS)
+        result = search_framework("When must Workshop recycle transactions before another checkout?", limit=10)
+        names = {row["artifact_id"] for row in result["results"]}
+        self.assertIn("KAIROS_WORKSHOP_RECYCLING", names)
+
+    def test_agents_workshop_revision_matches_authoritative_target(self):
+        from kairos.frontmatter import split_frontmatter
+        agent = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        target = split_frontmatter((ROOT / "docs" / "WORKSHOP.md").read_text(encoding="utf-8")).metadata
+        refs = [ref for ref in iter_references(agent)
+                if ref.target_path == "docs/WORKSHOP.md" and ref.target_section == "s-overview"]
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].version, str(target["revision"]))
+
     def test_literal_markdown_examples_are_not_live_structure(self) -> None:
         text = '''
 ```text

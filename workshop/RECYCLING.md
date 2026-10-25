@@ -1,8 +1,62 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_WORKSHOP_RECYCLING"
+type = "documentation"
+revision = 1
+state = "active"
+authority = "operating_contract"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP_RECYCLING"
+updated_at = "2026-10-26T00:00:00Z"
+capsule = "Binding Workshop transaction recycling rules: nine-TX admission, historical catch-up, evidence-bound disposition, SQL projection and crash-safe compaction."
+claim_boundary = "Defines the operating protocol, not the correctness of any historical patch, live project state or production deployment."
+entities = ["KAIROS", "Workshop", "Transaction recycling"]
+facets = ["workshop", "recycling", "retention", "transaction", "recovery"]
+criteria = []
+does_not_answer = ["live Workshop transaction inventory", "unverified historical outcome"]
+
+[[answers]]
+intent = "operating_rules"
+question = "When must Workshop recycle transactions before another checkout?"
+target = "s-trigger"
+
+[[answers]]
+intent = "recycling_procedure"
+question = "How does the agent safely process more than ten old Workshop transactions?"
+target = "s-catch-up"
+
+[[answers]]
+intent = "failure_semantics"
+question = "How do recycled transactions survive a crash?"
+target = "s-recovery"
+
+[[answers]]
+intent = "transaction_outcome"
+question = "Where must rejected transaction code and the rationale be documented?"
+target = "s-documentation"
+
+[[search_contract]]
+query = "How does Workshop recycle historical transactions safely?"
+expected = "KAIROS_WORKSHOP_RECYCLING#s-catch-up"
+required_top_k = 5
++++
 # Workshop TX recycling and legacy backlog recovery
+
+## CONTEXT INDEX
+
+- [`s-trigger`](#s-trigger) — Checkout at nine materialized TX is blocked; maintenance remains available for larger historical pools.
+- [`s-catch-up`](#s-catch-up) — Inspect, justify, preserve, project and safely compact terminal transactions in resumable batches.
+- [`s-orphans`](#s-orphans) — Unleased orphan retirement requires proof; active or Guardian-controlled work uses proper recovery.
+- [`s-recovery`](#s-recovery) — Compaction plans and verified vault bytes allow replay without a second Apply or unproved deletion.
+- [`s-documentation`](#s-documentation) — A transaction record must preserve the planned code/approach, actual attempt, disposition, rationale and evidence.
+- [`s-boundary`](#s-boundary) — File-level dispositions are not semantic patch adoption, provider attestation or binary deployment proof.
 
 Status: opt-in feature. No production workspace is upgraded automatically.
 
+<a id="s-trigger"></a>
 ## Authority and trigger
+
+> Capsule: Checkout at nine materialized TX is blocked; maintenance remains available for larger historical pools.
 
 Set `transaction_documents_required=true` and
 `tx_retention_required=true` in the canonical Workshop configuration.
@@ -20,7 +74,10 @@ KAIROS's numbered goal/task Loop is NOT incremented when a transaction is
 recycled. The recycling operation sits between patch-session transactions
 under the existing task, and uses its own transaction history.
 
+<a id="s-catch-up"></a>
 ## Supported catch-up sequence
+
+> Capsule: Inspect, justify, preserve, project and safely compact terminal transactions in resumable batches.
 
 From the Workshop entry point, with its canonical `--config`:
 
@@ -61,7 +118,10 @@ processed by running the command again. No destructive "force" shortcut
 is offered. When all remaining TX are protected or unreadable, Checkout
 correctly remains blocked: safe reduction below nine is not always possible.
 
+<a id="s-orphans"></a>
 ## Pre-apply orphans and recoveries
+
+> Capsule: Unleased orphan retirement requires proof; active or Guardian-controlled work uses proper recovery.
 
 A missing Workshop lease does **not** prove that a patch was never applied.
 An unleased `CHECKED_OUT`, `PREPARED` or `SHADOW_VERIFIED` TX may be
@@ -78,7 +138,10 @@ vault. The code can be recovered with `tx-rehydrate`, but any reused
 part needs its own fresh validation. There is deliberately no shared
 vault garbage collector in this change.
 
+<a id="s-recovery"></a>
 ## Crash safety
+
+> Capsule: Compaction plans and verified vault bytes allow replay without a second Apply or unproved deletion.
 
 Before any working directory is renamed, the Engine preserves and
 rereads every TX file in a SHA-addressed complete manifest, verifies the
@@ -90,7 +153,10 @@ plan. The retention process lock is released by the OS on process exit,
 including crashes. Missing bytes or inconsistent hashes stop only that
 TX and surface a diagnostic.
 
+<a id="s-documentation"></a>
 ## Documentation contract
+
+> Capsule: A transaction record must preserve the planned code/approach, actual attempt, disposition, rationale and evidence.
 
 The existing 18 fixed KAIROS section anchors remain in place. The TX
 Markdown describes **what code/approach was planned, what was actually
@@ -107,7 +173,10 @@ report is evidence-attributed agent judgment, not an independently
 verified correctness theorem. Apply and deployment remain distinct
 events.
 
+<a id="s-boundary"></a>
 ## Still out of scope
+
+> Capsule: File-level dispositions are not semantic patch adoption, provider attestation or binary deployment proof.
 
 Automatic semantic hunk extraction, cross-TX matching, merging code
 into a successor TX, proof-carrying adoption by that successor, and

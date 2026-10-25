@@ -2,7 +2,7 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 6
+revision = 7
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
@@ -331,4 +331,4 @@ The publication combines Guardian v2 with the metadata-aware Workshop core. Exis
 
 When Guardian is required, normal-transaction context documents remain unsupported and fail closed; separately proven auxiliary scope is required. Without Guardian enforcement, the existing context-document transaction path retains its metadata checks.
 
-Transaction retention is separately opt-in with `transaction_documents_required=true` and `tx_retention_required=true`. At the default nine-worktree threshold ordinary checkout is refused; interrupted compactions continue reserving capacity until their SQL-projected commit. `tx-recycle-inspect`, `tx-recycle-submit` and `tx-recycle-drain` are the bounded recovery workflow. Historical TX lacking original binding are marked `SCOPE_UNRESOLVED`, never assigned to the current Task. Binding operating rules are indexed in `workshop/OPERATIONS.md#s-scratch-retention`.
+Transaction retention is separately opt-in with `transaction_documents_required=true` and `tx_retention_required=true`. At the default nine-worktree threshold ordinary checkout is refused; interrupted compactions continue reserving capacity until their SQL-projected commit. `tx-recycle-inspect`, `tx-recycle-submit` and `tx-recycle-drain` are the bounded recovery workflow. Historical TX lacking original binding are marked `SCOPE_UNRESOLVED`, never assigned to the current Task. Binding operating rules are indexed in `workshop/OPERATIONS.md#s-scratch-retention` and [ref:workshop/RECYCLING.md#s-trigger|id:KAIROS_WORKSHOP_RECYCLING|v:1|rel:requires|tags:recycling,admission|src:framework].
