@@ -27,6 +27,340 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         fixture.engine.config.raw["transaction_documents_required"] = True
         return fixture
 
+    def test_canonical_history_method_is_single_indexed_and_referenced_by_native_records(self):
+        from kairos.transaction_document import HISTORY_METHOD_ID, HISTORY_METHOD_PATH
+        from kairos.database import KnowledgeDatabase
+        from kairos.search import search_database
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Create the canonical history method once and retain its explicit reference in each admitted record"
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        path = fixture.workspace / HISTORY_METHOD_PATH
+        original = path.read_bytes()
+        stamp = path.stat().st_mtime_ns
+        metadata = split_frontmatter(original.decode()).metadata
+        self.assertEqual(metadata["id"], HISTORY_METHOD_ID)
+        self.assertEqual(metadata["type"], "documentation")
+        self.assertNotIn("goal", metadata)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        fixture.engine.bind_transaction_scope(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(path.stat().st_mtime_ns, stamp)
+        source = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertIn(HISTORY_METHOD_ID, source["refs"]["history_method"])
+        result = search_database(KnowledgeDatabase(fixture.database), "How is a legacy transaction explicitly admitted and later scope bound?", limit=5)
+        self.assertIn(HISTORY_METHOD_ID, json.dumps(result))
+        with sqlite3.connect(fixture.database) as connection:
+            self.assertEqual(connection.execute("SELECT count(*) FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()[0], 1)
+
+    def test_history_method_sql_commit_interruption_recovers_before_tx_projection(self):
+        from kairos.transaction_document import HISTORY_METHOD_ID, HISTORY_METHOD_PATH
+        from kairos import heartbeat
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Recover an interrupted canonical method promotion before acknowledging the transaction history projection"
+        class Interrupted(BaseException):
+            pass
+        original = heartbeat.promote_document
+        interrupted = [False]
+        def after_method_sql(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if Path(path) == fixture.workspace / HISTORY_METHOD_PATH and not interrupted[0]:
+                interrupted[0] = True
+                raise Interrupted()
+            return result
+        with patch.object(heartbeat, "promote_document", after_method_sql):
+            with self.assertRaises(Interrupted):
+                fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, saved = fixture.engine._load_transaction(tx)
+        result = fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        self.assertTrue(result["replayed"])
+        _, after = fixture.engine._load_transaction(tx)
+        self.assertEqual(saved["tx_event_id"], after["tx_event_id"])
+        with sqlite3.connect(fixture.database) as connection:
+            self.assertEqual(connection.execute("SELECT revision FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()[0], 1)
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], after["tx_event_id"])
+
+    def test_adopted_history_keeps_note_and_compaction_projection_under_optional_default(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Keep the per-transaction documentation obligation after explicit historical intake under optional defaults"
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        fixture.engine.config.raw["transaction_documents_required"] = False
+        note = fixture.engine.annotate_transaction(tx, kind="observation", summary="The historical record remains explicitly unassigned", evidence="docs/APP_BEHAVIOR.md#s-behavior")
+        _, state = fixture.engine._load_transaction(tx)
+        self.assertTrue(note["documented"])
+        self.assertTrue(state["tx_event"]["required_projection"])
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], state["tx_event_id"])
+        analysis, _ = self.completed_analysis(fixture, tx)
+        fixture.engine.submit_recycling(tx, analysis)
+        fixture.engine.config.raw["tx_retention_required"] = True
+        fixture.engine.compact_transaction(tx)
+        _, compacted = fixture.engine._load_transaction(tx)
+        self.assertTrue(compacted["tx_event"]["required_projection"])
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], compacted["tx_event_id"])
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+
+    def test_pending_adopted_history_blocks_checkout_under_optional_default(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        fixture.engine.config.raw["transaction_documents_required"] = False
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "A mandatory adopted history outbox must block new code work even when the global legacy flag is optional"
+        with patch("runtime_sync_workshop.tx_documents.publish", side_effect=WorkshopError("INJECTED_PUBLICATION_OUTAGE", "fixture interruption")):
+            with self.assertRaises(WorkshopError):
+                fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.checkout(["app.py"], purpose="Must not bypass a mandatory history outbox under optional defaults")
+        self.assertEqual(caught.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+        fixture.engine.reconcile_transaction_document(tx)
+        next_tx = fixture.engine.checkout(["app.py"], purpose="Safe checkout after the exact historical event is reconciled")["transaction_id"]
+        fixture.engine.abort(next_tx)
+
+    def test_scope_binding_requires_existing_owner_sources_and_unchanged_receipt_binding(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, tx, root, state, scope = self.historical_scope_fixture()
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Reject a historical claim whose Task and Goal source owners cannot actually be verified"
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        fresh = fixture.engine.inspect_transaction_scope(tx)
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_TASK_SOURCE_MISSING")
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+
+    def test_scope_intake_projection_is_required_even_when_default_documents_are_optional(self):
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        fixture.engine.config.raw["transaction_documents_required"] = False
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "An explicit historical intake has mandatory projection independent of the legacy optional default"
+        result = fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, state = fixture.engine._load_transaction(tx)
+        self.assertTrue(state["tx_event"]["required_projection"])
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], result["event_id"])
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+
+    def test_scope_intake_precommit_marker_recovers_original_state_without_inventing_binding(self):
+        from runtime_sync_workshop import engine as owner
+        from runtime_sync_workshop.tx_documents import pending_path
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        root, original = fixture.engine._load_transaction(tx)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Interrupt after staging the historical event but before its authoritative terminal state commit"
+        class Interrupted(BaseException):
+            pass
+        with patch.object(owner._CoreWorkshopEngine, "_save_transaction", side_effect=Interrupted()):
+            with self.assertRaises(Interrupted):
+                fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, saved = fixture.engine._load_transaction(tx)
+        self.assertEqual(saved["tx_event_id"], original["tx_event_id"])
+        self.assertNotIn("historical_scope", saved)
+        self.assertTrue(pending_path(fixture.engine, tx).is_file())
+        fixture.engine.reconcile_transaction_document(tx)
+        self.assertFalse(pending_path(fixture.engine, tx).exists())
+        _, recovered = fixture.engine._load_transaction(tx)
+        self.assertEqual(recovered["tx_event_id"], original["tx_event_id"])
+        self.assertNotIn("historical_scope", recovered)
+
+    def test_native_history_intake_and_explicit_binding_preserve_prior_bytes_and_events(self):
+        from runtime_sync_workshop.tx_documents import load_scope_transition
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        root, before = fixture.engine._load_transaction(tx)
+        source = root / "state.json"
+        document = fixture.workspace / document_path(tx)
+        prior_state, prior_document = source.read_bytes(), document.read_bytes()
+        reason = "Explicitly preserve this historical transaction before a separately reviewed scope assignment"
+        report = fixture.engine.inspect_transaction_scope(tx)
+        intake = fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, state = fixture.engine._load_transaction(tx)
+        self.assertEqual(state["tx_event"]["event"], "TX_HISTORY_INTAKE")
+        self.assertEqual(state["tx_event_sequence"], before["tx_event_sequence"] + 1)
+        self.assertTrue(state["tx_event"]["required_projection"])
+        self.assertEqual(state["tx_event"]["scope_receipt_sha256"], state["historical_scope"]["receipt_sha256"])
+        metadata = split_frontmatter(document.read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+        self.assertEqual(metadata["state"], "blocked")
+        self.assertNotIn("goal", metadata)
+        receipt = load_scope_transition(fixture.engine, state)
+        self.assertEqual(receipt["previous_state_utf8"].encode(), prior_state)
+        self.assertEqual(receipt["previous_document_utf8"].encode(), prior_document)
+        stable = document.read_bytes()
+        replay = fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["event_id"], intake["event_id"])
+        self.assertEqual(document.read_bytes(), stable)
+        fresh = fixture.engine.inspect_transaction_scope(tx)
+        bound = fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        _, after = fixture.engine._load_transaction(tx)
+        self.assertEqual(after["tx_event"]["event"], "TX_SCOPE_BOUND")
+        self.assertEqual(after["tx_event_sequence"], state["tx_event_sequence"] + 1)
+        self.assertEqual(after["original_scope"]["binding_kind"], "HISTORICAL_VERIFIED")
+        metadata = split_frontmatter(document.read_text(encoding="utf-8")).metadata
+        for field, key in (("goal", "goal_id"), ("milestone", "milestone_id"), ("task", "task_id"), ("loop", "loop")):
+            self.assertEqual(metadata[field], before["original_scope"][key])
+        self.assertEqual(metadata["tx_event_id"], bound["event_id"])
+        receipt = load_scope_transition(fixture.engine, after)
+        self.assertEqual(len(receipt["owner_sources"]), 2)
+        replay = fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["event_id"], bound["event_id"])
+        self.assertFalse(fixture.engine.lease_path.exists())
+        from runtime_sync_workshop.util import WorkshopError
+        counterprobe = json.loads(json.dumps(after))
+        counterprobe["original_scope"]["loop"] += 1
+        with self.assertRaises(WorkshopError) as caught:
+            load_scope_transition(fixture.engine, counterprobe)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_RECEIPT_INVALID")
+        with sqlite3.connect(fixture.database) as connection:
+            projected = json.loads(connection.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()[0])
+        self.assertEqual(projected["tx_event_id"], after["tx_event_id"])
+
+    def test_unresolved_intake_remains_searchable_and_cannot_bind_current_task(self):
+        from kairos.database import KnowledgeDatabase
+        from kairos.search import search_database
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, tx, root, state, scope = self.historical_scope_fixture(recorded=False)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Preserve an unassigned historical record without inventing a current project association"
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        path = fixture.workspace / document_path(tx)
+        metadata = split_frontmatter(path.read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+        self.assertNotIn("task", metadata)
+        result = search_database(KnowledgeDatabase(fixture.database), "HISTORICAL_UNRESOLVED/" + tx, limit=10)
+        self.assertIn(document_id(tx), json.dumps(result))
+        fresh = fixture.engine.inspect_transaction_scope(tx)
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_EVIDENCE_UNRESOLVED")
+
+    def test_native_vault_scope_witness_survives_legacy_state_loss_and_can_bind(self):
+        from runtime_sync_workshop.tx_retention import snapshot
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        root, original = fixture.engine._load_transaction(tx)
+        archived = snapshot(fixture.engine, tx, include_entire_tx=True)
+        # Isolated legacy-loss fixture: the actual native vault retains the old observation.
+        legacy = json.loads(json.dumps(original))
+        legacy.pop("original_scope")
+        (root / "state.json").write_text(json.dumps(legacy), encoding="utf-8")
+        report = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(report["status"], "VERIFIED")
+        witness = next(row for row in report["evidence"] if row.get("source", {}).get("manifest"))
+        self.assertEqual(witness["source"]["manifest"]["sha256"], archived["sha256"])
+        reason = "Bind only the original observation retained in a verified native complete transaction snapshot"
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        fresh = fixture.engine.inspect_transaction_scope(tx)
+        fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        _, state = fixture.engine._load_transaction(tx)
+        self.assertEqual(state["original_scope"]["loop"], original["original_scope"]["loop"])
+        self.assertEqual(state["original_scope"]["task_id"], original["original_scope"]["task_id"])
+
+    def test_scope_transition_refuses_active_lease_stale_review_and_missing_intake(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Review exact historical observations without overlapping active code mutation or stale approval"
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_LEASE_ACTIVE")
+        fixture.engine.abort(tx)
+        root, before = fixture.engine._load_transaction(tx)
+        raw = (root / "state.json").read_bytes()
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.intake_transaction_history(tx, expected_report_sha256="0" * 64, reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_INSPECTION_STALE")
+        self.assertEqual((root / "state.json").read_bytes(), raw)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.bind_transaction_scope(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_INTAKE_REQUIRED")
+
+    def test_conflicting_scope_claims_remain_quarantined_after_intake(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture, tx, root, state, scope = self.historical_scope_fixture()
+        path = root / "baseline" / "conflict.json"
+        path.parent.mkdir()
+        raw = json.dumps({"schema": "werkfaden-historical-scope-receipt/v1", "transaction_id": tx,
+                          "workspace_id": scope["workspace_id"], "scope": {**scope, "loop": 11}}).encode()
+        path.write_bytes(raw)
+        state["historical_scope_receipts"] = [{"tier": "TX_STATE", "path": "baseline/conflict.json", "sha256": hashlib.sha256(raw).hexdigest()}]
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Quarantine contradictory historical observations while retaining all previous source evidence"
+        self.assertEqual(report["status"], "CONFLICT")
+        fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        fresh = fixture.engine.inspect_transaction_scope(tx)
+        self.assertEqual(fresh["status"], "CONFLICT")
+        self.assertTrue(fresh["conflicts"])
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.bind_transaction_scope(tx, expected_report_sha256=fresh["report_sha256"], reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_EVIDENCE_UNRESOLVED")
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["scope_status"], "SCOPE_UNRESOLVED")
+        self.assertNotIn("goal", metadata)
+
+    def test_pending_scope_intake_recovers_without_a_second_transition(self):
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        report = fixture.engine.inspect_transaction_scope(tx)
+        reason = "Recover a scope intake publication failure from its already committed event and immutable receipt"
+        with patch("runtime_sync_workshop.tx_documents.publish", side_effect=WorkshopError("INJECTED_SQL_OUTAGE", "fixture interruption")):
+            with self.assertRaises(WorkshopError):
+                fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, saved = fixture.engine._load_transaction(tx)
+        result = fixture.engine.intake_transaction_history(tx, expected_report_sha256=report["report_sha256"], reason=reason)
+        _, after = fixture.engine._load_transaction(tx)
+        self.assertTrue(result["replayed"])
+        self.assertEqual(after["tx_event_id"], saved["tx_event_id"])
+        self.assertEqual(after["tx_event_sequence"], saved["tx_event_sequence"])
+        metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+        self.assertEqual(metadata["tx_event_id"], saved["tx_event_id"])
+
+    def test_history_receipt_corruption_and_cli_contract_fail_closed(self):
+        from runtime_sync_workshop import cli
+        from runtime_sync_workshop.util import WorkshopError
+        fixture = self.fixture()
+        tx = fixture.checkout()["transaction_id"]
+        fixture.engine.abort(tx)
+        args = cli._parser().parse_args(["--config", str(fixture.engine.config.config_path), "tx-scope-inspect", tx])
+        report = cli.execute(args)
+        reason = "Explicit CLI legacy intake with exact inspection identity and preserved prior source bytes"
+        args = cli._parser().parse_args(["--config", str(fixture.engine.config.config_path), "tx-history-intake", tx,
+                                        "--expected-report-sha256", report["report_sha256"], "--reason", reason])
+        result = cli.execute(args)
+        self.assertEqual(result["scope"]["scope_status"], "SCOPE_UNRESOLVED")
+        _, state = fixture.engine._load_transaction(tx)
+        receipt = fixture.engine.config.state_directory / "transaction-scope-history" / tx / (state["historical_scope"]["receipt_sha256"] + ".json")
+        receipt.write_bytes(receipt.read_bytes() + b"corrupt")
+        with self.assertRaises(WorkshopError) as caught:
+            fixture.engine.inspect_transaction_scope(tx)
+            fixture.engine.bind_transaction_scope(tx, expected_report_sha256="0" * 64, reason=reason)
+        self.assertEqual(caught.exception.code, "TX_SCOPE_RECEIPT_INVALID")
+
     def historical_scope_fixture(self, *, recorded=True):
         from kairos.workspace import load_config
         fixture = self.fixture()
@@ -531,14 +865,14 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                     continue
                 for call in ast.walk(node):
                     if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                            and call.func.attr == "_save_transaction"):
+                            and call.func.attr in {"_save_transaction", "_save_terminal_history"}):
                         continue
                     keyword = next((value for value in call.keywords if value.arg == "event"), None)
                     if keyword and isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
                         event = keyword.value.value
                     else:
-                        self.assertEqual((relative, node.name), ("engine.py", "_save_transaction"),
-                                         "Unreviewed dynamic lifecycle event writer")
+                        self.assertIn((relative, node.name), {("engine.py", "_save_transaction"), ("engine.py", "_save_terminal_history")},
+                                      "Unreviewed dynamic lifecycle event writer")
                         event = "<forwarded>"
                     rows.append((relative, node.name, event))
                 # Terminal history is written without a released Guardian lease.
@@ -560,7 +894,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
                     rows.append((relative, node.name, "direct-state:" + event_arg.value))
         self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
         fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
-        self.assertEqual(fingerprint, "d7c73b5b8e8b664d540b4ac9831e5098f6f09a61b5f4e238e9ab3e7690093eab",
+        self.assertEqual(fingerprint, "ce7eab579aa05ae46677f7645934e778d9a0c65a8dee457247d4f28ae46f3de9",
                          f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def test_same_event_reconcile_is_read_only_and_keeps_revision(self):

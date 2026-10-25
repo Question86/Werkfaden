@@ -66,10 +66,13 @@ def assert_no_pending(engine: Any) -> None:
 
 def _sync_scope(workspace: Path, old_metadata: dict[str, Any] | None,
                 state: dict[str, Any], *, expected_workspace_id: str | None = None,
+                history_control: dict[str, Any] | None = None,
                 ) -> tuple[str | None, str | None, str | None, int | None]:
     """Keep historical evidence distinct; never infer ownership from current.json."""
     empty = (None, None, None, None)
     keys = ("goal_id", "milestone_id", "task_id", "loop")
+    if history_control and history_control.get("operation") == "INTAKE":
+        return empty  # Explicit native quarantine; prior claims survive in its receipt.
     original = state.get("original_scope")
     if original is not None and not isinstance(original, dict):
         raise WorkshopError("TX_DOCUMENT_SCOPE_INVALID", "original scope is not an object")
@@ -92,7 +95,9 @@ def _sync_scope(workspace: Path, old_metadata: dict[str, Any] | None,
         if (all(isinstance(value, str) and value for value in values[:3])
                 and type(values[3]) is int and values[3] > 0):
             historical = values
-    if old_metadata and old_metadata.get("scope_status") == "SCOPE_UNRESOLVED" and claims:
+    verified_binding = (history_control and history_control.get("operation") == "BIND"
+                        and all(history_control.get("scope", {}).get(key) == original.get(key) for key in _SCOPE_KEYS))
+    if old_metadata and old_metadata.get("scope_status") == "SCOPE_UNRESOLVED" and claims and not verified_binding:
         raise WorkshopError(
             "TX_DOCUMENT_SCOPE_REBIND_REQUIRED",
             "unresolved historical ownership requires an explicit verified binding event",
@@ -113,6 +118,189 @@ def _sync_scope(workspace: Path, old_metadata: dict[str, Any] | None,
         return tuple(claims[key] for key in keys)
     return historical or empty
 
+
+
+
+def load_scope_transition(engine: Any, state: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the immutable owner receipt before using a scope transition."""
+    from .util import reject_link_components, sha256_bytes
+    history = state.get("historical_scope")
+    if history is None:
+        return None
+    if not isinstance(history, dict):
+        raise WorkshopError("TX_SCOPE_RECEIPT_INVALID", "historical scope control is not an object")
+    txid = state.get("transaction_id", "")
+    if not isinstance(txid, str) or len(txid) != 28 or not txid.startswith("TXN_") or any(c not in "0123456789abcdefABCDEF" for c in txid[4:]):
+        raise WorkshopError("TX_SCOPE_RECEIPT_INVALID", "scope receipt has an invalid transaction identity")
+    digest = history.get("receipt_sha256", "")
+    if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise WorkshopError("TX_SCOPE_RECEIPT_INVALID", "historical scope receipt hash is invalid")
+    path = engine.config.state_directory / "transaction-scope-history" / state["transaction_id"] / (digest + ".json")
+    reject_link_components(path, label="scope transition receipt")
+    try:
+        if path.stat().st_size > 8 * 1024 * 1024 or path.stat().st_nlink != 1:
+            raise ValueError("scope transition receipt exceeds its safe file contract")
+        raw = path.read_bytes()
+        receipt = json.loads(raw)
+        if sha256_bytes(raw) != digest or receipt.get("schema") != "werkfaden-tx-scope-transition/v1":
+            raise ValueError("scope transition receipt hash/schema mismatch")
+        if (receipt.get("transaction_id") != state["transaction_id"]
+                or receipt.get("operation") != history.get("operation")
+                or receipt.get("inspection", {}).get("report_sha256") != history.get("report_sha256")):
+            raise ValueError("scope transition receipt has different operation or transaction evidence")
+        inspection = receipt["inspection"]
+        report_body = {key: value for key, value in inspection.items() if key != "report_sha256"}
+        if sha256_bytes(json.dumps(report_body, sort_keys=True, separators=(",", ":")).encode("utf-8")) != inspection.get("report_sha256"):
+            raise ValueError("historical inspection content does not match its report identity")
+        operation = receipt.get("operation")
+        if operation not in {"INTAKE", "BIND"} or history.get("scope_status") != ("BOUND" if operation == "BIND" else "SCOPE_UNRESOLVED"):
+            raise ValueError("scope transition status/operation mismatch")
+        if operation == "BIND" and (receipt["inspection"].get("status") != "VERIFIED" or receipt.get("scope") != receipt["inspection"].get("scope")):
+            raise ValueError("binding receipt has no complete verified inspection")
+        if operation == "BIND":
+            original = state.get("original_scope") or {}
+            if (original.get("binding_kind") != "HISTORICAL_VERIFIED" or original.get("source_receipt_sha256") != digest
+                    or any(original.get(key) != receipt["scope"].get(key) for key in _SCOPE_KEYS)):
+                raise ValueError("bound state differs from its immutable historical scope receipt")
+        for source in receipt.get("owner_sources", []):
+            if sha256_bytes(source["raw_utf8"].encode("utf-8")) != source["sha256"]:
+                raise ValueError("owner source snapshot does not match its receipt")
+        previous = receipt["previous_state_utf8"].encode("utf-8")
+        if sha256_bytes(previous) != receipt["previous_state_sha256"]:
+            raise ValueError("prior state snapshot does not match the receipt")
+        document = receipt.get("previous_document_utf8")
+        if document is not None and sha256_bytes(document.encode("utf-8")) != receipt.get("previous_document_sha256"):
+            raise ValueError("prior document snapshot does not match the receipt")
+        return receipt
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise WorkshopError("TX_SCOPE_RECEIPT_INVALID", str(exc)) from exc
+
+
+def prepare_scope_transition(engine: Any, transaction_id: str, *, operation: str,
+                             expected_report_sha256: str, reason: str) -> tuple[Path, dict[str, Any], bool]:
+    """Prepare a terminal metadata transition under the retention writer lock.
+
+    No source from current task state is inferred. Scope assignment is possible
+    only from a complete, consistent inspected historical observation.
+    """
+    from .util import atomic_write_bytes, canonical_json, reject_link_components, sha256_bytes, utc_now
+    from .tx_retention import TERMINAL
+    if operation not in {"INTAKE", "BIND"}:
+        raise WorkshopError("TX_SCOPE_OPERATION_INVALID", "unsupported historical scope operation")
+    if not isinstance(reason, str) or not 40 <= len(reason.strip()) <= 2000:
+        raise WorkshopError("TX_SCOPE_REASON_INVALID", "scope transition reason requires 40-2000 characters")
+    if engine.lease_path.exists() or engine.lease_path.is_symlink():
+        raise WorkshopError("TX_SCOPE_LEASE_ACTIVE", "history mutation cannot overlap an active Workshop lease")
+    root, state = engine._load_transaction(transaction_id)
+    if state.get("state") not in TERMINAL:
+        raise WorkshopError("TX_SCOPE_TX_NOT_TERMINAL", "only technically terminal transactions support historical intake/binding")
+    previous = (root / "state.json").read_bytes()
+    old = load_scope_transition(engine, state)
+    if (old and old["operation"] == operation and old["inspection"]["report_sha256"] == expected_report_sha256):
+        if old["reason"] != reason.strip():
+            raise WorkshopError("TX_SCOPE_REPLAY_CONFLICT", "same transition request has a different reason")
+        return root, state, True
+    report = inspect_historical_scope(engine, transaction_id)
+    if report["report_sha256"] != expected_report_sha256:
+        raise WorkshopError("TX_SCOPE_INSPECTION_STALE", "review the exact current historical evidence before mutation")
+    owner_sources = []
+    if operation == "BIND":
+        if not old or old["operation"] != "INTAKE":
+            raise WorkshopError("TX_SCOPE_INTAKE_REQUIRED", "explicit legacy intake must precede binding")
+        if report["status"] != "VERIFIED" or not report.get("scope"):
+            raise WorkshopError("TX_SCOPE_EVIDENCE_UNRESOLVED", "missing or contradictory historical evidence cannot bind ownership", details=report)
+        owner_sources = _validate_historical_owner(engine, report["scope"])
+    engine._import_kairos()
+    from kairos.transaction_document import document_path
+    path = engine.config.kairos_workspace / document_path(transaction_id)
+    prior_document = None
+    if path.exists():
+        reject_link_components(path, label="prior transaction document")
+        if path.stat().st_size > 1024 * 1024:
+            raise WorkshopError("TX_SCOPE_DOCUMENT_TOO_LARGE", "prior transaction document exceeds snapshot budget")
+        prior_document = path.read_bytes()
+    receipt = {"schema": "werkfaden-tx-scope-transition/v1", "transaction_id": transaction_id,
+               "operation": operation, "inspection": report, "reason": reason.strip(), "created_at": utc_now(),
+               "owner_sources": owner_sources,
+               "previous_state_utf8": previous.decode("utf-8"), "previous_state_sha256": sha256_bytes(previous),
+               "previous_document_utf8": prior_document.decode("utf-8") if prior_document is not None else None,
+               "previous_document_sha256": sha256_bytes(prior_document) if prior_document is not None else None,
+               "scope": report["scope"] if operation == "BIND" else None,
+               "claim_boundary": "Verified local source identities and explicit historical metadata decision; not independent historical execution attestation"}
+    raw = canonical_json(receipt).encode("utf-8")
+    if len(raw) > 8 * 1024 * 1024:
+        raise WorkshopError("TX_SCOPE_RECEIPT_TOO_LARGE", "scope transition receipt exceeds its byte budget")
+    digest = sha256_bytes(raw)
+    target = engine.config.state_directory / "transaction-scope-history" / transaction_id / (digest + ".json")
+    reject_link_components(target, label="scope transition receipt")
+    if target.exists():
+        if target.read_bytes() != raw:
+            raise WorkshopError("TX_SCOPE_RECEIPT_CONFLICT", "immutable scope transition receipt changed")
+    else:
+        atomic_write_bytes(target, raw)
+    # Recheck after snapshot creation, before the authoritative state commit.
+    if (root / "state.json").read_bytes() != previous or (path.read_bytes() if path.exists() else None) != prior_document:
+        raise WorkshopError("TX_SCOPE_SOURCE_CHANGED", "historical source changed during transition preparation")
+    for source in owner_sources:
+        if sha256_bytes((engine.config.kairos_workspace / source["path"]).read_bytes()) != source["sha256"]:
+            raise WorkshopError("TX_SCOPE_OWNER_CHANGED", "Task/Goal source changed during scope transition preparation")
+    state["historical_scope"] = {"operation": operation, "receipt_sha256": digest,
+        "report_sha256": report["report_sha256"], "report_status": report["status"],
+        "scope_status": "BOUND" if operation == "BIND" else "SCOPE_UNRESOLVED",
+        "conflict_count": len(report["conflicts"]),
+        "evidence_conflict_count": sum(row["status"] == "CONFLICT" for row in report["evidence"]), "reason": reason.strip()}
+    if operation == "BIND":
+        state["original_scope"] = {**report["scope"], "binding_kind": "HISTORICAL_VERIFIED",
+                                   "bound_at": receipt["created_at"], "source_receipt_sha256": digest}
+    return root, state, False
+
+
+def _validate_historical_owner(engine: Any, scope: dict[str, Any]) -> list[dict[str, Any]]:
+    """Use SQL as a locator, then verify the actual Task and Goal source bytes."""
+    from .util import reject_link_components, sha256_bytes
+    from kairos.database import KnowledgeDatabase
+    from kairos.workspace import database_path
+    from kairos.frontmatter import split_frontmatter
+    from kairos.goals import goal_source_paths, validate_goal
+    from kairos.util import resolve_workspace_path
+    workspace = engine.config.kairos_workspace
+    database = KnowledgeDatabase(database_path(workspace))
+    connection = database.connect(read_only=True)
+    try:
+        row = connection.execute("SELECT path FROM artifacts WHERE artifact_id=? AND document_type='task'", (scope["task_id"],)).fetchone()
+    finally:
+        connection.close()
+    if not row:
+        raise WorkshopError("TX_SCOPE_TASK_SOURCE_MISSING", "historical Task source has no lookup route")
+    path = resolve_workspace_path(workspace, row["path"])
+    if Path(row["path"]).parts[0] not in {"tasks", "archive"}:
+        raise WorkshopError("TX_SCOPE_TASK_SOURCE_INVALID", "historical Task route is outside Task/archive roots")
+    reject_link_components(path, label="historical Task source")
+    if path.stat().st_nlink != 1 or path.stat().st_size > 1024 * 1024:
+        raise WorkshopError("TX_SCOPE_TASK_SOURCE_INVALID", "historical Task source exceeds its safe snapshot contract")
+    raw = path.read_bytes()
+    sources = [{"path": path.relative_to(workspace).as_posix(), "sha256": sha256_bytes(raw), "raw_utf8": raw.decode("utf-8")}]
+
+    metadata = split_frontmatter(raw.decode("utf-8")).metadata
+    if (metadata.get("type") != "task" or metadata.get("id") != scope["task_id"] or metadata.get("goal") != scope["goal_id"]
+            or metadata.get("milestone") != scope["milestone_id"]):
+        raise WorkshopError("TX_SCOPE_TASK_OWNER_CONFLICT", "Task source does not support the proposed Goal/Milestone identity")
+    goals = []
+    for candidate in goal_source_paths(workspace):
+        reject_link_components(candidate, label="historical Goal source")
+        try:
+            candidate.relative_to(workspace / "goals")
+        except ValueError as exc:
+            raise WorkshopError("TX_SCOPE_GOAL_SOURCE_INVALID", "Goal source escapes the canonical Goal root") from exc
+        raw = candidate.read_bytes()
+        payload = json.loads(raw)
+        if payload.get("id") == scope["goal_id"]:
+            validate_goal(payload)
+            goals.append(payload)
+            sources.append({"path": candidate.relative_to(workspace).as_posix(), "sha256": sha256_bytes(raw), "raw_utf8": raw.decode("utf-8")})
+    if len(goals) != 1 or not any(row["id"] == scope["milestone_id"] for row in goals[0]["milestones"]):
+        raise WorkshopError("TX_SCOPE_GOAL_SOURCE_CONFLICT", "Goal source does not uniquely support the proposed Milestone")
+    return sources
 
 
 HISTORICAL_SCOPE_TIERS = ("TX_STATE", "GUARDIAN", "TASK_GOAL", "LOOP_ARCHIVE", "TRANSACTION_DOCUMENT")
@@ -195,6 +383,50 @@ def inspect_historical_scope(engine: Any, transaction_id: str) -> dict[str, Any]
         rows.append({"tier": "TX_STATE", "status": "MISSING", "source": state_source,
                      "reason": "transaction has no recorded original scope"})
 
+    prior_conflicts = []
+    try:
+        control = load_scope_transition(engine, state)
+        if control and control["inspection"].get("status") == "CONFLICT":
+            prior_conflicts = control["inspection"].get("conflicts", [])
+            rows.append({"tier": "TX_STATE", "status": "CONFLICT", "source": {"receipt_sha256": state["historical_scope"]["receipt_sha256"]},
+                         "reason": "previously quarantined conflicting evidence remains unresolved", "historical_conflicts": prior_conflicts})
+    except WorkshopError as exc:
+        rows.append({"tier": "TX_STATE", "status": "CONFLICT", "reason": str(exc)})
+    from .tx_retention import vault_dir, _object_path
+    vault = vault_dir(engine)
+    try:
+        reject_link_components(vault / "manifests", label="historical snapshot discovery")
+        manifests = sorted(islice((vault / "manifests").glob(transaction_id + "-*.json"), 65))
+        if len(manifests) > 64:
+            complete = False
+            rows.append({"tier": "TX_STATE", "status": "MISSING", "reason": "native TX snapshot discovery exceeds 64-manifest budget"})
+        for candidate in manifests[:64]:
+            raw, manifest_source = read(candidate)
+            digest = hashlib.sha256(raw).hexdigest()
+            manifest = json.loads(raw)
+            if (candidate.name != transaction_id + "-" + digest + ".json"
+                    or manifest.get("schema") != "werkfaden-transaction-vault/v1"
+                    or manifest.get("transaction_id") != transaction_id):
+                raise ValueError("native historical snapshot manifest identity mismatch")
+            if manifest.get("complete") is not True or "state.json" not in manifest.get("files", {}):
+                continue
+            fact = manifest["files"]["state.json"]
+            hexdigest = fact.get("sha256", "")
+            if len(hexdigest) != 64 or any(c not in "0123456789abcdef" for c in hexdigest):
+                raise ValueError("native historical snapshot state object hash is invalid")
+            raw, source = read(_object_path(vault, hexdigest))
+            if source["sha256"] != hexdigest or source["bytes"] != fact.get("size"):
+                raise ValueError("native historical state object changed")
+            snapshot = json.loads(raw)
+            if (snapshot.get("transaction_id") != transaction_id or
+                    snapshot.get("baseline_package_sha256") != state.get("baseline_package_sha256")):
+                raise ValueError("native historical snapshot has a different TX/baseline")
+            source["manifest"] = manifest_source
+            if snapshot.get("original_scope"):
+                record("TX_STATE", snapshot["original_scope"], source, eligible=True,
+                       note="Native complete-TX snapshot and exact state object verified; historical execution is not independently attested")
+    except (OSError, ValueError, TypeError, KeyError, WorkshopError) as exc:
+        rows.append({"tier": "TX_STATE", "status": "CONFLICT", "reason": str(exc)})
     references = state.get("historical_scope_receipts", [])
     if not isinstance(references, list) or len(references) > 64:
         rows.append({"tier": "TX_STATE", "status": "CONFLICT", "reason": "invalid or over-budget pinned receipt list"})
@@ -299,7 +531,7 @@ def inspect_historical_scope(engine: Any, transaction_id: str) -> dict[str, Any]
         rows.append({"tier": "TX_STATE", "status": "MISSING", "reason": str(exc)})
     ordered = sorted(rows, key=lambda row: HISTORICAL_SCOPE_TIERS.index(row["tier"]))
     observed: dict[str, Any] = {}
-    conflicts = []
+    conflicts = list(prior_conflicts)
     for row in ordered:
         for key, value in row.get("scope", {}).items():
             if key in observed and observed[key] != value:
@@ -317,6 +549,58 @@ def inspect_historical_scope(engine: Any, transaction_id: str) -> dict[str, Any]
               "claim_boundary": "Read-only identity and recorded-scope consistency inspection; not historical execution attestation, Apply or verified reassignment"}
     report["report_sha256"] = hashlib.sha256(json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     return report
+
+
+
+def ensure_history_contract(engine: Any) -> dict[str, Any]:
+    """Publish the single canonical method through its own resumable heartbeat."""
+    engine._import_kairos()
+    from kairos.database import KnowledgeDatabase
+    from kairos.promoter import prepare_document
+    from kairos.transaction_document import HISTORY_METHOD_ID, HISTORY_METHOD_PATH, render_history_contract
+    from kairos.reconcile import reconcile_documents
+    from kairos.workspace import load_config
+    from kairos.util import atomic_write_text, sha256_text
+    from .util import reject_link_components
+    workspace = engine.config.kairos_workspace
+    cfg = load_config(workspace)
+    if "docs" not in cfg.get("document_roots", []):
+        raise WorkshopError("TX_HISTORY_METHOD_UNMANAGED", "canonical history method requires the governed docs source root")
+    path = workspace / HISTORY_METHOD_PATH
+    reject_link_components(path, label="canonical history method")
+    expected = render_history_contract(str(cfg["workspace_id"]))
+    if path.exists() and (not path.is_file() or path.read_bytes() != expected.encode("utf-8")):
+        raise WorkshopError("TX_HISTORY_METHOD_DRIFT", "canonical history method differs; a verified document migration is required")
+    if path.is_file():
+        connection = KnowledgeDatabase(engine.config.kairos_database).connect(read_only=True)
+        try:
+            row = connection.execute("SELECT path,content_sha256 FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()
+        finally:
+            connection.close()
+        reconciliation = reconcile_documents(workspace)
+        source_pending = any(candidate.resolve() == path.resolve() for candidate in reconciliation.changed)
+        if (row and row["path"] == HISTORY_METHOD_PATH
+                and row["content_sha256"] == prepare_document(path, workspace).content_sha256 and not source_pending):
+            return {"path": HISTORY_METHOD_PATH, "artifact_id": HISTORY_METHOD_ID, "replayed": True}
+    governance, heartbeat = engine._import_kairos()
+    permit = governance.issue_external_edit_permit(
+        workspace, paths=[HISTORY_METHOD_PATH], reason="Publish the canonical historical transaction intake method",
+        ttl_seconds=1800, publication_id="HISTORY_METHOD:" + str(cfg["workspace_id"]) + ":1",
+        expected_sha256={HISTORY_METHOD_PATH: sha256_text(expected)})
+    if not path.exists():
+        atomic_write_text(path, expected)
+    result = heartbeat.run_heartbeat(workspace, requested_mode="verify", changed_paths=[HISTORY_METHOD_PATH],
+        use_reconciliation=True, trigger="workshop-history-method", resume_publication_permit_id=permit["permit_id"])
+    if not result.get("verified"):
+        raise WorkshopError("TX_HISTORY_METHOD_PENDING", "canonical history method projection did not verify", details=result.get("failures"))
+    connection = KnowledgeDatabase(engine.config.kairos_database).connect(read_only=True)
+    try:
+        row = connection.execute("SELECT path,content_sha256 FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()
+    finally:
+        connection.close()
+    if not row or row["path"] != HISTORY_METHOD_PATH or row["content_sha256"] != prepare_document(path, workspace).content_sha256:
+        raise WorkshopError("TX_HISTORY_METHOD_SQL_MISMATCH", "canonical method has no exact native projection")
+    return {"path": HISTORY_METHOD_PATH, "artifact_id": HISTORY_METHOD_ID, "heartbeat_id": result.get("heartbeat_id")}
 
 
 def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
@@ -348,7 +632,10 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
         if old["id"] != document_id(txid) or old["type"] != "transaction" or old.get("transaction_id") != txid or old.get("workspace") != cfg["workspace_id"]:
             raise WorkshopError("TX_DOCUMENT_IDENTITY_MISMATCH", "existing transaction document does not match this transaction/workspace identity")
         revision = int(old["revision"]) + 1
-    goal, milestone, task, loop = _sync_scope(workspace, old, state, expected_workspace_id=str(cfg["workspace_id"]))
+    control = load_scope_transition(engine, state)
+    if control:
+        ensure_history_contract(engine)
+    goal, milestone, task, loop = _sync_scope(workspace, old, state, expected_workspace_id=str(cfg["workspace_id"]), history_control=control)
     render_timestamp = str(state.get("updated_at") or state.get("created_at") or (old or {}).get("updated_at") or utc_now())
     text = render_transaction_document(
         transaction=state, workspace_id=str(cfg["workspace_id"]),

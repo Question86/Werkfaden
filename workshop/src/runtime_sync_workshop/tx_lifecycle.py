@@ -30,8 +30,15 @@ PHASES = {
 PROJECTED_STATES = frozenset(PHASES)
 MATERIAL_ANNOTATIONS = frozenset({
     "TX_NOTE", "TX_COMPACTED", "TX_RECYCLE_REVIEWED",
-    "TX_RECYCLING_ORPHAN_RETIRED",
+    "TX_RECYCLING_ORPHAN_RETIRED", "TX_HISTORY_INTAKE", "TX_SCOPE_BOUND",
 })
+
+
+
+def requires_projection(engine: Any, state: dict[str, Any]) -> bool:
+    """An explicit history intake cannot later lose its projection obligation."""
+    return (engine.config.raw.get("transaction_documents_required", False) is True
+            or state.get("historical_scope") is not None)
 
 
 def scope_from_checkout(workspace: Path) -> dict[str, Any] | None:
@@ -63,7 +70,7 @@ def scope_from_checkout(workspace: Path) -> dict[str, Any] | None:
 
 
 def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
-                          event: str) -> dict[str, Any] | None:
+                          event: str, required_projection: bool = False) -> dict[str, Any] | None:
     """Stamp monotone identity into authoritative state before its atomic save.
 
     The pending marker is created before the state save; an interrupted first
@@ -106,9 +113,10 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
         "candidate_sha256": str(state.get("verified_work_package_sha256") or state.get("prepared_work_package_sha256") or ""),
         "baseline_sha256": str(state.get("baseline_package_sha256") or ""),
         "occurred_at": utc_now(),
-        "required_projection": engine.config.raw.get("transaction_documents_required", False) is True,
+        "required_projection": required_projection or requires_projection(engine, state),
         "previous_event_id": str(old.get("tx_event_id") or ""),
-        "scope_receipt_sha256": str((state.get("original_scope") or {}).get("source_receipt_sha256") or ""),
+        "scope_receipt_sha256": str((state.get("historical_scope") or {}).get("receipt_sha256")
+                                    or (state.get("original_scope") or {}).get("source_receipt_sha256") or ""),
     }
     event_id = "TXE_" + hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -116,7 +124,7 @@ def stage_lifecycle_event(engine: Any, root: Path, state: dict[str, Any], *,
     state["tx_event_sequence"] = seq
     state["tx_event_id"] = event_id
     state["tx_event"] = {**payload, "event_id": event_id}
-    if engine.config.raw.get("transaction_documents_required", False) is True:
+    if state["tx_event"]["required_projection"]:
         from .tx_documents import pending_path, pending_record
         marker = pending_path(engine, txid)
         marker.parent.mkdir(parents=True, exist_ok=True)

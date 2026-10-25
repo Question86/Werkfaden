@@ -15,7 +15,7 @@ from .util import WorkshopError, read_json
 from .jev_admission import require_candidate_jev_clearance
 from .tx_documents import update_document, assert_projected, assert_no_pending
 from .tx_retention import enforce_pool_limit, snapshot, assert_verified_snapshot, compact, materialized_worktrees, rehydrate, storage_inventory
-from .tx_lifecycle import stage_lifecycle_event
+from .tx_lifecycle import stage_lifecycle_event, requires_projection
 
 
 class WorkshopEngine(_CoreWorkshopEngine):
@@ -111,8 +111,9 @@ class WorkshopEngine(_CoreWorkshopEngine):
             self._guardian_context = None
 
     def _acquire_lease(self, transaction_id: str) -> dict[str, Any]:
-        if self.config.raw.get("transaction_documents_required", False) is True:
-            assert_no_pending(self)
+        # A mandatory adopted-history event can be pending under an optional
+        # legacy default. Its obligation still blocks every new checkout.
+        assert_no_pending(self)
         if self.config.raw.get("tx_retention_required", False) is True:
             enforce_pool_limit(self)
         required = self._guardian_enabled()
@@ -142,8 +143,7 @@ class WorkshopEngine(_CoreWorkshopEngine):
             transaction_id = str(state.get("transaction_id", ""))
             if transaction_id:
                 self.guardian().observe_transaction_state(transaction_id, event=event, state=state)
-        if (authoritative_event is not None
-                and self.config.raw.get("transaction_documents_required", False) is True):
+        if authoritative_event is not None and authoritative_event["required_projection"]:
             # Project only meaningful transitions and explicit knowledge changes.
             # The pending outbox marker predates the state save, so a crash does
             # not silently erase the obligation to project the persisted event.
@@ -245,62 +245,61 @@ class WorkshopEngine(_CoreWorkshopEngine):
         if self.config.raw.get("jev_apply_required", False) is True:
             require_candidate_jev_clearance(self.config, root, state)
         result = super().apply(transaction_id)
-        if self.config.raw.get("transaction_documents_required", False) is True:
+        if requires_projection(self, self._load_transaction(transaction_id)[1]):
             assert_projected(self, transaction_id)
         return result
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
         result = super().abort(transaction_id)
-        if self.config.raw.get("transaction_documents_required", False) is True:
+        if requires_projection(self, self._load_transaction(transaction_id)[1]):
             assert_projected(self, transaction_id)
         return result
 
     def recover(self, transaction_id: str) -> dict[str, Any]:
         result = super().recover(transaction_id)
-        if self.config.raw.get("transaction_documents_required", False) is True:
+        if requires_projection(self, self._load_transaction(transaction_id)[1]):
             assert_projected(self, transaction_id)
         return result
 
     def annotate_transaction(self, transaction_id: str, *, kind: str, summary: str,
                              evidence: str, atomic_id: str = "", source_tx: str = "") -> dict[str, Any]:
-        # These are declared observations, NOT verified code or release receipts.
-        allowed = {"observation", "hypothesis", "failure", "reused_candidate",
-                   "discarded_candidate", "next_action", "verification"}
-        if kind not in allowed:
-            raise WorkshopError("TX_NOTE_KIND_INVALID", "unsupported transaction annotation type")
-        if len(summary.strip()) < 12 or len(summary) > 2000:
-            raise WorkshopError("TX_NOTE_INVALID", "TX annotation must be 12-2000 characters")
-        if not evidence.strip() or len(evidence) > 2000:
-            raise WorkshopError("TX_NOTE_EVIDENCE_MISSING", "every annotation requires an explicit evidence locator")
-        root, state = self._load_transaction(transaction_id)
-        terminal = state.get("state") in {"POSTCHECK_VERIFIED", "ABORTED", "ROLLED_BACK",
-                                          "ABORTED_STALE_BASELINE", "ABORTED_ORPHANED_CHECKOUT"}
-        if terminal:
-            if self.lease_path.is_file():
-                raise WorkshopError("TX_NOTE_LEASE_ACTIVE", "terminal TX annotation cannot be written while a Workshop lease is held")
-        else:
-            self._require_lease(transaction_id)
-        entries = state.setdefault("transaction_notes", [])
-        if len(entries) >= 128:
-            raise WorkshopError("TX_NOTE_LIMIT", "transaction has reached the bounded note limit")
-        entries.append({"kind": kind, "summary": summary.strip(), "evidence_locator": evidence.strip(),
-                        "atomic_id": atomic_id.strip(), "source_transaction": source_tx.strip(),
-                        "verification": "DECLARED_NOT_INDEPENDENTLY_VERIFIED"})
-        if terminal:
-            # Guardian has already released this transaction. Update the retained
-            # history, not the former active Guardian patch-session authority.
-            stage_lifecycle_event(self, root, state, event="TX_NOTE")
-            super()._save_transaction(root, state, event="TX_NOTE",
-                                      details={"kind": kind, "evidence": evidence.strip()})
-            if self.config.raw.get("transaction_documents_required", False) is True:
-                update_document(self, state, event="TX_NOTE")
-        else:
-            self._save_transaction(root, state, event="TX_NOTE",
-                                   details={"kind": kind, "evidence": evidence.strip()})
-        if self.config.raw.get("transaction_documents_required", False) is True:
-            assert_projected(self, transaction_id)
-        return {"transaction_id": transaction_id, "kind": kind,
-                "notes": len(entries), "documented": self.config.raw.get("transaction_documents_required", False) is True}
+        from .tx_retention import _retention_lock
+        with _retention_lock(self):
+            # These are declared observations, NOT verified code or release receipts.
+            allowed = {"observation", "hypothesis", "failure", "reused_candidate",
+                       "discarded_candidate", "next_action", "verification"}
+            if kind not in allowed:
+                raise WorkshopError("TX_NOTE_KIND_INVALID", "unsupported transaction annotation type")
+            if len(summary.strip()) < 12 or len(summary) > 2000:
+                raise WorkshopError("TX_NOTE_INVALID", "TX annotation must be 12-2000 characters")
+            if not evidence.strip() or len(evidence) > 2000:
+                raise WorkshopError("TX_NOTE_EVIDENCE_MISSING", "every annotation requires an explicit evidence locator")
+            root, state = self._load_transaction(transaction_id)
+            terminal = state.get("state") in {"POSTCHECK_VERIFIED", "ABORTED", "ROLLED_BACK",
+                                              "ABORTED_STALE_BASELINE", "ABORTED_ORPHANED_CHECKOUT"}
+            if terminal:
+                if self.lease_path.is_file():
+                    raise WorkshopError("TX_NOTE_LEASE_ACTIVE", "terminal TX annotation cannot be written while a Workshop lease is held")
+            else:
+                self._require_lease(transaction_id)
+            entries = state.setdefault("transaction_notes", [])
+            if len(entries) >= 128:
+                raise WorkshopError("TX_NOTE_LIMIT", "transaction has reached the bounded note limit")
+            entries.append({"kind": kind, "summary": summary.strip(), "evidence_locator": evidence.strip(),
+                            "atomic_id": atomic_id.strip(), "source_transaction": source_tx.strip(),
+                            "verification": "DECLARED_NOT_INDEPENDENTLY_VERIFIED"})
+            if terminal:
+                # Guardian has already released this transaction. Update the retained
+                # history, not the former active Guardian patch-session authority.
+                self._save_terminal_history(root, state, event="TX_NOTE",
+                                            details={"kind": kind, "evidence": evidence.strip()})
+            else:
+                self._save_transaction(root, state, event="TX_NOTE",
+                                       details={"kind": kind, "evidence": evidence.strip()})
+            if requires_projection(self, state):
+                assert_projected(self, transaction_id)
+            return {"transaction_id": transaction_id, "kind": kind,
+                    "notes": len(entries), "documented": requires_projection(self, state)}
 
     def transaction_storage_audit(self) -> dict[str, Any]:
         return storage_inventory(self)
@@ -351,6 +350,47 @@ class WorkshopEngine(_CoreWorkshopEngine):
 
     def rehydrate_transaction(self, transaction_id: str, manifest_path: Path, destination: Path) -> dict[str, Any]:
         return rehydrate(self, transaction_id, manifest_path, destination)
+
+    def _save_terminal_history(self, root: Path, state: dict[str, Any], *, event: str,
+                               details: Any = None, force_projection: bool = False) -> None:
+        """Common terminal writer; callers hold the retention writer lock."""
+        from .tx_retention import TERMINAL
+        if state.get("state") not in TERMINAL or self.lease_path.exists() or self.lease_path.is_symlink():
+            raise WorkshopError("TX_HISTORY_WRITE_BOUNDARY", "history writes require a terminal, unleased transaction")
+        stage_lifecycle_event(self, root, state, event=event, required_projection=force_projection)
+        if event in {"TX_HISTORY_INTAKE", "TX_SCOPE_BOUND"}:
+            state["historical_scope"]["event_id"] = state["tx_event_id"]
+            state["historical_scope"]["event_sequence"] = state["tx_event_sequence"]
+        super()._save_transaction(root, state, event=event, details=details)
+        if force_projection or requires_projection(self, state):
+            update_document(self, state, event=event)
+            assert_projected(self, str(state["transaction_id"]))
+
+    def intake_transaction_history(self, transaction_id: str, *, expected_report_sha256: str, reason: str) -> dict[str, Any]:
+        from .tx_retention import _retention_lock
+        from .tx_documents import prepare_scope_transition
+        with _retention_lock(self):
+            root, state, replay = prepare_scope_transition(self, transaction_id, operation="INTAKE",
+                expected_report_sha256=expected_report_sha256, reason=reason)
+            if replay:
+                self.reconcile_transaction_document(transaction_id)
+            else:
+                self._save_terminal_history(root, state, event="TX_HISTORY_INTAKE", force_projection=True)
+            return {"transaction_id": transaction_id, "event_id": state["historical_scope"]["event_id"],
+                    "current_event_id": state.get("tx_event_id"), "scope": state["historical_scope"], "replayed": replay}
+
+    def bind_transaction_scope(self, transaction_id: str, *, expected_report_sha256: str, reason: str) -> dict[str, Any]:
+        from .tx_retention import _retention_lock
+        from .tx_documents import prepare_scope_transition
+        with _retention_lock(self):
+            root, state, replay = prepare_scope_transition(self, transaction_id, operation="BIND",
+                expected_report_sha256=expected_report_sha256, reason=reason)
+            if replay:
+                self.reconcile_transaction_document(transaction_id)
+            else:
+                self._save_terminal_history(root, state, event="TX_SCOPE_BOUND", force_projection=True)
+            return {"transaction_id": transaction_id, "event_id": state["historical_scope"]["event_id"],
+                    "current_event_id": state.get("tx_event_id"), "scope": state["historical_scope"], "replayed": replay}
 
     def inspect_transaction_scope(self, transaction_id: str) -> dict[str, Any]:
         """Read historical provenance without touching current scope or TX state."""

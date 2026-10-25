@@ -13,6 +13,39 @@ from .templates import render_document, pointer
 from .util import utc_now
 
 
+
+HISTORY_METHOD_ID = "WERKFADEN_TRANSACTION_HISTORY_METHOD"
+HISTORY_METHOD_PATH = "docs/HISTORICAL_TRANSACTION_SCOPE.md"
+
+
+def render_history_contract(workspace_id: str) -> str:
+    """One canonical, project-neutral method per governed workspace."""
+    metadata = {
+        "schema": "kairos-context/v1", "id": HISTORY_METHOD_ID, "type": "documentation",
+        "revision": 1, "state": "active", "authority": "operating_contract", "workspace": workspace_id,
+        "route": workspace_id + "/" + HISTORY_METHOD_ID, "updated_at": "2026-10-25T00:00:00Z",
+        "capsule": "Canonical protocol for explicit historical transaction intake, evidence-bound scope assignment and safe projection recovery.",
+        "claim_boundary": "Framework method only; no transaction provenance, project success, historical execution, provider attestation or deployment is certified by this document.",
+        "entities": [HISTORY_METHOD_ID, "tx-scope-inspect", "tx-history-intake", "tx-scope-bind"],
+        "facets": ["transaction-history", "legacy-intake", "scope-provenance"], "criteria": [],
+        "does_not_answer": ["the true scope of an unobserved transaction", "missing historical facts"],
+        "answers": [
+            {"intent": "workflow", "question": "How is a legacy transaction explicitly admitted and later scope bound?", "target": "s-workflow"},
+            {"intent": "evidence", "question": "Which historical scope evidence can authorize assignment?", "target": "s-evidence"},
+            {"intent": "recovery", "question": "How is interrupted historical scope projection recovered?", "target": "s-recovery"}],
+        "search_contract": [{"query": "How is a legacy transaction explicitly admitted and later scope bound?", "expected": HISTORY_METHOD_ID + "#s-workflow", "required_top_k": 5}],
+    }
+    sections = [
+        {"id": "s-workflow", "title": "WORKFLOW", "capsule": "Explicit intake preserves the record before a separate verified assignment.",
+         "content": "Use the canonical Workshop configuration. Run `tx-scope-inspect TX` and review its exact report hash. Run `tx-history-intake TX --expected-report-sha256 HASH --reason TEXT` to preserve the previous state and document in an immutable receipt and quarantine the record under `HISTORICAL_UNRESOLVED/TX`. The explanation requires 40-2000 characters. Inspect again after intake. Only a complete, consistent VERIFIED inspection permits `tx-scope-bind TX --expected-report-sha256 HASH --reason TEXT`. Binding is a new material event. Missing or conflicting records remain unassigned; current.json and active task state never supply their missing history."},
+        {"id": "s-evidence", "title": "EVIDENCE", "capsule": "Byte identity and historical scope claims have different evidentiary limits.",
+         "content": "Inspect controlled TX state and snapshots, Guardian evidence, pinned Task/Goal receipts, pinned loop archives and the associated document in order. Native complete-TX vault manifests and exact state objects can retain a lost original observation. Legacy Guardian fields or a document declaration alone cannot authorize assignment. A successful binding also checks the actual Task/Goal source ownership and preserves those bytes. Receipt hashes prove identity and recorded consistency, not independent historical truth. Scope receipts retain previous bytes and contradictory evidence; no API accepts arbitrary Goal/Task/Loop values as assignment arguments."},
+        {"id": "s-recovery", "title": "RECOVERY", "capsule": "Reconcile the persisted event without applying code again or renewing mutation authority.",
+         "content": "Intake and binding require a technically terminal, unleased TX and the retention writer lock. Outbox staging precedes the state commit. If publication fails after the state is saved, retry the exact operation with the same inspected hash and explanation, or use `tx-document-reconcile TX`. Do not repeat Apply. A committed operation has one event identity; replay does not create a new event or false document revision. Explicitly adopted history keeps its projection obligation for later annotations and compaction even under a legacy optional default. Pending mandatory documentation blocks new checkout. Conflict quarantine is retained until historical evidence is consistent; it never transfers ownership to the active Task."},
+    ]
+    return render_document(metadata, "Historical transaction scope: canonical intake and binding method", sections)
+
+
 SECTION_SPECS = (
     ("s-purpose", "PURPOSE", "Goal and limits"),
     ("s-mapping", "SOURCE MAPPING", "Paths and baseline"),
@@ -75,6 +108,9 @@ def render_transaction_document(
     else:
         document_state = "partial"
     purpose = str(transaction.get("purpose") or "No verified transaction purpose recorded")
+    history = transaction.get("historical_scope") or {}
+    if history.get("scope_status") == "SCOPE_UNRESOLVED":
+        document_state = "blocked"
     scope_bound = bool(goal_id and milestone_id and task_id and type(loop) is int and loop > 0)
     q = chr(96)
     recycle = transaction.get("recycling") if isinstance(transaction.get("recycling"), dict) else {}
@@ -116,8 +152,11 @@ def render_transaction_document(
                      + "\n- Recycling intent: " + str(recycle.get("planned_approach") or "unreviewed"),
         "s-mapping": "- Selected source paths: " + _json(transaction.get("sources", []), 1000)
                      + "\n- Baseline package SHA-256: " + str(transaction.get("baseline_package_sha256") or "none"),
-        "s-drift": "none",
-        "s-ownership": "The Workshop owns recorded transaction state; KAIROS projects its Markdown evidence. A JEV verdict is not a production deployment receipt. " + ("Historical scope is checkout-bound." if scope_bound else "Historical scope is unresolved; no current Task ownership is asserted."),
+        "s-drift": ("Historical lookup: HISTORICAL_UNRESOLVED/" + transaction_id
+                    + "\nHistorical scope transition (full prior bytes remain in the immutable receipt):\n" + _json(history, 3000)) if history else "none",
+        "s-ownership": "The Workshop owns recorded transaction state; KAIROS projects its Markdown evidence. A JEV verdict is not a production deployment receipt. " + ("Historical scope is explicitly receipt-bound; prior scope claims remain in the immutable transition receipts."
+                     if scope_bound and history else "Historical scope is checkout-bound." if scope_bound
+                     else "Historical scope is unresolved; no current Task ownership is asserted."),
         "s-graph-metadata": graph_data,
         "s-symbols": "Selected files (not a verified symbol inventory): "
                      + _json(transaction.get("sources", []), 1000),
@@ -175,7 +214,7 @@ def render_transaction_document(
         "updated_at": updated_at or transaction.get("updated_at") or transaction.get("created_at") or utc_now(),
         "capsule": f"TX {transaction_id}: {purpose[:125]}; state {status}.",
         "claim_boundary": "Recorded Workshop state and selected evidence only; not JEV authenticity, semantic truth, deployment or criterion closure.",
-        "entities": [artifact_id, task_id] if scope_bound else [artifact_id],
+        "entities": [artifact_id, task_id] if scope_bound else ([artifact_id, "HISTORICAL_UNRESOLVED/" + transaction_id] if history else [artifact_id]),
         "facets": ["workshop", "transaction-history", "candidate-lineage"],
         "criteria": [],
         "does_not_answer": ["production deployment status", "unobserved source correctness"],
@@ -194,10 +233,13 @@ def render_transaction_document(
             {"intent": "transaction_outcome", "question": f"What was the observed Workshop outcome of {artifact_id}?", "target": "s-output"},
             {"intent": "transaction_lineage", "question": f"Which previous patches or transaction events does {artifact_id} record?", "target": "s-execution"},
         ],
-        "refs": ({
-            "task": pointer(f"tasks/task_{task_id}.md", section="s-objective", artifact_id=task_id,
-                            version="dynamic", relation="belongs_to", tags=("task", "scope"))
-        } if task_reference_exists and scope_bound else {}),
+        "refs": {
+            **({"task": pointer(f"tasks/task_{task_id}.md", section="s-objective", artifact_id=task_id,
+                                version="dynamic", relation="belongs_to", tags=("task", "scope"))}
+               if task_reference_exists and scope_bound else {}),
+            **({"history_method": pointer(HISTORY_METHOD_PATH, section="s-workflow", artifact_id=HISTORY_METHOD_ID,
+                                          version="1", relation="requires", tags=("history", "method"))} if history else {}),
+        },
         **({"loop": loop, "goal": goal_id, "milestone": milestone_id, "task": task_id}
            if scope_bound else {}),
         "search_contract": [

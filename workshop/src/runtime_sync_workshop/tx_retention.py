@@ -260,7 +260,8 @@ def _resume_compaction_locked(engine: Any, transaction_id: str) -> dict[str, Any
         from .tx_lifecycle import stage_lifecycle_event
         stage_lifecycle_event(engine, root, state, event="TX_COMPACTED")
         atomic_write_json(root / "state.json", state)
-    if engine.config.raw.get("transaction_documents_required", False) is True:
+    from .tx_lifecycle import requires_projection
+    if requires_projection(engine, state):
         from .tx_documents import update_document, assert_projected
         # One publication consumer handles both first delivery and pending
         # replay. It preserves the common event-bound failure record.

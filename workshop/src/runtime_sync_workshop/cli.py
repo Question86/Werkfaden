@@ -142,6 +142,14 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser("guard-reconcile", help="reconcile a provable Workshop/Guardian crash window without adopting unverified bytes")
         command.add_argument("guardian_id")
 
+    command = sub.add_parser("tx-scope-inspect", help="inspect bounded historical scope evidence without mutation")
+    command.add_argument("transaction_id")
+    for name in ("tx-history-intake", "tx-scope-bind"):
+        command = sub.add_parser(name, help="explicit terminal history intake or verified historical scope binding")
+        command.add_argument("transaction_id")
+        command.add_argument("--expected-report-sha256", required=True)
+        command.add_argument("--reason", required=True)
+
     if "tx-document-reconcile" not in sub.choices:
         command = sub.add_parser("tx-document-reconcile", help="retry the canonical KAIROS transaction document projection without repeating Apply")
         command.add_argument("transaction_id")
@@ -263,6 +271,15 @@ def execute(arguments: argparse.Namespace) -> dict:
         )
     if command == "guard-reconcile":
         return engine.guardian_reconcile(arguments.guardian_id)
+
+    if command == "tx-scope-inspect":
+        return engine.inspect_transaction_scope(arguments.transaction_id)
+    if command == "tx-history-intake":
+        return engine.intake_transaction_history(arguments.transaction_id,
+            expected_report_sha256=arguments.expected_report_sha256, reason=arguments.reason)
+    if command == "tx-scope-bind":
+        return engine.bind_transaction_scope(arguments.transaction_id,
+            expected_report_sha256=arguments.expected_report_sha256, reason=arguments.reason)
 
     if command == "tx-document-reconcile":
         return engine.reconcile_transaction_document(arguments.transaction_id)

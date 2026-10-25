@@ -16,6 +16,26 @@ from kairos.transaction_document import (
 
 
 class TransactionDocumentTests(unittest.TestCase):
+    def test_explicit_historical_binding_is_not_described_as_a_new_checkout_observation(self):
+        tx = {"transaction_id": "TXN_" + "d" * 24, "state": "ABORTED",
+              "purpose": "Retain original historical evidence without inventing a checkout observation",
+              "historical_scope": {"operation": "BIND", "scope_status": "BOUND", "receipt_sha256": "c" * 64}}
+        document = render_transaction_document(
+            transaction=tx, workspace_id="KAIROS_TEST", goal_id="GOAL_KAIROS_001",
+            milestone_id="MILESTONE_KAIROS_01", task_id="TASK_0001", loop=3)
+        frontmatter = split_frontmatter(document)
+        sections = parse_sections(frontmatter.body, header_bytes=frontmatter.header_bytes)
+        ownership = next(section.body for section in sections if section.section_id == "s-ownership")
+        self.assertIn("explicitly receipt-bound", ownership)
+        self.assertNotIn("checkout-bound", ownership)
+        self.assertEqual(frontmatter.metadata["loop"], 3)
+        # Existing records without an explicit history transition retain their old rendering.
+        tx.pop("historical_scope")
+        ordinary = render_transaction_document(
+            transaction=tx, workspace_id="KAIROS_TEST", goal_id="GOAL_KAIROS_001",
+            milestone_id="MILESTONE_KAIROS_01", task_id="TASK_0001", loop=3)
+        self.assertIn("Historical scope is checkout-bound.", ordinary)
+
     def test_complete_method_grammar_and_scope(self):
         tx = {"transaction_id": "TXN_" + "a" * 24, "state": "CHECKED_OUT",
               "purpose": "Repair parser with bounded scope",
