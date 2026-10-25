@@ -1,16 +1,16 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "ffe1584d012b4de5d6198a142036b4a043bad3a70ebac8e7bbe3887a66670318",
+  "database_content_sha256": "435cb1bdbb0f75bd58c8ba85535bc09b875d3005d18ed35c5319f99bc91155af",
   "database_file": "framework.db",
-  "database_sha256": "59fbd6ef4b0e0517b8f5427b143e1775e169f699f5e90359a84fabc11fcb6fff",
+  "database_sha256": "a2638642a99dcb627f5121f0471273905426062bc83278498f0c5588296f92b8",
   "derived": true,
-  "document_count": 25,
+  "document_count": 26,
   "documents": [
     {
       "artifact_id": "KAIROS_FRAMEWORK_RULES",
       "path": "AGENTS.md",
-      "sha256": "3ca2c80dbd8341ed430c9d2c067f1ce56962c35234befe1c93529cd855566d0c"
+      "sha256": "e7ea173902fffddef4a55bc6e03fdb0ce5fb4cfb179743e442943d640c38dd72"
     },
     {
       "artifact_id": "WERKFADEN_EVIDENCE_BASED_AI_REVIEW",
@@ -80,7 +80,7 @@
     {
       "artifact_id": "KAIROS_WORKSHOP",
       "path": "docs/WORKSHOP.md",
-      "sha256": "c0a74cbbff3998d28d76850c06ddea22655074645dfdc810b8cef27824fdd2a0"
+      "sha256": "098a66cabd840349d69d691465c3cf4e17434b394bb0f653689aee1bb92d8dd8"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
@@ -125,7 +125,12 @@
     {
       "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
       "path": "workshop/OPERATIONS.md",
-      "sha256": "2acd2236cc7a45ab0ce46a13621fe04cdb504ef73afc796c2ad4672ea3ef4b6a"
+      "sha256": "75912db69de7afd9acb9ed1e78e3ce60662310feb2ec3d4b8d252bfcce71c8f8"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_RECYCLING",
+      "path": "workshop/RECYCLING.md",
+      "sha256": "ab94b035ccf8d272f13196883a7e828db1eec5c78d4613d96f9d0e6ccf6689ca"
     },
     {
       "artifact_id": "KAIROS_SECURITY_BOUNDARY",
