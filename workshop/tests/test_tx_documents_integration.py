@@ -5,6 +5,7 @@ import ast
 import hashlib
 from datetime import datetime
 import sqlite3
+from contextlib import closing
 import sys
 import unittest
 from unittest.mock import patch
@@ -33,7 +34,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         _, state = fixture.engine._load_transaction(tx)
         self.assertEqual(state["state"], expected_state)
         metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             row = con.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()
         sql = json.loads(row[0])
         self.assertEqual(state["tx_event_id"], metadata["tx_event_id"])
@@ -182,23 +183,20 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual((fixture.project / "added.py").read_text(encoding="utf-8"), "answer = 42\n")
 
     def test_compiler_intake_rejects_unbound_projection_policy_mutation(self):
-        from workshop.tests import test_authority_migration as authority_tests
+        import tempfile
+        from workshop.tests.test_project_intake_binding import initialized_workspace
         from runtime_sync_workshop.util import WorkshopError
-        original = authority_tests.WorkshopEngine
-        def unbound_policy_engine(path):
-            engine = original(path)
-            # Isolated negative fixture: config policy cannot silently change
-            # after compiler-backed intake has bound its configuration hash.
-            engine.config.raw["transaction_documents_required"] = True
-            return engine
-        case = authority_tests.AuthorityMigrationTests("test_header_add_remove_and_source_change_migrate_atomically")
-        with patch.object(authority_tests, "WorkshopEngine", side_effect=unbound_policy_engine):
-            with self.assertRaises(WorkshopError) as caught:
-                case.test_header_add_remove_and_source_change_migrate_atomically()
+        temporary = tempfile.TemporaryDirectory(prefix="compiler-policy-binding-")
+        self.addCleanup(temporary.cleanup)
+        workspace, engine = initialized_workspace(Path(temporary.name))
+        self.assertIs(engine.config.raw["transaction_documents_required"], True)
+        # Isolated negative input: the source intake still binds the original
+        # generated config. The actual seal must reject an unbound toggle.
+        engine.config.raw["transaction_documents_required"] = False
+        with self.assertRaises(WorkshopError) as caught:
+            engine.seal()
         self.assertEqual(caught.exception.code, "CORPUS_NOT_VERIFIED")
         self.assertIn("PROJECT_INTAKE_CONFIG_HASH_MISMATCH", {row["code"] for row in caught.exception.details})
-        # Positive mandatory-policy compiler migration requires policy to be
-        # generated and hash-bound at intake; that acceptance remains separate.
 
     def test_bootstrap_repairs_native_indexed_legacy_blank_noise_without_source_write(self):
         import re
@@ -243,6 +241,57 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual((fixture.project / "app.py").read_bytes(), source_before)
         self.assertEqual(external.read_bytes(), managed.read_bytes())
         self.assertIn("### SOURCE", managed.read_text(encoding="utf-8"))
+
+    def test_fresh_intake_requires_projection_before_its_first_transaction(self):
+        fixture = ContextTransactionTests("test_apply_promotes_reviewed_code_and_semantic_context_in_one_heartbeat")
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        raw = json.loads(fixture.engine.config.config_path.read_text(encoding="utf-8"))
+        self.assertIs(raw["transaction_documents_required"], True)
+        self.assertIs(fixture.engine.config.raw["transaction_documents_required"], True)
+        self.assertEqual(list(fixture.engine.config.transaction_directory.glob("TXN_*/state.json")), [])
+        checkout = fixture.engine.checkout(["app.py"], purpose="Verify a fresh generated mandatory projection policy without inherited transaction history")
+        tx = checkout["transaction_id"]
+        state = self.assert_special_projected(fixture, tx, "CHECKED_OUT")
+        self.assertEqual(state["tx_event_sequence"], 1)
+        self.assertTrue(state["tx_event"]["required_projection"])
+        fixture.engine.abort(tx)
+        self.assert_special_projected(fixture, tx, "ABORTED")
+
+    def test_legacy_missing_projection_policy_is_not_silently_rewritten(self):
+        from types import SimpleNamespace
+        from runtime_sync_workshop.tx_lifecycle import requires_projection
+        raw = {"schema": "runtime-sync-workshop-config/v1"}
+        before = json.dumps(raw, sort_keys=True)
+        engine = SimpleNamespace(config=SimpleNamespace(raw=raw))
+        self.assertFalse(requires_projection(engine, {}))
+        self.assertEqual(json.dumps(raw, sort_keys=True), before)
+        self.assertNotIn("transaction_documents_required", raw)
+        # Actual adopted-history projection remains covered by native receipt
+        # tests; this unit test checks the legacy absent-key policy boundary.
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows open-handle rename acceptance")
+    def test_projection_read_checks_release_sqlite_file_handles_without_gc(self):
+        import gc
+        from runtime_sync_workshop.tx_documents import assert_projected
+        fixture = self.fixture()
+        tx = fixture.engine.checkout(["app.py"], purpose="Verify projection read handles close before Windows temporary workspace cleanup")["transaction_id"]
+        fixture.engine.abort(tx)
+        gc.collect()
+        enabled = gc.isenabled()
+        gc.disable()
+        moved = fixture.database.with_suffix(".handle-check")
+        try:
+            assert_projected(fixture.engine, tx)
+            # Isolated resource test only: Windows refuses this rename if the
+            # preceding native read left a database handle open. No bytes edit.
+            fixture.database.rename(moved)
+            moved.rename(fixture.database)
+        finally:
+            if moved.exists():
+                moved.rename(fixture.database)
+            if enabled:
+                gc.enable()
 
     def test_legacy_checkpoint_epoch_backfill_preserves_source_revision(self):
         from runtime_sync_workshop.tx_documents import assert_projected
@@ -409,7 +458,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertIn(HISTORY_METHOD_ID, source["refs"]["history_method"])
         result = search_database(KnowledgeDatabase(fixture.database), "How is a legacy transaction explicitly admitted and later scope bound?", limit=5)
         self.assertIn(HISTORY_METHOD_ID, json.dumps(result))
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             self.assertEqual(connection.execute("SELECT count(*) FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()[0], 1)
 
     def test_history_method_sql_commit_interruption_recovers_before_tx_projection(self):
@@ -438,7 +487,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertTrue(result["replayed"])
         _, after = fixture.engine._load_transaction(tx)
         self.assertEqual(saved["tx_event_id"], after["tx_event_id"])
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             self.assertEqual(connection.execute("SELECT revision FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()[0], 1)
         metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
         self.assertEqual(metadata["tx_event_id"], after["tx_event_id"])
@@ -587,7 +636,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         with self.assertRaises(WorkshopError) as caught:
             load_scope_transition(fixture.engine, counterprobe)
         self.assertEqual(caught.exception.code, "TX_SCOPE_RECEIPT_INVALID")
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             projected = json.loads(connection.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()[0])
         self.assertEqual(projected["tx_event_id"], after["tx_event_id"])
 
@@ -919,7 +968,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual(after["tx_event"]["event"], "TX_RECYCLING_ORPHAN_RETIRED")
         metadata = split_frontmatter((fixture.workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
         self.assertEqual(metadata["tx_event_id"], after["tx_event_id"])
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             projected = json.loads(connection.execute(
                 "SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()[0])
         self.assertEqual(projected["tx_event_id"], after["tx_event_id"])
@@ -940,7 +989,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         permit = governance.issue_external_edit_permit(fixture.workspace, **request)
         replay = governance.issue_external_edit_permit(fixture.workspace, **request)
         self.assertEqual(replay["permit_id"], permit["permit_id"])
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             expires = connection.execute("SELECT expires_at FROM action_permits WHERE permit_id=?",
                                          (permit["permit_id"],)).fetchone()[0]
         with patch.object(governance, "_now", return_value=datetime.fromisoformat(expires.replace("Z", "+00:00")) + timedelta(seconds=1)):
@@ -962,7 +1011,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
             fixture.workspace, changed=[path], missing=[], reason="Explicit exact publication recovery",
             resume_publication_permit_id=permit["permit_id"])
         self.assertEqual(recovered["attributed_paths"], [relative])
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             self.assertEqual(connection.execute("SELECT expires_at FROM action_permits WHERE permit_id=?",
                                                (permit["permit_id"],)).fetchone()[0], expires)
             self.assertEqual(connection.execute("SELECT count(*) FROM governed_action_receipts WHERE permit_id=?",
@@ -1086,7 +1135,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         fixture.engine.abort(tx)
         path = fixture.workspace / document_path(tx)
         before = path.read_bytes()
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             projected = connection.execute("SELECT revision,content_sha256 FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()
         _, state = fixture.engine._load_transaction(tx)
         proposed = json.loads(json.dumps(state))
@@ -1098,7 +1147,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual(marker["event_sequence"], state["tx_event_sequence"])
         self.assertEqual(marker["details"]["scope_status"], "CONFLICT")
         self.assertEqual(path.read_bytes(), before)
-        with sqlite3.connect(fixture.database) as connection:
+        with closing(sqlite3.connect(fixture.database)) as connection:
             self.assertEqual(connection.execute("SELECT revision,content_sha256 FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone(), projected)
         with self.assertRaises(WorkshopError) as caught:
             fixture.engine.checkout(["app.py"], purpose="Must not open another transaction while scope evidence conflicts")
@@ -1316,7 +1365,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertEqual(header["type"], "transaction")
         self.assertEqual(header["workshop_state"], "CHECKED_OUT")
         self.assertEqual(header["revision"], 1)
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             row = con.execute("SELECT revision,document_type FROM artifacts WHERE artifact_id=?",
                               (document_id(tx),)).fetchone()
             self.assertEqual(row, (1, "transaction"))
@@ -1325,7 +1374,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         revised = split_frontmatter(path.read_text(encoding="utf-8")).metadata
         self.assertEqual(revised["revision"], 2)
         self.assertEqual(revised["workshop_state"], "ABORTED")
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             row = con.execute("SELECT revision,state FROM artifacts WHERE artifact_id=?",
                               (document_id(tx),)).fetchone()
             self.assertEqual(row, (2, "failed"))
@@ -1385,7 +1434,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         self.assertIn("stop pursuing the current unverified patch", body)
         metadata = split_frontmatter(path.read_text(encoding="utf-8")).metadata
         self.assertEqual(metadata["tx_event_id"], reviewed["tx_event_id"])
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             atoms = con.execute(
                 "SELECT path,disposition,reason,evidence_json FROM tx_recycling_atoms WHERE artifact_id=?",
                 (document_id(tx),),
@@ -1450,7 +1499,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         _, repeated = fixture.engine._load_transaction(tx)
         self.assertEqual(repeated["tx_event_id"], compacted["tx_event_id"])
         self.assertEqual(path.read_bytes(), stable)
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             count = con.execute(
                 "SELECT count(*) FROM tx_recycling_atoms WHERE artifact_id=?",
                 (document_id(tx),),
@@ -1561,7 +1610,7 @@ class TransactionDocumentIntegrationTests(unittest.TestCase):
         header = split_frontmatter(path.read_text(encoding="utf-8")).metadata
         self.assertEqual(header["workshop_state"], "POSTCHECK_VERIFIED")
         self.assertEqual(header["state"], "completed")
-        with sqlite3.connect(fixture.database) as con:
+        with closing(sqlite3.connect(fixture.database)) as con:
             row = con.execute("SELECT state FROM artifacts WHERE artifact_id=?",
                               (document_id(checkout["transaction_id"]),)).fetchone()
             self.assertEqual(row, ("completed",))

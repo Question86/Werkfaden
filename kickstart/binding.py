@@ -621,6 +621,7 @@ def initialize_project(
 
         workshop_config = {
             "schema": "runtime-sync-workshop-config/v1",
+            "transaction_documents_required": True,
             "compiler_context_sha256": compiler_context_sha256(survey, project_root),
             "path_resolution": "config-directory-relative-v1",
             "codebase_root": serialize_path(project_root),

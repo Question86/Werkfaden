@@ -16,6 +16,28 @@ from kairos.transaction_document import (
 
 
 class TransactionDocumentTests(unittest.TestCase):
+    def test_machine_json_is_literal_bounded_data_without_live_external_references(self):
+        from kairos.markdown import mask_markdown_code
+        from kairos.health import ABSOLUTE_FILE_REFERENCE
+        from kairos.transaction_document import _json
+        evidence = {"candidate": r"Q:\isolated\candidate", "delimiter": "``````", "reference": "[ref:missing.md#s-no|id:MISSING|v:1|rel:uses|tags:test|src:fixture]"}
+        encoded = _json(evidence)
+        self.assertIn(r"Q:\\isolated\\candidate", encoded)
+        self.assertFalse(ABSOLUTE_FILE_REFERENCE.search(mask_markdown_code(encoded)))
+        self.assertNotIn("[ref:missing", mask_markdown_code(encoded))
+        self.assertTrue(encoded.startswith("\n```````json\n"))
+        truncated = _json({"payload": "x" * 200}, limit=20)
+        self.assertIn("TRUNCATED", truncated)
+        self.assertTrue(truncated.startswith("\n```text\n"))
+        self.assertLess(len(truncated), 120)
+        tx = {"transaction_id": "TXN_" + "e" * 24, "state": "CHECKED_OUT", "purpose": "Inspect bounded literal machine evidence", "journal": [{"event": "CHECKOUT_COMPLETED", "details": evidence}]}
+        document = render_transaction_document(transaction=tx, workspace_id="KAIROS_TEST", goal_id="GOAL_KAIROS_001", milestone_id="MILESTONE_KAIROS_01", task_id="TASK_0001", loop=1)
+        frontmatter = split_frontmatter(document)
+        sections = parse_sections(frontmatter.body, header_bytes=frontmatter.header_bytes)
+        self.assertEqual([part.section_id for part in sections], [row[0] for row in SECTION_SPECS])
+        self.assertFalse(ABSOLUTE_FILE_REFERENCE.search(mask_markdown_code(document)))
+        validate_answer_targets(frontmatter.metadata, sections)
+
     def test_explicit_historical_binding_is_not_described_as_a_new_checkout_observation(self):
         tx = {"transaction_id": "TXN_" + "d" * 24, "state": "ABORTED",
               "purpose": "Retain original historical evidence without inventing a checkout observation",

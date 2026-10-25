@@ -384,6 +384,7 @@ def prepare_universal_workshop_binding(
     source_extensions = sorted({Path(source.relative_path).suffix.casefold().lstrip(".") for source in survey.sources})
     config = {
         "schema": "runtime-sync-workshop-config/v1",
+        "transaction_documents_required": True,
         "membership_authority_kind": "universal-static-plus-compiler",
         "path_resolution": "config-directory-relative-v1",
         "codebase_root": serialize_path(project_root),

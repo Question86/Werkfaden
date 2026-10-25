@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -740,7 +741,7 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
         raise WorkshopError("TX_DOCUMENT_PROJECTION_FAILED", "heartbeat did not verify the transaction document: " + str(receipt.get("failures", []))[:1000] + "; missing=" + str(receipt.get("missing_sources", []))[:300], details=receipt.get("failures"))
     expected = prepare_document(path, workspace).content_sha256
     db = KnowledgeDatabase(engine.config.kairos_database)
-    with db.connect(read_only=True) as connection:
+    with closing(db.connect(read_only=True)) as connection:
         row = connection.execute(
             "SELECT revision,content_sha256,path FROM artifacts WHERE artifact_id=? AND document_type='transaction'",
             (document_id(txid),),
@@ -824,7 +825,7 @@ def assert_projected(engine: Any, transaction_id: str, *, ignore_pending: bool =
             raise WorkshopError("TX_DOCUMENT_COMPACTION_STALE",
                                 "transaction Markdown omits the current persisted archive receipt")
     prepared = prepare_document(path, engine.config.kairos_workspace)
-    with sqlite3.connect(engine.config.kairos_database) as con:
+    with closing(sqlite3.connect(engine.config.kairos_database)) as con:
         con.row_factory = sqlite3.Row
         row = con.execute(
             "SELECT revision,content_sha256,path,metadata_json FROM artifacts WHERE artifact_id=? AND document_type='transaction'",
@@ -859,7 +860,7 @@ def assert_projected(engine: Any, transaction_id: str, *, ignore_pending: bool =
                             "current material source has no matching full-state Markdown/SQL projection checkpoint")
     review = state.get("recycling") if isinstance(state.get("recycling"), dict) else {}
     if review.get("status") == "REVIEWED":
-        with sqlite3.connect(engine.config.kairos_database) as con:
+        with closing(sqlite3.connect(engine.config.kairos_database)) as con:
             con.row_factory = sqlite3.Row
             evidence = con.execute(
                 "SELECT inventory_sha256,analysis_sha256,decision_count,document_revision "

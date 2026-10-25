@@ -18,6 +18,7 @@ from kickstart.binding import initialize_project  # noqa: E402
 from runtime_sync_workshop.engine import WorkshopEngine  # noqa: E402
 from runtime_sync_workshop.migration import AuthorityMigration  # noqa: E402
 from runtime_sync_workshop.util import WorkshopError  # noqa: E402
+from runtime_sync_workshop.tx_documents import assert_projected  # noqa: E402
 from workshop.tests.metadata_test_support import complete_metadata_audit  # noqa: E402
 
 
@@ -113,6 +114,7 @@ class AuthorityMigrationTests(unittest.TestCase):
                 project_spec=project_spec(),
             )
             engine = WorkshopEngine(workspace / ".kairos" / "workshop.config.json")
+            self.assertIs(engine.config.raw["transaction_documents_required"], True)
             engine.seal()
 
             candidate = root / "candidate"
@@ -133,6 +135,7 @@ class AuthorityMigrationTests(unittest.TestCase):
             self.assertEqual(checkout["added_headers"], ["include/c.hpp"])
             self.assertEqual(checkout["removed_headers"], ["include/a.hpp"])
             self.assertEqual(checkout["content_changed"], ["src/main.cpp"])
+            assert_projected(engine, checkout["transaction_id"])
             work = Path(checkout["work_directory"])
             edit_semantic_blueprint(
                 work,
@@ -167,6 +170,7 @@ class AuthorityMigrationTests(unittest.TestCase):
             _metadata_plan, audit_path = complete_metadata_audit(engine, checkout, update_capsules=False)
             prepared = migration.prepare(checkout["transaction_id"])
             self.assertEqual(prepared["state"], "PREPARED")
+            assert_projected(engine, checkout["transaction_id"])
             with self.assertRaises(WorkshopError) as raised:
                 migration.verify(checkout["transaction_id"])
             self.assertEqual(raised.exception.code, "METADATA_CHECK_REQUIRED")
@@ -174,6 +178,7 @@ class AuthorityMigrationTests(unittest.TestCase):
             self.assertTrue(aftercheck["verified"])
             verified = migration.verify(checkout["transaction_id"])
             self.assertEqual(verified["state"], "SHADOW_VERIFIED")
+            assert_projected(engine, checkout["transaction_id"])
             reviewed_audit = audit_path.read_bytes()
             audit_path.write_bytes(reviewed_audit + b"\n")
             with self.assertRaises(WorkshopError) as raised:
@@ -191,6 +196,7 @@ class AuthorityMigrationTests(unittest.TestCase):
             )
             applied = migration.apply(checkout["transaction_id"])
             self.assertEqual(applied["state"], "POSTCHECK_VERIFIED")
+            assert_projected(engine, checkout["transaction_id"])
             self.assertTrue(applied["bit_exact"])
             self.assertFalse((live / "include" / "a.hpp").exists())
             self.assertEqual((live / "include" / "c.hpp").read_bytes(), new_header.read_bytes())

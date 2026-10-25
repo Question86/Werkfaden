@@ -81,7 +81,14 @@ def document_path(transaction_id: str) -> str:
 
 def _json(value: Any, limit: int = 8000) -> str:
     raw = json.dumps(value, sort_keys=True, ensure_ascii=False, indent=2, default=str)
-    return raw if len(raw) <= limit else raw[:limit] + "\n... [TRUNCATED; full evidence remains in TX journal]"
+    truncated = len(raw) > limit
+    if truncated:
+        raw = raw[:limit] + "\n... [TRUNCATED; full evidence remains in TX journal]"
+    # Machine-recorded paths/references are literal evidence, not live links.
+    # A longer delimiter prevents data containing backticks from ending it.
+    longest = max((len(match.group()) for match in re.finditer(r"`+", raw)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "\n" + fence + ("text" if truncated else "json") + "\n" + raw + "\n" + fence
 
 
 def render_transaction_document(

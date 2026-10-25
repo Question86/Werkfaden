@@ -74,6 +74,8 @@ class UniversalWorkshopRoundtripTests(unittest.TestCase):
         self.assertTrue(result["corpus"]["verified"])
 
         engine = WorkshopEngine(Path(result["workshop_config"]))
+        from runtime_sync_workshop.tx_documents import assert_projected
+        self.assertIs(engine.config.raw["transaction_documents_required"], True)
         seal = engine.seal()
         self.assertIn("package_sha256", seal)
         checkout = engine.checkout(
@@ -81,6 +83,7 @@ class UniversalWorkshopRoundtripTests(unittest.TestCase):
             purpose=f"Update {source_relative} through universal Workshop verification",
         )
         transaction_id = checkout["transaction_id"]
+        assert_projected(engine, transaction_id)
         work_source = Path(checkout["work_directory"]) / source_relative
         # Keep the test input byte-exact on Windows.  Path.write_text's default
         # newline translation would otherwise turn the requested LF payload
@@ -105,11 +108,14 @@ class UniversalWorkshopRoundtripTests(unittest.TestCase):
         complete_metadata_audit(engine, checkout)
         prepared = engine.prepare(transaction_id)
         self.assertEqual(prepared["state"], "PREPARED")
+        assert_projected(engine, transaction_id)
         engine.metadata_check(transaction_id)
         verified = engine.verify(transaction_id)
         self.assertEqual(verified["state"], "SHADOW_VERIFIED")
+        assert_projected(engine, transaction_id)
         receipt = engine.apply(transaction_id)
         self.assertEqual(receipt["state"], "POSTCHECK_VERIFIED")
+        assert_projected(engine, transaction_id)
         self.assertTrue(receipt["bit_exact"])
 
         live_raw = (project / source_relative).read_bytes()
