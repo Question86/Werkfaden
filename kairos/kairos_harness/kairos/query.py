@@ -42,6 +42,11 @@ STOPWORDS = {
 }
 
 INTENT_PHRASES = {
+    "procedure": ("which command", "what command", "which tool", "what tool", "which script", "what script",
+                  "which commands", "what commands", "which tools", "what tools", "which scripts", "what scripts",
+                  "how can i", "how do i", "where can i", "wie kann ich", "welche werkzeuge",
+                  "welche befehle", "welches werkzeug", "welchen befehl", "welches skript",
+                  "welche skripte", "welche scripts", "welche tools"),
     "orientation": ("where am i", "what should i read first", "orientation", "navigation", "entry point"),
     "architecture": ("architecture", "system structure", "core structure", "database model", "database entities", "cross-document pointers", "how is kairos organized"),
     "content_placement": ("where should i put", "content placement", "which folder", "where to write", "future content", "should receive", "be documented", "be stored"),

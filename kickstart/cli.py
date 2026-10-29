@@ -36,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--cmake-executable", default="cmake", help="CMake executable used with --cmake")
     init.add_argument("--build-directory", type=Path, help="optional retained CMake build directory")
     init.add_argument("--workspace-id", help="stable upper-case KAIROS workspace id for a fresh workspace")
+    init.add_argument("--auxiliary-document", type=Path, action="append", default=[],
+                      help="explicit read-only Markdown input copied to initial Auxiliary authority before seal; repeatable; portable non-generated filename required")
     spec = init.add_mutually_exclusive_group()
     spec.add_argument("--spec-file", type=Path, help="kairos-project-kickoff/v1 JSON produced from the human project intent")
     spec.add_argument("--spec-json", help="inline kairos-project-kickoff/v1 JSON produced from the human project intent")
@@ -92,6 +94,7 @@ def main(argv: list[str] | None = None) -> None:
                 compile_commands=args.auto_compile_commands,
                 workspace_id=args.workspace_id,
                 project_spec=project_spec,
+                auxiliary_documents=tuple(args.auxiliary_document),
             )
         else:
             if args.auto_compile_commands is not None:
@@ -105,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:
                 build_directory=args.build_directory,
                 workspace_id=args.workspace_id,
                 project_spec=project_spec,
+                auxiliary_documents=tuple(args.auxiliary_document),
             )
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         print(json.dumps({"schema": "kairos-project-intake-error/v1", "code": "PROJECT_INTENT_INVALID", "message": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -761,3 +762,155 @@ def build_golden_template(
         "archive_id": seal["archive_id"],
         "verified": verification["verified"],
     }
+
+
+# Framework sources and a sealed project starter are separate distribution formats.
+FRAMEWORK_DISTRIBUTION_MANIFEST = "FRAMEWORK_DISTRIBUTION_MANIFEST.json"
+_FRAMEWORK_ROOT_FILES = (
+    "AGENTS.md", "README.md", "LICENSE", "CITATION.cff", "kairos_cli.py",
+    ".gitattributes", ".gitignore",
+)
+_FRAMEWORK_ROOT_DIRS = (
+    "docs", "kairos/kairos_harness", "workshop", "kickstart", "review",
+    "scripts", "templates", "workspace/docs",
+)
+_FRAMEWORK_REQUIRED = (
+    "kairos/kairos_harness/kairos/cli.py",
+    "kairos/kairos_harness/kairos/framework.db",
+    "kairos/kairos_harness/kairos/framework_manifest.json",
+    "workshop/workshop.py", "kickstart/__main__.py",
+    "workspace/docs/EVIDENCE_BASED_AI_REVIEW.md",
+)
+_FRAMEWORK_PRUNED = {
+    ".git", ".kairos", ".state", "__pycache__", ".pytest_cache", "_tmp",
+    "node_modules", "transactions", "backups", "dist", "build",
+}
+
+
+def _framework_source_entries(root: Path) -> list[dict[str, Any]]:
+    """Inventory only declared product surfaces; never follow links or junctions."""
+    entries: list[dict[str, Any]] = []
+    selected: set[str] = set()
+
+    def inspect(path: Path) -> None:
+        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+            raise GoldenTemplateError("framework input contains a link or junction")
+        relative = path.relative_to(root).as_posix()
+        if path.name in _FRAMEWORK_PRUNED:
+            return
+        if path.is_dir():
+            for child in sorted(path.iterdir()):
+                inspect(child)
+            return
+        if not path.is_file():
+            raise GoldenTemplateError("framework input is not a regular file")
+        if path.suffix.lower() in {".pyc", ".pyo", ".log", ".sqlite", ".sqlite3",
+                                   ".db-wal", ".db-shm"}:
+            return
+        if path.suffix.lower() == ".db" and relative != (
+            "kairos/kairos_harness/kairos/framework.db"
+        ):
+            raise GoldenTemplateError("unexpected database in framework source")
+        if path.name.lower() in {".env", ".netrc", "credentials", "id_rsa",
+                                 "id_ed25519"} or path.suffix.lower() in {".pem", ".key"}:
+            raise GoldenTemplateError("credential-like file in framework source")
+        if relative in selected:
+            raise GoldenTemplateError("duplicate framework input")
+        selected.add(relative)
+        data = path.read_bytes()
+        entries.append({"path": relative, "size": len(data),
+                        "sha256": sha256_bytes(data)})
+
+    for relative in (*_FRAMEWORK_ROOT_FILES, *_FRAMEWORK_ROOT_DIRS):
+        path = root / relative
+        if not path.exists():
+            raise GoldenTemplateError(f"required framework input missing: {relative}")
+        # Inspect every ancestor too: a nested input root must not hide a junction.
+        for parent in (path, *path.parents):
+            if parent == root:
+                break
+            if parent.is_symlink() or (hasattr(parent, "is_junction") and parent.is_junction()):
+                raise GoldenTemplateError("framework root crosses a link or junction")
+        inspect(path)
+    for relative in _FRAMEWORK_REQUIRED:
+        if relative not in selected:
+            raise GoldenTemplateError(f"required framework input missing: {relative}")
+    return sorted(entries, key=lambda item: item["path"])
+
+
+def verify_framework_distribution(root: Path) -> dict[str, Any]:
+    """Verify exact bytes and reject extra files outside the declared boundary."""
+    root = root.resolve()
+    manifest_path = root / FRAMEWORK_DISTRIBUTION_MANIFEST
+    if manifest_path.is_symlink():
+        raise GoldenTemplateError("linked framework manifest")
+    manifest = read_json(manifest_path)
+    if manifest.get("schema") != "kairos-framework-distribution/v1":
+        raise GoldenTemplateError("invalid framework distribution schema")
+    expected = _framework_source_entries(root)
+    if manifest.get("files") != expected:
+        raise GoldenTemplateError("framework distribution content mismatch")
+    actual: set[str] = set()
+    for path in root.rglob("*"):
+        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+            raise GoldenTemplateError("linked framework distribution entry")
+        if path.is_file():
+            actual.add(path.relative_to(root).as_posix())
+    if actual != {entry["path"] for entry in expected} | {FRAMEWORK_DISTRIBUTION_MANIFEST}:
+        raise GoldenTemplateError("unexpected file in framework distribution")
+    digest = sha256_bytes(json_dumps(expected).encode("utf-8"))
+    if manifest.get("files_sha256") != digest:
+        raise GoldenTemplateError("framework inventory digest mismatch")
+    return {"schema": "kairos-framework-distribution-verification/v1",
+            "verified": True, "file_count": len(expected), "files_sha256": digest}
+
+
+def build_framework_distribution(*, source_root: Path, target_root: Path,
+                                 source_commit: str) -> dict[str, Any]:
+    """Create a deterministic local framework candidate without project history."""
+    if target_root.is_symlink() or (hasattr(target_root, "is_junction") and target_root.is_junction()):
+        raise GoldenTemplateError("linked framework target")
+    for requested in (source_root.absolute(), target_root.absolute()):
+        for component in (requested, *requested.parents):
+            if component.is_symlink() or (hasattr(component, "is_junction") and component.is_junction()):
+                raise GoldenTemplateError("framework path crosses a link or junction")
+    source_root = source_root.resolve()
+    target_root = target_root.resolve()
+    if source_root == target_root or source_root in target_root.parents:
+        raise GoldenTemplateError("framework target must be outside the source tree")
+    if target_root.exists():
+        raise GoldenTemplateError("framework target must not exist")
+    if not source_commit.strip() or len(source_commit) > 256:
+        raise GoldenTemplateError("nonempty bounded source identity is required")
+    entries = _framework_source_entries(source_root)
+    # Fully preflight before creating any target. No source tree is ever modified.
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(
+        prefix=".framework-distribution-", dir=target_root.parent))
+    try:
+        for relative in _FRAMEWORK_ROOT_DIRS:
+            (staging / relative).mkdir(parents=True, exist_ok=True)
+        for entry in entries:
+            data = (source_root / entry["path"]).read_bytes()
+            if len(data) != entry["size"] or sha256_bytes(data) != entry["sha256"]:
+                raise GoldenTemplateError("framework input changed after inventory")
+            destination = staging / entry["path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+        manifest = {
+            "schema": "kairos-framework-distribution/v1",
+            "source_identity": source_commit,
+            "files": entries,
+            "files_sha256": sha256_bytes(json_dumps(entries).encode("utf-8")),
+            "claim_boundary": "Exact local source package; no publication, runtime acceptance or secret-scan guarantee.",
+        }
+        atomic_write_json(staging / FRAMEWORK_DISTRIBUTION_MANIFEST, manifest)
+        result = verify_framework_distribution(staging)
+        # Require stable source bytes and membership before making the candidate visible.
+        if _framework_source_entries(source_root) != entries:
+            raise GoldenTemplateError("framework input changed during export")
+        staging.rename(target_root)
+        return {**result, "target": str(target_root)}
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)

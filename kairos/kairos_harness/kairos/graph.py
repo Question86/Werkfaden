@@ -89,6 +89,14 @@ _SEARCH_FIELDS = {
     ),
 }
 _RESULT_FIELDS = {
+    "tx_recycling_chunk_atoms": (
+        "transaction_id", "inventory_sha256", "chunk_index", "status", "source_path",
+        "unit_id", "path", "disposition", "reason", "evidence_json", "protected", "parent_reviewed",
+    ),
+    "tx_recycling_chunks": (
+        "transaction_id", "inventory_sha256", "chunk_index", "range_start", "range_stop",
+        "chunk_sha256", "receipt_sha256", "source_sha256", "source_path", "decision_count", "status",
+    ),
     "graph_relations": (
         "subject", "predicate", "object", "object_kind", "scope", "evidence",
     ),
@@ -507,6 +515,8 @@ INVENTORY_TABLES = {
     "drift": "graph_drift",
     "include_edges": "compiler_include_edges",
     "tx_atoms": "tx_recycling_atoms",
+    "tx_chunks": "tx_recycling_chunks",
+    "tx_chunk_atoms": "tx_recycling_chunk_atoms",
 }
 # the column each inventory is grouped by when no filter narrows it
 INVENTORY_GROUPING = {
@@ -516,6 +526,8 @@ INVENTORY_GROUPING = {
     "graph_drift": "status",
     "compiler_include_edges": "resolution_class",
     "tx_recycling_atoms": "disposition",
+    "tx_recycling_chunks": "status",
+    "tx_recycling_chunk_atoms": "disposition",
 }
 
 
@@ -578,10 +590,11 @@ def inventory(
         ).fetchall()
     ]
     columns = ",".join(f"g.{name}" for name in ("artifact_id", *_RESULT_FIELDS[table]))
+    order_field = "unit_id" if table in {"tx_recycling_atoms", "tx_recycling_chunk_atoms"} else "chunk_index" if table == "tx_recycling_chunks" else "ordinal"
     rows = _rows(
         connection,
         f"SELECT {columns} FROM {table} g WHERE {where} "
-        f"ORDER BY g.artifact_id,g.{('unit_id' if table == 'tx_recycling_atoms' else 'ordinal')} LIMIT ?",
+        f"ORDER BY g.artifact_id,g.{order_field} LIMIT ?",
         parameters,
         bound,
     )

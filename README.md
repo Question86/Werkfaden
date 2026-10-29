@@ -2,13 +2,13 @@
 schema = "kairos-context/v1"
 id = "KAIROS_README"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_README"
-updated_at = "2026-10-25T18:32:39Z"
-capsule = "Human entry surface for installing KAIROS, querying the immutable framework corpus, and starting a compiler-backed project workspace."
+updated_at = "2026-10-29T23:00:00Z"
+capsule = "Human entry surface for installing KAIROS, querying the immutable framework corpus, and starting a separately bound project workspace with exact source authority."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_README"]
 facets = ["entry", "installation", "bootstrap", "kickstart"]
@@ -39,24 +39,25 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — **Release: 0.1.0-alpha.2 — developer preview.** The cold distribution has been validated
+- [`s-overview`](#s-overview) — **Current technical snapshot: 2026-10-30 — developer preview.**
 - [`s-layout`](#s-layout) — | Path | Role |
 - [`s-ask-kairos-how-kairos-works`](#s-ask-kairos-how-kairos-works) — The release ships a hash-verified read-only framework knowledge database. After installing the harness, the ordinary search command works before any project workspace exists:
-- [`s-start-a-real-project`](#s-start-a-real-project) — Project intent is established before code discovery. First ask an LLM to formulate the
+- [`s-start-a-real-project`](#s-start-a-real-project) — Review a bounded human contract before read-only detection and explicitly authorized project intake.
 
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: **Release: 0.1.0-alpha.2 — developer preview.** The cold distribution has been validated
+> Capsule: **Current technical snapshot: 2026-10-30 — developer preview.**
 
-**Release: 0.1.0-alpha.2 — developer preview.** The cold distribution has been validated
-end-to-end on an external C++/CMake repository. This is not a stable/1.0 or production-support
-claim. Read `docs/KNOWN_LIMITATIONS.md` before adopting it.
+**Current technical snapshot: 2026-10-30 — developer preview.**
+This snapshot includes bounded universal intake, framework tool routing, typed review,
+transaction recycling and source-bound publication lineage checks. Full product-readiness
+acceptance remains open; this is not a stable or production-support claim. Read `docs/KNOWN_LIMITATIONS.md` before adopting it.
 
 
 This directory is the project-agnostic KAIROS framework. It contains reusable context
 governance, a deterministic harness, a derived SQLite projection, loop procedures, a
-compiler-backed project intake edge, and a fail-closed code/document Workshop. It contains
+bounded multi-language project intake edge, and a fail-closed code/document Workshop. It contains
 no customer source tree, project-bound transaction history, seal, or pre-existing project
 database.
 
@@ -72,7 +73,7 @@ database.
 | `kairos/kairos_harness/kairos/framework_manifest.json` | Hash binding between the framework projection and its admitted source documents |
 | `workspace/` | General framework method documents only; no consumer workspace or development history |
 | `workshop/` | Code/blueprint synchronization engine; unbound until project intake creates a config |
-| `kickstart/` | Human-intent + compiler-backed project initiation and exact initial source/header binding |
+| `kickstart/` | Human-intent + exact-authority project initiation and exact initial source/header binding |
 | `templates/` | Project-neutral configuration templates |
 | `docs/` | Canonical architecture and operating procedures |
 
@@ -98,31 +99,41 @@ framework corpus and returns section-addressed authoritative Markdown. See
 <a id="s-start-a-real-project"></a>
 ## Start a real project
 
-> Capsule: Project intent is established before code discovery. First ask an LLM to formulate the
+> Capsule: Review a bounded human contract before read-only detection and explicitly authorized project intake.
 
-Project intent is established before code discovery. First ask an LLM to formulate the
-bounded KAIROS project contract from the Human goal:
+Render a prompt with the following command. It does not call an LLM:
 
-```powershell
+```text
 python -m kickstart prompt --idea "Describe the project outcome here"
 ```
 
-Save the returned `kairos-project-kickoff/v1` JSON as `project-spec.json`, review it, then
-bind the compiler-observed codebase under exactly that goal/milestone/task scope:
+Have the LLM produce a kairos-project-kickoff/v1 JSON contract, save it as project-spec.json,
+and review its goal, milestone, task and acceptance criteria. Only then inspect the intended
+project read-only and explicitly initialize its workspace:
 
-```powershell
-python -m kickstart init `
-  --project-root <project> `
-  --workspace <fresh-kairos-workspace> `
-  --spec-file project-spec.json `
-  --compile-commands <build>/compile_commands.json
+```text
+python -m kickstart detect <project>
+python -m kickstart init --project-root <project> --workspace <fresh-kairos-workspace> --spec-file project-spec.json --auto
 ```
 
-For CMake projects, replace `--compile-commands` with `--cmake <project>/CMakeLists.txt`.
-The intake never edits the project source tree. It creates the project-scoped KAIROS
-sources, exact code/header ledgers, the derived SQLite projection, Workshop configuration,
-and a verified initial corpus. Only after that baseline passes should the Workshop be
-sealed and used for synchronized changes.
+The framework checkout is the project environment, not the consumer project. The project
+root and workspace may live outside it; their names are arbitrary. Always pass the explicit
+project workspace when querying project knowledge. Keep the framework corpus separate.
+
+Automatic intake supports bounded local Python, JavaScript/TypeScript, Rust, Go, JVM, .NET,
+Ruby and PHP source membership. Exact files and hashes are authority; dynamic imports and
+runtime reachability are not inferred. C/C++/CUDA require compiler-produced compile_commands.json:
+use --compile-commands <build>/compile_commands.json, or --cmake <project>/CMakeLists.txt.
+Mixed automatic intake uses --auto --auto-compile-commands <build>/compile_commands.json
+for its C-family portion. See docs/PROJECT_KICKSTART.md for the support/refusal boundaries.
+
+Intake observes project sources read-only and creates project-scoped Markdown, exact source
+ledgers, the derived SQLite projection and Workshop configuration. After baseline validation,
+seal and use the native Workshop lifecycle for synchronized changes:
+status -> seal -> checkout -> edit code and metadata -> metadata-plan -> complete audit ->
+prepare -> metadata-check -> verify -> apply. Document-only and source-topology changes use
+their documented dedicated procedures. Project tests and domain validity require explicit
+project-specific evidence.
 
 Only general method sources under `workspace/docs/` belong to the public distribution.
 Local goals, tasks, reports, databases, runtime state and development workspaces are excluded.
@@ -131,7 +142,7 @@ Create a fresh external project workspace; use the test commands in
 
 See `docs/PROJECT_KICKSTART.md` for ground-truth and refusal boundaries,
 `docs/WORKSHOP.md` for the synchronized change lifecycle, `docs/KNOWN_LIMITATIONS.md` for the
-current support boundary, and `docs/RELEASE_NOTES_0.1.0_ALPHA2.md` for the framework-bootstrap release evidence. Changes to the governed local-header
+current support boundary, and `docs/RELEASE_NOTES_0.1.0_ALPHA2.md` for historical alpha.2 bootstrap evidence. Changes to the governed local-header
 set use the Workshop's explicit authority-migration commands against an isolated candidate tree.
 Translation-unit membership or compiler-context changes fail closed until a project-specific
 build-authority migration can reproduce the real build configuration; the framework never edits

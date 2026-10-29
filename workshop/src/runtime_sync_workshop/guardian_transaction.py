@@ -1,6 +1,41 @@
 from __future__ import annotations
 
 from .guardian_common import *
+from .tx_lifecycle import PHASES, SOURCE_EPOCH_KIND, source_epoch
+
+
+def _transaction_event_reference(transaction_id: str, state: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate a persisted canonical event; old eventless states remain eventless."""
+    event = state.get("tx_event")
+    event_id = state.get("tx_event_id")
+    sequence = state.get("tx_event_sequence")
+    if event is None and event_id is None and sequence is None:
+        return None
+    if not isinstance(event, dict) or not isinstance(event_id, str) or type(sequence) is not int or sequence < 1:
+        raise WorkshopError("GUARDIAN_TX_EVENT_INVALID", "transaction event identity is incomplete")
+    unsigned = {key: value for key, value in event.items() if key != "event_id"}
+    try:
+        expected_id = "TXE_" + sha256_text(json.dumps(unsigned, sort_keys=True, separators=(",", ":")))[:32].upper()
+        valid = (
+            event.get("schema") == "werkfaden-tx-event/v1"
+            and bool(transaction_id)
+            and event.get("transaction_id") == transaction_id == state.get("transaction_id")
+            and event.get("event_id") == event_id == expected_id
+            and type(event.get("sequence")) is int
+            and event.get("sequence") == sequence
+            and event.get("state_after") == state.get("state")
+            and state.get("state") in PHASES
+            and event.get("phase") == PHASES.get(state.get("state"))
+            and event.get("source_epoch_kind") == SOURCE_EPOCH_KIND
+            and event.get("source_epoch") == source_epoch(state)
+            and isinstance(event.get("previous_event_id"), str)
+        )
+    except (TypeError, ValueError, KeyError) as exc:
+        raise WorkshopError("GUARDIAN_TX_EVENT_INVALID", "transaction event cannot be verified") from exc
+    if not valid:
+        raise WorkshopError("GUARDIAN_TX_EVENT_INVALID", "transaction event does not match its persisted state")
+    return {"tx_event_id": event_id, "tx_event_sequence": sequence,
+            "tx_event_previous_id": event.get("previous_event_id") or ""}
 
 
 class GuardianTransactionMixin:
@@ -81,12 +116,65 @@ class GuardianTransactionMixin:
             if outside:
                 raise WorkshopError("GUARDIAN_EDIT_OUTSIDE_INSPECTION", f"transaction changes {relative} outside exact-source inspected windows", details={"allowed": allowed, "outside_lines": outside[:64]})
 
-    def observe_transaction_state(self, transaction_id: str, *, event: str, state: dict[str, Any]) -> None:
+    @staticmethod
+    def _requires_scope_validation(event: str, state: dict[str, Any]) -> bool:
+        return (event in {"PREPARED", "SOURCE_SET_PREPARED", "AUTHORITY_PREPARED", "AUXILIARY_SHADOW_VERIFIED"}
+                or state.get("state") in {"PREPARED", "SHADOW_VERIFIED"})
+
+    def _check_prepared_scope(self, payload: dict[str, Any], record: dict[str, Any],
+                              transaction_id: str, state: dict[str, Any]) -> dict[str, Any]:
+        actual = self._actual_scope(transaction_id, record["kind"], state)
+        requested = record["requested"]
+        if record["kind"] in {"source_set", "authority"}:
+            if actual != requested:
+                raise WorkshopError("GUARDIAN_SCOPE_MISMATCH", "prepared structural transaction differs from PROVE scope",
+                                    details={"requested": requested, "actual": actual})
+        else:
+            for field, values in actual.items():
+                if not set(values).issubset(set(requested.get(field, []))):
+                    raise WorkshopError("GUARDIAN_SCOPE_MISMATCH", f"prepared transaction changed unproven {field}",
+                                        details={"requested": requested.get(field, []), "actual": values})
+            if record["kind"] == "normal":
+                self._validate_normal_edit_windows(payload, transaction_id, actual)
+        return actual
+
+    def validate_transaction_scope(self, transaction_id: str, *, event: str, state: dict[str, Any]) -> None:
+        """Refuse an unproven prepared target before its event intent or state commit."""
+        if not self._requires_scope_validation(event, state):
+            return
+        owner = self.assert_transaction_active(transaction_id)
+        guardian_id = owner["guardian_id"]
+        with _file_lock(self._lock_path(guardian_id)):
+            payload = self._load(guardian_id)
+            self._check_prepared_scope(payload, self._find_tx(payload, transaction_id), transaction_id, state)
+
+    def observe_transaction_state(self, transaction_id: str, *, event: str, state: dict[str, Any],
+                                  only_if_missing: bool = False) -> None:
+        reference = _transaction_event_reference(transaction_id, state)
         owner = self.assert_transaction_active(transaction_id)
         guardian_id = owner["guardian_id"]
         with _file_lock(self._lock_path(guardian_id)):
             payload = self._load(guardian_id)
             record = self._find_tx(payload, transaction_id)
+            existing_id = record.get("tx_event_id")
+            existing_sequence = record.get("tx_event_sequence")
+            if reference:
+                if existing_id == reference["tx_event_id"]:
+                    if existing_sequence != reference["tx_event_sequence"] or record.get("state") != state.get("state"):
+                        raise WorkshopError("GUARDIAN_TX_EVENT_INVALID", "Guardian event reference conflicts with its recorded state")
+                    if only_if_missing:
+                        return
+                elif existing_id:
+                    if (reference["tx_event_previous_id"] != existing_id
+                            or type(existing_sequence) is not int
+                            or reference["tx_event_sequence"] != existing_sequence + 1):
+                        raise WorkshopError("GUARDIAN_TX_EVENT_GAP", "Guardian cannot prove the next transaction event")
+                elif reference["tx_event_sequence"] != 1:
+                    raise WorkshopError("GUARDIAN_TX_EVENT_GAP", "Guardian cannot invent missing historical transaction event links")
+                record.update({"tx_event_id": reference["tx_event_id"],
+                               "tx_event_sequence": reference["tx_event_sequence"]})
+            elif existing_id:
+                raise WorkshopError("GUARDIAN_TX_EVENT_INVALID", "a previously bound transaction event disappeared")
             record["state"] = str(state.get("state", event))
             record["last_event"] = event
             record["derived"] = {
@@ -95,24 +183,20 @@ class GuardianTransactionMixin:
                 "machine_authority_files": sorted(str(value) for value in state.get("machine_authority_files") or []),
                 "prepared_blueprints": sorted(str(value) for value in state.get("prepared_blueprints") or []),
             }
-            if event in {"PREPARED", "SOURCE_SET_PREPARED", "AUTHORITY_PREPARED", "AUXILIARY_SHADOW_VERIFIED"} or state.get("state") in {"PREPARED", "SHADOW_VERIFIED"}:
-                actual = self._actual_scope(transaction_id, record["kind"], state)
-                requested = record["requested"]
-                if record["kind"] in {"source_set", "authority"}:
-                    if actual != requested:
-                        raise WorkshopError("GUARDIAN_SCOPE_MISMATCH", "prepared structural transaction differs from PROVE scope", details={"requested": requested, "actual": actual})
-                else:
-                    for field, values in actual.items():
-                        if not set(values).issubset(set(requested.get(field, []))):
-                            raise WorkshopError("GUARDIAN_SCOPE_MISMATCH", f"prepared transaction changed unproven {field}", details={"requested": requested.get(field, []), "actual": values})
-                    if record["kind"] == "normal":
-                        self._validate_normal_edit_windows(payload, transaction_id, actual)
+            if self._requires_scope_validation(event, state):
+                actual = self._check_prepared_scope(payload, record, transaction_id, state)
                 record["scope_validated"] = True
                 record["actual"] = actual
             if event in {"APPLY_STARTED", "AUXILIARY_APPLY_STARTED", "SOURCE_SET_APPLY_STARTED", "AUTHORITY_APPLY_STARTED"} or state.get("state") == "APPLYING":
                 if not record.get("scope_validated"):
                     raise WorkshopError("GUARDIAN_SCOPE_NOT_VALIDATED", "live apply is blocked until prepared scope matches PROVE")
-            self._append(payload, "TX_STATE", {"transaction_id": transaction_id, "event": event, "state": record["state"], "scope_validated": record.get("scope_validated", False)})
+            details = {"transaction_id": transaction_id, "event": event, "state": record["state"],
+                       "scope_validated": record.get("scope_validated", False)}
+            if reference:
+                details.update({"tx_event_id": reference["tx_event_id"],
+                                "tx_event_sequence": reference["tx_event_sequence"],
+                                "tx_event_relation": "latest_persisted"})
+            self._append(payload, "TX_STATE", details)
             self._save(payload)
 
     def cancel_transaction(self, transaction_id: str, *, reason: str) -> dict[str, Any]:

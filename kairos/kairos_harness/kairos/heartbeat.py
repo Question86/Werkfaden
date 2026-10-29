@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -219,6 +220,55 @@ def _journal(
         )
 
 
+def _task_activation_owner(
+    database: KnowledgeDatabase, task_id: str, attribution: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind a requested activation to its running native task-creation grant."""
+    if not isinstance(task_id, str) or not task_id:
+        raise HeartbeatError("task activation requires an exact task identifier")
+    with closing(database.connect(read_only=True)) as connection:
+        row = connection.execute(
+            """SELECT a.goal_id,a.milestone_id,a.task_id,a.criterion_id,p.scope_json
+               FROM governed_action_receipts a
+               JOIN action_permits p ON p.permit_id=a.permit_id
+               WHERE a.action_id=? AND a.command_name='new-task' AND a.status='RUNNING'
+                 AND a.phase='TASK_FORMULATION' AND p.command_name='new-task'
+                 AND p.phase='TASK_FORMULATION' AND p.status='CONSUMED'""",
+            (attribution.get("running_action_id"),),
+        ).fetchone()
+    if (not row or row["task_id"] != task_id
+            or f"tasks/task_{task_id}.md" not in json.loads(row["scope_json"]).get("paths", [])):
+        raise HeartbeatError("task activation requires its matching RUNNING new-task action and path grant")
+    return dict(row)
+
+
+def _promoted_task_activation(
+    database: KnowledgeDatabase, task_id: str, owner: dict[str, Any],
+    receipts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Derive routing only from the exact task promoted by this heartbeat."""
+    path = f"tasks/task_{task_id}.md"
+    promotion = next((item for item in receipts
+                      if item.get("artifact_id") == task_id and item.get("path") == path), None)
+    with closing(database.connect(read_only=True)) as connection:
+        row = connection.execute(
+            "SELECT metadata_json,content_sha256,path FROM artifacts WHERE artifact_id=? AND document_type='task'",
+            (task_id,),
+        ).fetchone()
+    if (not promotion or not row or row["path"] != path
+            or row["content_sha256"] != promotion["content_sha256"]):
+        raise HeartbeatError("task activation requires this heartbeat's exact promoted task bytes")
+    metadata = json.loads(row["metadata_json"])
+    if (metadata.get("id") != task_id or metadata.get("task") != task_id
+            or metadata.get("state") != "active"
+            or metadata.get("goal") != owner["goal_id"]
+            or metadata.get("milestone") != owner["milestone_id"]
+            or owner["criterion_id"] not in metadata.get("criteria", [])):
+        raise HeartbeatError("promoted task does not match its task-creation scope")
+    return {"active_goal": metadata["goal"], "active_milestone": metadata["milestone"],
+            "active_task": task_id}
+
+
 def run_heartbeat(
     workspace: Path,
     *,
@@ -228,6 +278,7 @@ def run_heartbeat(
     metrics: dict[str, Any] | None = None,
     trigger: str = "explicit",
     resume_publication_permit_id: str | None = None,
+    task_activation: str | None = None,
 ) -> dict[str, Any]:
     workspace = workspace.resolve()
     with workspace_write_lock(workspace):
@@ -239,6 +290,7 @@ def run_heartbeat(
             metrics=metrics,
             trigger=trigger,
             resume_publication_permit_id=resume_publication_permit_id,
+            task_activation=task_activation,
         )
 
 
@@ -251,6 +303,7 @@ def _run_heartbeat_locked(
     metrics: dict[str, Any] | None,
     trigger: str,
     resume_publication_permit_id: str | None = None,
+    task_activation: str | None = None,
 ) -> dict[str, Any]:
     workspace = workspace.resolve()
     load_config(workspace)
@@ -271,6 +324,10 @@ def _run_heartbeat_locked(
         missing=(*reconciliation.missing, *goal_reconciliation.missing),
         reason=f"heartbeat:{trigger}",
         resume_publication_permit_id=resume_publication_permit_id,
+    )
+    activation_owner = (
+        _task_activation_owner(database, task_activation, governance_attribution)
+        if task_activation is not None else None
     )
     sync_goal_files(workspace, database)
     state.update(_validated_metrics(metrics))
@@ -327,8 +384,15 @@ def _run_heartbeat_locked(
         except Exception as exc:
             failures.append({"path": relative, "error": str(exc)})
     canonical_signature: str | None = None
+    activation_result = {"requested": task_activation, "activated": False} if task_activation is not None else None
     if not failures:
         try:
+            if activation_owner is not None:
+                if (reconciliation.missing or goal_reconciliation.missing
+                        or any(database.pending_counts())):
+                    raise HeartbeatError("task activation requires clean source and promotion state")
+                state.update(_promoted_task_activation(database, task_activation, activation_owner, receipts))
+                activation_result["activated"] = True
             current_unmet = unmet_required_criteria(database)
             state["evidence_gap_count"] = len(current_unmet)
             state["active_criterion"] = _first_unmet_criterion_for_active_task(
@@ -416,6 +480,7 @@ def _run_heartbeat_locked(
         "mode_rationale": rationale,
         "trigger": trigger,
         "governance_attribution": governance_attribution,
+        "task_activation": activation_result,
         "changed_candidates": sorted(candidates),
         "changed_goal_sources": sorted(
             {
@@ -1051,6 +1116,7 @@ def status_report(workspace: Path) -> dict[str, Any]:
         "tx_recycling_live": tx,
         "next_required_read": (
             "_LOOP_GATE.md#s-tx-recycling" if tx.get("required") is True else
+            tx["next_required_read"] if tx.get("next_required_read") else
             "_LOOP_GATE.md#s-verdict" if tx.get("reconciliation_required") else
             (read_json(workspace / "current.json", default={}) or {}).get("next_required_read")
         ),

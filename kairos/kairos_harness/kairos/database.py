@@ -524,6 +524,27 @@ CREATE TABLE IF NOT EXISTS tx_recycling_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_tx_recycling_reviews_analysis ON tx_recycling_reviews(analysis_sha256);
 
+-- Immutable bounded intermediate sources. Their presence never grants a review.
+CREATE TABLE IF NOT EXISTS tx_recycling_chunks (
+    artifact_id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL,
+    inventory_sha256 TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
+    range_start INTEGER NOT NULL,
+    range_stop INTEGER NOT NULL,
+    chunk_sha256 TEXT NOT NULL,
+    receipt_sha256 TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    decision_count INTEGER NOT NULL CHECK(decision_count BETWEEN 1 AND 512),
+    decisions_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status = 'PARTIAL'),
+    UNIQUE(transaction_id, inventory_sha256, chunk_index),
+    FOREIGN KEY (artifact_id) REFERENCES artifacts(artifact_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_tx_recycling_chunks_inventory
+ON tx_recycling_chunks(transaction_id, inventory_sha256, chunk_index);
+
 CREATE TABLE IF NOT EXISTS tx_recycling_atoms (
     artifact_id TEXT NOT NULL,
     unit_id TEXT NOT NULL,
@@ -542,6 +563,20 @@ CREATE TABLE IF NOT EXISTS tx_recycling_atoms (
 CREATE INDEX IF NOT EXISTS idx_tx_recycling_atoms_disposition ON tx_recycling_atoms(disposition, protected);
 CREATE INDEX IF NOT EXISTS idx_tx_recycling_atoms_path ON tx_recycling_atoms(path);
 CREATE INDEX IF NOT EXISTS idx_tx_recycling_atoms_successor ON tx_recycling_atoms(successor_transaction);
+
+-- A query view, not another copy of per-file partial evidence. The parent
+-- review is a separate authority; a chunk itself always remains PARTIAL.
+CREATE VIEW IF NOT EXISTS tx_recycling_chunk_atoms AS
+SELECT c.artifact_id,c.transaction_id,c.inventory_sha256,c.chunk_index,c.status,c.source_path,
+       json_extract(j.value,'$.unit_id') AS unit_id,
+       json_extract(j.value,'$.path') AS path,
+       json_extract(j.value,'$.disposition') AS disposition,
+       json_extract(j.value,'$.reason') AS reason,
+       json_extract(j.value,'$.evidence_proofs') AS evidence_json,
+       json_extract(j.value,'$.protected') AS protected,
+       EXISTS(SELECT 1 FROM tx_recycling_reviews r WHERE r.transaction_id=c.transaction_id
+              AND r.inventory_sha256=c.inventory_sha256) AS parent_reviewed
+FROM tx_recycling_chunks c,json_each(c.decisions_json) j;
 
 CREATE TABLE IF NOT EXISTS search_policy_violations (
     violation_id TEXT PRIMARY KEY,
@@ -598,8 +633,13 @@ class KnowledgeDatabase:
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version',?)",
                 (DATABASE_SCHEMA_VERSION,),
             )
+            # This short-lived initializer has not queried the corpus tables.
+            # Include all tables and bound SQLite's own analysis work; otherwise
+            # statistics from an early one-document corpus can survive growth.
+            # Keep maintenance before commit so a failure cannot report a
+            # failed initialization after its schema-version write committed.
+            connection.execute("PRAGMA optimize(0x10012)")
             connection.commit()
-            connection.execute("PRAGMA optimize")
         finally:
             connection.close()
 

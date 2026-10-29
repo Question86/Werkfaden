@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import unittest
 
 from kairos.backup import create_backup
@@ -23,6 +24,130 @@ from support import WorkspaceTestCase
 
 
 class TaskSnapshotTests(WorkspaceTestCase):
+    def _task_creation_args(self, task_id):
+        metadata = prepare_document(self.workspace / "tasks/task_TASK_0001.md", self.workspace).frontmatter.metadata
+        return ["new-task", "--workspace", str(self.workspace), "--id", task_id,
+                "--title", "Native task creation regression", "--objective",
+                "Establish explicit acceptance criteria and evidence without changing a predecessor before promotion.",
+                "--goal", metadata["goal"], "--milestone", metadata["milestone"],
+                "--criteria", ",".join(metadata["criteria"])]
+
+    def _invoke_task_creation(self, task_id):
+        import contextlib
+        import io
+        from kairos.cli import main
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(self._task_creation_args(task_id))
+        return code, json.loads(output.getvalue())
+
+    def test_generated_task_search_contract_uses_exact_acceptance_answer(self):
+        from kairos.frontmatter import split_frontmatter
+        text = task_document(task_id="TASK_CONTRACT_TEST", title="Contract fixture",
+            objective="Explicit acceptance criteria and evidence for a bounded task.",
+            workspace_id="KAIROS_TEST", goal_id="GOAL_KAIROS_001",
+            milestone_id="MILESTONE_KAIROS_01", criteria=[], loop=1)
+        metadata = split_frontmatter(text).metadata
+        answers = {(item["question"], item["target"]) for item in metadata["answers"]}
+        for contract in metadata["search_contract"]:
+            self.assertIn((contract["query"], contract["expected"].split("#", 1)[1]), answers)
+
+    def test_failed_task_promotion_preserves_valid_predecessor_scope(self):
+        from unittest.mock import patch
+        from kairos import heartbeat
+        from kairos.util import read_json
+        self.assertTrue(run_heartbeat(self.workspace)["verified"])
+        before = read_json(self.workspace / ".kairos/runtime_state.json")
+        original = heartbeat.promote_document
+        def fail_task(path, *args, **kwargs):
+            if Path(path).name == "task_TASK_REFUSED_TEST.md":
+                raise ValueError("Isolated new task promotion refusal")
+            return original(path, *args, **kwargs)
+        with patch.object(heartbeat, "promote_document", side_effect=fail_task):
+            code, result = self._invoke_task_creation("TASK_REFUSED_TEST")
+        self.assertEqual(code, 2, result)
+        self.assertFalse(result["heartbeat"]["verified"])
+        after = read_json(self.workspace / ".kairos/runtime_state.json")
+        current = read_json(self.workspace / "current.json")
+        for field in ("active_goal", "active_milestone", "active_task", "active_criterion"):
+            self.assertEqual(after[field], before[field], field)
+            self.assertEqual(current[field], before[field], field)
+        self.assertEqual(after["lifecycle"], "BLOCKED")
+        self.assertTrue((self.workspace / "tasks/task_TASK_REFUSED_TEST.md").is_file())
+
+    def test_successful_task_creation_activates_exact_promoted_source(self):
+        from kairos.util import read_json
+        self.assertTrue(run_heartbeat(self.workspace)["verified"])
+        code, result = self._invoke_task_creation("TASK_ACTIVATED_TEST")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["heartbeat"]["task_activation"],
+                         {"requested": "TASK_ACTIVATED_TEST", "activated": True})
+        task = prepare_document(self.workspace / "tasks/task_TASK_ACTIVATED_TEST.md", self.workspace)
+        database = KnowledgeDatabase(database_path(self.workspace))
+        connection = database.connect(read_only=True)
+        try:
+            row = connection.execute("SELECT content_sha256 FROM artifacts WHERE artifact_id=?",
+                                     ("TASK_ACTIVATED_TEST",)).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row["content_sha256"], task.content_sha256)
+        for filename in (".kairos/runtime_state.json", "current.json"):
+            state = read_json(self.workspace / filename)
+            self.assertEqual(state["active_task"], "TASK_ACTIVATED_TEST")
+            self.assertEqual(state["active_criterion"], task.frontmatter.metadata["criteria"][0])
+
+    def test_direct_heartbeat_cannot_request_ungranted_task_activation(self):
+        from kairos.heartbeat import HeartbeatError
+        self.assertTrue(run_heartbeat(self.workspace)["verified"])
+        path = self.workspace / ".kairos/runtime_state.json"
+        before = path.read_bytes()
+        with self.assertRaisesRegex(HeartbeatError, "matching RUNNING new-task"):
+            run_heartbeat(self.workspace, task_activation="TASK_0001")
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_task_activation_rejects_a_different_task_creation_owner(self):
+        from unittest.mock import patch
+        from kairos import cli
+        from kairos.util import read_json
+        self.assertTrue(run_heartbeat(self.workspace)["verified"])
+        before = read_json(self.workspace / ".kairos/runtime_state.json")
+        original = cli.run_heartbeat
+        def wrong_task(*args, **kwargs):
+            kwargs["task_activation"] = "TASK_UNGRANTED_TEST"
+            return original(*args, **kwargs)
+        with patch.object(cli, "run_heartbeat", side_effect=wrong_task):
+            code, result = self._invoke_task_creation("TASK_OWNER_TEST")
+        self.assertEqual(code, 2, result)
+        self.assertIn("matching RUNNING new-task", result["message"])
+        after = read_json(self.workspace / ".kairos/runtime_state.json")
+        self.assertEqual(after["active_task"], before["active_task"])
+        self.assertEqual(after["active_criterion"], before["active_criterion"])
+
+    def test_postpromotion_router_failure_keeps_a_valid_blocked_task_scope(self):
+        from unittest.mock import patch
+        from kairos import heartbeat
+        from kairos.util import read_json
+        self.assertTrue(run_heartbeat(self.workspace)["verified"])
+        with patch.object(heartbeat, "refresh_dynamic_canonicals",
+                          side_effect=RuntimeError("Isolated router checkpoint failure")):
+            code, result = self._invoke_task_creation("TASK_ROUTER_FAILURE_TEST")
+        self.assertEqual(code, 2, result)
+        self.assertTrue(result["heartbeat"]["task_activation"]["activated"])
+        database = KnowledgeDatabase(database_path(self.workspace))
+        connection = database.connect(read_only=True)
+        try:
+            row = connection.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=? AND document_type='task'",
+                                     ("TASK_ROUTER_FAILURE_TEST",)).fetchone()
+        finally:
+            connection.close()
+        self.assertIsNotNone(row)
+        metadata = json.loads(row["metadata_json"])
+        for filename in (".kairos/runtime_state.json", "current.json"):
+            state = read_json(self.workspace / filename)
+            self.assertEqual(state["active_task"], "TASK_ROUTER_FAILURE_TEST")
+            self.assertIn(state["active_criterion"], metadata["criteria"])
+            self.assertEqual(state["lifecycle"], "BLOCKED")
+
     def _stage_loop_five_task(self) -> KnowledgeDatabase:
         path = self.workspace / "tasks" / "task_TASK_SNAPSHOT_TEST.md"
         atomic_write_text(

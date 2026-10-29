@@ -839,6 +839,10 @@ def issue_external_edit_permit(
     snapshots = [_file_snapshot(workspace, relative) for relative in normalized]
     database = _database(workspace)
     with database.transaction() as connection:
+        # A path grant authorizes bytes before heartbeat consumes it. Refuse an
+        # inadmissible mutation phase before issuing that write authority.
+        if governance_mode(workspace) == "required":
+            _require_transition(_current_phase(connection), "MUTATION")
         # This is an explicit resume of one publication, not a new grant and
         # not a search for arbitrary historical bytes. Never renew its TTL.
         if publication:

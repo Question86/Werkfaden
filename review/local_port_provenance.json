@@ -1,0 +1,30 @@
+{
+  "schema": "werkfaden-review-port-provenance/v1",
+  "base_commit": "e365aff00ba77cad942f062e474258cdd4b0122e",
+  "files": [
+    {
+      "file": "jev_transport.py",
+      "local_sha256": "7bba027c4191e8f13769436604d2ff7a4cd48e6e2320be2334160748e2eccc72"
+    },
+    {
+      "file": "jev_configure_credential.py",
+      "local_sha256": "193becf18faab65ac1998740fddc71b477cb7269542abd37666827964907a64d"
+    },
+    {
+      "file": "jev_workshop_attempt_gate.py",
+      "local_sha256": "8b4ea1244cdf960cfcad128f1429a78784ec37ef08a77820462738647ef3e816"
+    },
+    {
+      "file": "jev_workshop_attempt_gate_typesafe.py",
+      "local_sha256": "24e98c47f0589cb5e92609f1f94428ccd73f526a7c615a114a34992d204da367"
+    },
+    {
+      "file": "jev_workshop_attempt_workflow.py",
+      "local_sha256": "320f32fd55afac40cf2553e0f4b5566b14df7b9aac8841dfdd05fe94a881d2c7"
+    },
+    {
+      "file": "jev_adaptive_patch_tree.py",
+      "local_sha256": "7c62a019ac3ce644843cd8cf5d62a042b36302965f3296ddea8dad9bf61c857e"
+    }
+  ]
+}

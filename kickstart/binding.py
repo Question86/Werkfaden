@@ -60,10 +60,126 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _auxiliary_name(name: str) -> str:
+    """Validate the portable, non-generated namespace for initial process docs."""
+    device = name.split('.', 1)[0].upper()
+    if (
+        not name or Path(name).name != name or name.rstrip(' .') != name
+        or re.search(r'[<>:"/\\|?*\x00-\x1f]', name)
+        or Path(name).suffix.casefold() != '.md'
+        or device in {'CON', 'PRN', 'AUX', 'NUL'}
+        or re.fullmatch(r'(COM|LPT)[1-9]', device)
+        or name.upper().startswith(('PROJECT_CODE_', 'PROJECT_HEADER_'))
+    ):
+        raise KickstartError('AUXILIARY_DOCUMENT_NAME_INVALID',
+                             f'auxiliary input needs a portable non-generated Markdown filename: {name!r}')
+    return name
+
+
+def _read_auxiliary_documents(paths) -> dict[str, bytes]:
+    """Capture only explicitly selected, stable inputs before workspace creation.
+
+    Call after reviewed intent is validated. The returned exact bytes are an
+    initial snapshot, never a claim that the external input stays unchanged.
+    """
+    documents = {}
+    names = set()
+    for value in paths:
+        path = Path(value)
+        name = _auxiliary_name(path.name)
+        if name.casefold() in names:
+            raise KickstartError('AUXILIARY_DOCUMENT_DUPLICATE',
+                                 f'auxiliary input filenames collide portably: {name}')
+        names.add(name.casefold())
+        reject_link_components(path, label='auxiliary document input')
+        try:
+            if not path.is_file():
+                raise KickstartError('AUXILIARY_DOCUMENT_MISSING', f'auxiliary input is not a file: {path}')
+            raw = path.read_bytes()
+            raw.decode('utf-8')
+            reject_link_components(path, label='auxiliary document input')
+            if path.read_bytes() != raw:
+                raise KickstartError('AUXILIARY_DOCUMENT_CHANGED', f'auxiliary input changed during capture: {path}')
+        except (OSError, UnicodeError) as exc:
+            raise KickstartError('AUXILIARY_DOCUMENT_INVALID', f'cannot capture auxiliary Markdown: {path}') from exc
+        documents[name] = raw
+    return dict(sorted(documents.items()))
+
+
+def _document_initial_auxiliary(documents: dict[str, str], auxiliary: dict[str, bytes]) -> dict[str, str]:
+    """Index exact initial declaration facts, never a stale mirror of later content."""
+    if not auxiliary:
+        return documents
+    from kairos.frontmatter import split_frontmatter
+    from kairos.sections import parse_sections, validate_answer_targets
+    from kairos.templates import render_document
+
+    parent_path = 'docs/PROJECT_SOURCE_INDEX.md'
+    parent = split_frontmatter(documents[parent_path]).metadata
+    identifier = 'PROJECT_AUXILIARY_DECLARATION'
+    question = "Which Auxiliary process documents were declared during this project's initial intake?"
+    metadata = {
+        'schema': 'kairos-context/v1', 'id': identifier, 'type': 'documentation',
+        'revision': 1, 'state': 'active', 'authority': 'architecture_authority',
+        **{key: parent[key] for key in ('workspace', 'goal', 'milestone', 'task', 'loop') if key in parent},
+        'route': parent['route'].rsplit('/', 1)[0] + '/' + identifier,
+        'updated_at': parent['updated_at'],
+        'capsule': 'Exact initial Auxiliary declarations and the supported pre-seal setup method. Current authority remains in configured files and the native Workshop manifest.',
+        'claim_boundary': 'Owns initial declaration facts and setup procedure only. Initial hashes do not assert later content, semantic correctness, runtime source membership or release acceptance.',
+        'entities': [identifier, 'Auxiliary', 'Workshop'],
+        'facets': ['initial-auxiliary-authority', 'intake-provenance', 'process-documents'],
+        'criteria': [],
+        'does_not_answer': ['current Auxiliary content after a later transaction', 'runtime or scientific execution truth'],
+        'answers': [
+            {'intent': 'evidence', 'question': question, 'target': 's-initial-auxiliary-authority'},
+            {'intent': 'procedure', 'question': 'How are initial Auxiliary process documents declared and changed?', 'target': 's-procedure'},
+        ],
+        'refs': {'source_index': '[ref:' + parent_path + '#s-project-membership|id:' + parent['id']
+                 + '|v:dynamic|rel:constrained_by|tags:intake,membership|src:generated]'},
+        'search_contract': [{'query': question, 'expected': identifier + '#s-initial-auxiliary-authority', 'required_top_k': 5}],
+    }
+    facts = [{'filename': name, 'initial_sha256': _sha256(raw), 'initial_bytes': len(raw)}
+             for name, raw in sorted(auxiliary.items())]
+    fence = '~' * 192
+    sections = [
+        {'id': 's-initial-auxiliary-authority', 'title': 'INITIAL AUXILIARY AUTHORITY',
+         'capsule': 'Explicit Markdown inputs were copied byte-exactly before first seal. The following hashes describe initial provenance, not later authority state.',
+         'content': 'Initial declaration facts:\n\n' + fence + 'json\n' + json.dumps(facts, ensure_ascii=False, indent=2) + '\n' + fence},
+        {'id': 's-procedure', 'title': 'DECLARATION AND CHANGE PROCEDURE',
+         'capsule': 'Use explicit initial inputs with the public init option; later changes require verified Auxiliary transactions.',
+         'content': (
+             'The public init option is repeatable --auxiliary-document <file.md>; both canonical intake APIs accept auxiliary_documents. '
+             'Reviewed project intent precedes reading exact selected inputs. Stable UTF-8 bytes are copied unchanged to the configured blueprint root and excluded from Runtime source membership. '
+             'Portable duplicate names, links and generated PROJECT_CODE_/PROJECT_HEADER_ names are refused. '
+             'This option cannot reconfigure an existing Workshop binding. Embedded relative references are not rewritten. '
+             'Later changes belong to native Auxiliary transactions. The initial facts above do not assert current content or hashes; the configured authority and verified Workshop manifest own current state.')},
+    ]
+    updated = render_document(metadata, 'Initial Auxiliary authority declaration', sections)
+    checked = split_frontmatter(updated)
+    validate_answer_targets(checked.metadata, parse_sections(checked.body, header_bytes=checked.header_bytes))
+    return {**documents, 'docs/PROJECT_AUXILIARY_DECLARATION.md': updated}
+
+
 def _safe_workspace_id(value: str) -> str:
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9_.:-]{2,127}", value):
         raise KickstartError("WORKSPACE_ID_INVALID", f"workspace_id is not a stable upper-case identifier: {value!r}")
     return value
+
+
+def _assert_initial_binding_absent(workspace: Path) -> None:
+    """Refuse either intake's registered authority before any initial write.
+
+    A partial registration is still binding authority. Never parse, replace or
+    repair it through initial intake, with or without Auxiliary inputs.
+    """
+    for name in ("workshop.config.json", "project-intake.json", "universal-intake.json"):
+        marker = workspace / ".kairos" / name
+        reject_link_components(marker, label="initial binding authority")
+        if marker.exists():
+            raise KickstartError(
+                "PROJECT_ALREADY_BOUND",
+                f"initial intake cannot replace existing binding authority: {marker}",
+            )
 
 
 def _workspace_scope(workspace: Path, load_config, read_json) -> tuple[str, str, str, str]:
@@ -421,7 +537,14 @@ def initialize_project(
     build_directory: Path | None = None,
     workspace_id: str | None = None,
     project_spec: dict[str, Any] | None = None,
+    auxiliary_documents: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
+    """Bind compiler authority and optional explicit initial process Markdown.
+
+    Auxiliary inputs are stable read-only snapshots copied before first seal;
+    their sorted names and bytes join the normal coupled config/intake authority.
+    Existing bindings require a separate supported migration, never this option.
+    """
     (
         health_audit, run_heartbeat, issue_external_edit_permit, atomic_write_json,
         atomic_write_text, read_json, utc_now, _, initialize_workspace,
@@ -435,8 +558,8 @@ def initialize_project(
     workspace = Path(workspace)
     reject_link_components(workspace, label="KAIROS workspace")
     workspace = workspace.resolve()
-    if (workspace / ".kairos" / "project-intake.json").exists():
-        raise KickstartError("PROJECT_ALREADY_BOUND", f"workspace already contains a project intake: {workspace / '.kairos' / 'project-intake.json'}")
+    _assert_initial_binding_absent(workspace)
+    initial_auxiliary = None
     if not (workspace / ".kairos" / "config.json").is_file():
         if workspace.exists() and any(workspace.iterdir()):
             raise KickstartError("WORKSPACE_NOT_FRESH", f"workspace is not a KAIROS workspace and is not empty: {workspace}")
@@ -451,6 +574,7 @@ def initialize_project(
             goal, milestone, task, selected_criteria, _ = validate_project_kickoff_contract(project_spec)
         except Exception as exc:
             raise KickstartError("PROJECT_INTENT_INVALID", str(exc)) from exc
+        initial_auxiliary = _read_auxiliary_documents(auxiliary_documents)
         initialize_project_workspace(
             workspace,
             workspace_id=_safe_workspace_id(derived_id),
@@ -479,6 +603,8 @@ def initialize_project(
                 f"project intent targets {expected}, but existing workspace authority is {actual}",
             )
     workspace_id_actual, goal_id, milestone_id, task_id = _workspace_scope(workspace, load_config, read_json)
+    if initial_auxiliary is None:
+        initial_auxiliary = _read_auxiliary_documents(auxiliary_documents)
     project_intent_sha256 = (
         _sha256(json.dumps(project_spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
         if project_spec is not None else None
@@ -584,6 +710,7 @@ def initialize_project(
             include_edges=include_edges,
             include_topology_sha256=edge_payload["topology_sha256"],
         )
+        documents = _document_initial_auxiliary(documents, initial_auxiliary)
         changed = [*documents.keys(), *(f"code/{record.filename}" for record in blueprint_set.records)]
         # New generated Markdown is still an out-of-band source change from the
         # workspace's perspective. Attribute that exact, pre-edit scope before
@@ -601,6 +728,8 @@ def initialize_project(
         for record in blueprint_set.records:
             atomic_write_text(external_root / record.filename, record.text)
             atomic_write_text(workspace / "code" / record.filename, record.text)
+        for name, raw in initial_auxiliary.items():
+            _atomic_bytes(external_root / name, raw)
 
         build_authority = intake_directory / "PROJECT_BUILD_AUTHORITY.cmake"
         atomic_write_text(build_authority, _cmake_authority(survey.units))
@@ -674,8 +803,8 @@ def initialize_project(
                 for unit in survey.units
             },
             "expected_translation_units": len(survey.units),
-            "blueprint_ignore": [],
-            "auxiliary_documents": [],
+            "blueprint_ignore": sorted(initial_auxiliary),
+            "auxiliary_documents": sorted(initial_auxiliary),
             "machine_authority_files": [
                 "workshop.config.json",
                 "project-intake/compile_commands.json",
@@ -718,6 +847,11 @@ def initialize_project(
             task_id=task_id,
             project_intent_sha256=project_intent_sha256,
         )
+        if initial_auxiliary:
+            manifest["initial_auxiliary_documents"] = [
+                {"filename": name, "sha256": _sha256(raw), "bytes": len(raw)}
+                for name, raw in initial_auxiliary.items()
+            ]
         manifest["include_edge_topology"] = {
             "edge_count": edge_payload["edge_count"],
             "topology_sha256": edge_payload["topology_sha256"],

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,7 +59,7 @@ def reconcile_documents(workspace: Path, *, verify_content_hashes: bool = False)
         from .database import KnowledgeDatabase
         from .workspace import database_path
         db = KnowledgeDatabase(database_path(workspace))
-        with db.connect(read_only=True) as connection:
+        with closing(db.connect(read_only=True)) as connection:
             known_hashes = {
                 str(row["path"]): str(row["content_sha256"])
                 for row in connection.execute("SELECT path,content_sha256 FROM artifacts")

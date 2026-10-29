@@ -24,7 +24,6 @@ from .corpus import (
     build_corpus_manifest,
     cmake_membership,
     header_closure,
-    load_config,
 )
 from .header_blueprint import generate_header_only_blueprint
 from .util import source_prefix
@@ -32,6 +31,7 @@ from .util import (
     WorkshopError,
     atomic_write_bytes,
     atomic_write_json,
+    capture_rollback_preimage,
     copy_exact,
     file_facts,
     logical_lines,
@@ -39,6 +39,7 @@ from .util import (
     normalized_text,
     package_hash,
     read_json,
+    restore_rollback_preimage,
     sha256_bytes,
     sqlite_snapshot,
     utc_now,
@@ -796,10 +797,16 @@ class BootstrapRepair:
                 }
                 if existed:
                     backup = root / "rollback" / role / filename
-                    copy_exact(live, backup)
+                    try:
+                        preimage = capture_rollback_preimage(live, backup, copier=copy_exact)
+                    except WorkshopError as exc:
+                        if exc.code == "ROLLBACK_PREIMAGE_CHANGED":
+                            raise WorkshopError("BOOTSTRAP_PREIMAGE_CHANGED", str(exc)) from exc
+                        raise
                     row.update({
                         "backup": str(backup),
-                        "baseline_sha256": sha256_bytes(live.read_bytes()),
+                        "baseline_sha256": preimage["sha256"],
+                        "baseline_mtime_ns": preimage["mtime_ns"],
                     })
                 rows.append(row)
         atomic_write_json(root / "rollback" / "document_targets.json", rows)
@@ -824,10 +831,9 @@ class BootstrapRepair:
                         f"rollback target escapes its exact document root: {live}",
                     )
                 if row["existed"]:
-                    backup = Path(row["backup"])
-                    copy_exact(backup, live)
-                    restored = (
-                        sha256_bytes(live.read_bytes()) == row["baseline_sha256"]
+                    restored = restore_rollback_preimage(
+                        Path(row["backup"]), live, row["baseline_sha256"],
+                        row.get("baseline_mtime_ns"), copier=copy_exact,
                     )
                 else:
                     if live.exists():
@@ -936,7 +942,24 @@ class BootstrapRepair:
             ),
             ttl_seconds=1800,
         )
-        backups = self._backup_document_targets(root, state)
+        try:
+            backups = self._backup_document_targets(root, state)
+        except Exception as exc:
+            # No live apply target has been written yet. Do not leave an unused
+            # edit grant outstanding if capturing its exact preimage fails.
+            try:
+                governance.revoke_action_permit(
+                    self.config.kairos_workspace,
+                    permit_id=permit["permit_id"],
+                    reason=f"Bootstrap {transaction_id} failed before any apply target write",
+                )
+            except Exception as revoke_exc:
+                raise WorkshopError(
+                    "BOOTSTRAP_PREIMAGE_PERMIT_PENDING",
+                    "preimage capture failed and the unused edit permit could not be revoked",
+                    details={"cause": str(exc), "revocation": str(revoke_exc)},
+                ) from exc
+            raise
         state["state"] = "APPLYING"
         state["permit"] = permit
         self.engine._save_transaction(
@@ -998,16 +1021,6 @@ class BootstrapRepair:
                 state,
                 phase="after-mirror",
             )
-            self.engine._save_transaction(
-                root,
-                state,
-                event="BOOTSTRAP_POSTCHECK_VERIFIED",
-                details={
-                    "package_sha256": post["package_sha256"],
-                    "runtime_package_sha256": state["baseline_runtime"]["package_sha256"],
-                },
-            )
-            self.engine._release_lease(transaction_id)
             receipt = {
                 "schema": "runtime-sync-bootstrap-postcheck/v1",
                 "transaction_id": transaction_id,
@@ -1024,11 +1037,16 @@ class BootstrapRepair:
                 "changed_documents": state["changed_documents"],
                 "bit_exact": True,
             }
-            receipt_path = self.engine._write_receipt(
-                "bootstrap-postcheck",
-                receipt,
+            state["terminal_receipt_payload"] = receipt
+            self.engine._save_transaction(
+                root,
+                state,
+                event="BOOTSTRAP_POSTCHECK_VERIFIED",
+                details={
+                    "package_sha256": post["package_sha256"],
+                    "runtime_package_sha256": state["baseline_runtime"]["package_sha256"],
+                },
             )
-            return {**receipt, "receipt": str(receipt_path)}
         except Exception as exc:
             failure = {
                 "code": getattr(exc, "code", type(exc).__name__),
@@ -1107,6 +1125,8 @@ class BootstrapRepair:
                 },
             ) from exc
 
+        return self.engine._finish_transaction_receipt(root, state, kind="bootstrap-postcheck", payload=receipt)
+
     def abort(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load(transaction_id)
         self.engine._require_lease(transaction_id)
@@ -1134,6 +1154,15 @@ class BootstrapRepair:
 
     def recover(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load(transaction_id)
+        if state.get("state") == "POSTCHECK_VERIFIED":
+            entry = state.get("terminal_receipt")
+            payload = entry.get("payload") if isinstance(entry, dict) else state.get("terminal_receipt_payload")
+            if not isinstance(payload, dict):
+                raise WorkshopError("TX_TERMINAL_SEED_MISSING", "bootstrap postcheck has no exact preserved terminal payload")
+            lease = read_json(self.engine.lease_path) if self.engine.lease_path.exists() else None
+            if isinstance(lease, dict) and lease.get("transaction_id") == transaction_id:
+                self._runtime_must_equal_baseline(state, phase="terminal-receipt-recovery")
+            return self.engine._finish_transaction_receipt(root, state, kind="bootstrap-postcheck", payload=payload)
         self.engine._require_lease(transaction_id)
         if state["state"] != "RECOVERY_REQUIRED":
             raise WorkshopError(
@@ -1165,19 +1194,17 @@ class BootstrapRepair:
             state,
             phase="recovery",
         )
-        self.engine._save_transaction(
-            root,
-            state,
-            event="BOOTSTRAP_RECOVERY_POSTCHECK_VERIFIED",
-        )
-        self.engine._release_lease(transaction_id)
-        return {
+        receipt = {
             "schema": "runtime-sync-bootstrap-recovery/v1",
             "transaction_id": transaction_id,
             "state": "POSTCHECK_VERIFIED",
             "package_sha256": post["package_sha256"],
+            "postcheck_package_sha256": post["package_sha256"],
             "runtime_unchanged": True,
         }
+        state["terminal_receipt_payload"] = receipt
+        self.engine._save_transaction(root, state, event="BOOTSTRAP_RECOVERY_POSTCHECK_VERIFIED")
+        return self.engine._finish_transaction_receipt(root, state, kind="bootstrap-postcheck", payload=receipt)
 
     def transaction_status(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load(transaction_id)

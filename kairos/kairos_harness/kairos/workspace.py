@@ -170,7 +170,7 @@ def _starter_architecture_document(workspace_id: str) -> str:
                 "id": "s-entry",
                 "title": "LLM ENTRY",
                 "capsule": "Use the operating contract for procedure, live state for current scope, and this self-model for stable architecture.",
-                "content": "Read AGENTS.md, current.json, and _LOOP_GATE.md. A new Human material command becomes a task. Ask KAIROS metadata for meaning and authority before requesting bounded source inspection.",
+                "content": "Read AGENTS.md, current.json, and _LOOP_GATE.md. A new Human material command becomes a task. Ask KAIROS metadata for meaning and authority before requesting bounded source inspection. For workspace tools and maintenance situations, consult [ref:docs/KAIROS_WORKSPACE_TOOLS.md#s-entry|id:KAIROS_WORKSPACE_TOOLS|v:dynamic|rel:references|tags:tools,operations|src:system]. For tasks, reports, bugs and heartbeat publication use [ref:docs/KAIROS_CONTEXT_TOOLS.md#s-records|id:KAIROS_CONTEXT_TOOLS|v:dynamic|rel:references|tags:tools,documentation|src:system]. These derived release routers point to supported commands; operating contracts and configured gates retain authority.",
             },
             {
                 "id": "s-layers",
@@ -483,6 +483,20 @@ def _canonical_documents(
 
 
 
+def _seed_tool_catalog(workspace: Path, workspace_id: str) -> Path:
+    from .framework import TOOL_CATALOG_PATH, tool_catalog_document
+    path = workspace / TOOL_CATALOG_PATH
+    atomic_write_text(path, tool_catalog_document(workspace_id, updated_at=utc_now()))
+    return path
+
+
+def _seed_context_tool_catalog(workspace: Path, workspace_id: str) -> Path:
+    from .framework import CONTEXT_TOOL_CATALOG_PATH, context_tool_catalog_document
+    path = workspace / CONTEXT_TOOL_CATALOG_PATH
+    atomic_write_text(path, context_tool_catalog_document(workspace_id, updated_at=utc_now()))
+    return path
+
+
 def initialize_project_workspace(
     workspace: Path,
     *,
@@ -587,6 +601,8 @@ def initialize_project_workspace(
     )
     starter_architecture_path = workspace / "docs" / "KAIROS_STARTER_ARCHITECTURE.md"
     atomic_write_text(starter_architecture_path, _starter_architecture_document(workspace_id))
+    tool_catalog_path = _seed_tool_catalog(workspace, workspace_id)
+    context_tool_catalog_path = _seed_context_tool_catalog(workspace, workspace_id)
     canonical = _canonical_documents(
         workspace_id,
         task_id,
@@ -602,7 +618,8 @@ def initialize_project_workspace(
     database = KnowledgeDatabase(database_path(workspace))
     database.initialize()
     goal_results = sync_goal_files(workspace, database)
-    document_paths = [task_path, starter_architecture_path, *[workspace / name for name in DEFAULT_CANONICAL_FILES]]
+    document_paths = [task_path, starter_architecture_path, tool_catalog_path, context_tool_catalog_path,
+                      *[workspace / name for name in DEFAULT_CANONICAL_FILES]]
     receipts = promote_many(document_paths, workspace, database, allow_dynamic=True)
     from .reconcile import reconcile_documents, update_manifest
 
@@ -748,6 +765,8 @@ def initialize_workspace(workspace: Path, *, workspace_id: str = "KAIROS_WORKSPA
         starter_architecture_path,
         _starter_architecture_document(workspace_id),
     )
+    tool_catalog_path = _seed_tool_catalog(workspace, workspace_id)
+    context_tool_catalog_path = _seed_context_tool_catalog(workspace, workspace_id)
     for relative, content in _canonical_documents(workspace_id, "TASK_0001").items():
         atomic_write_text(workspace / relative, content)
     database = KnowledgeDatabase(database_path(workspace))
@@ -759,6 +778,8 @@ def initialize_workspace(workspace: Path, *, workspace_id: str = "KAIROS_WORKSPA
         bug_path,
         code_path,
         starter_architecture_path,
+        tool_catalog_path,
+        context_tool_catalog_path,
         *[workspace / name for name in DEFAULT_CANONICAL_FILES],
     ]
     receipts = promote_many(document_paths, workspace, database, allow_dynamic=True)

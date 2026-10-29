@@ -23,6 +23,116 @@ from support import WorkspaceTestCase
 
 
 class AlphaHardeningTests(WorkspaceTestCase):
+    def test_new_bug_preflights_its_own_refs_and_keeps_long_evidence_pointer(self):
+        import io
+        from contextlib import redirect_stdout
+        from kairos.cli import main
+        from kairos.heartbeat import load_runtime_state
+        from kairos.promoter import prepare_document
+        from kairos.templates import pointer
+        runtime = load_runtime_state(self.workspace)
+        task = runtime["active_task"]
+        evidence = pointer(f"tasks/task_{task}.md", section="s-acceptance", artifact_id=task,
+                           version="dynamic", tags=("evidence",))
+        regression = "Bounded evidence " + ("x " * 220) + evidence + " retained in full"
+        target = self.workspace / "bugs" / "BUG_PREFLIGHT_SELF.md"
+        args = ["new-bug", "--workspace", str(self.workspace), "--id", "BUG_PREFLIGHT_SELF",
+                "--task", task, "--goal", runtime["active_goal"],
+                "--milestone", runtime["active_milestone"], "--title", "Exact pending self-ref preflight",
+                "--observation", "A complete reference must survive summary construction.",
+                "--impact", "Malformed summaries cannot be left behind.",
+                "--root-cause", "Native length cuts previously split pointer markup.",
+                "--resolution", "Preflight the complete candidate before writing.",
+                "--regression", regression]
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = main(args)
+        self.assertEqual(status, 0, output.getvalue())
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["heartbeat"]["verified"])
+        prepared = prepare_document(target, self.workspace)
+        self.assertIn(regression, prepared.frontmatter.body)
+        self.assertIn(evidence, prepared.frontmatter.body)
+        self.assertEqual(prepared.frontmatter.metadata["id"], "BUG_PREFLIGHT_SELF")
+
+    def test_new_report_missing_external_target_refuses_before_write(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        from kairos import cli
+        from kairos.heartbeat import load_runtime_state
+        from kairos.templates import pointer
+        runtime = load_runtime_state(self.workspace)
+        target = self.workspace / "reports" / "report_PREFLIGHT_MISSING.md"
+        args = ["new-report", "--workspace", str(self.workspace), "--id", "REPORT_PREFLIGHT_MISSING",
+                "--task", runtime["active_task"], "--goal", runtime["active_goal"],
+                "--milestone", runtime["active_milestone"], "--title", "Refuse a missing ordinary target",
+                "--outcome", "Ordinary missing references cannot become pending-self exceptions.",
+                "--evidence", pointer("docs/NOT_PRESENT.md", section="s-missing", artifact_id="DOC_MISSING",
+                                      version="dynamic", tags=("negative",)), "--state", "partial"]
+        output = io.StringIO()
+        with patch.object(cli, "run_heartbeat", wraps=cli.run_heartbeat) as heartbeat:
+            with redirect_stdout(output):
+                status = cli.main(args)
+        self.assertNotEqual(status, 0)
+        self.assertIn("reference target does not exist", output.getvalue())
+        self.assertFalse(target.exists())
+        heartbeat.assert_not_called()
+
+    def test_pending_self_ref_requires_a_real_candidate_section(self):
+        from kairos.cli import _current_loop
+        from kairos.heartbeat import load_runtime_state
+        from kairos.promoter import prepare_rendered_document
+        from kairos.references import ReferenceError
+        from kairos.templates import bug_document, pointer
+        runtime = load_runtime_state(self.workspace)
+        target = self.workspace / "bugs" / "BUG_PREFLIGHT_ANCHOR.md"
+        text = bug_document(bug_id="BUG_PREFLIGHT_ANCHOR", task_id=runtime["active_task"],
+            task_path=f"tasks/task_{runtime['active_task']}.md", workspace_id="KAIROS_TEST",
+            goal_id=runtime["active_goal"], milestone_id=runtime["active_milestone"],
+            loop=_current_loop(self.workspace), regression=pointer("bugs/BUG_PREFLIGHT_ANCHOR.md",
+                section="s-missing", artifact_id="BUG_PREFLIGHT_ANCHOR", tags=("negative",)))
+        with self.assertRaisesRegex(ReferenceError, "section does not exist in new document"):
+            prepare_rendered_document(target, self.workspace, text)
+        self.assertFalse(target.exists())
+
+    def test_rendered_preflight_never_overwrites_an_existing_source(self):
+        from kairos.heartbeat import load_runtime_state
+        from kairos.promoter import prepare_rendered_document
+        runtime = load_runtime_state(self.workspace)
+        target = self.workspace / "tasks" / f"task_{runtime['active_task']}.md"
+        before = target.read_bytes()
+        with self.assertRaisesRegex(PromotionError, "new document already exists"):
+            prepare_rendered_document(target, self.workspace, before.decode("utf-8"))
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_new_report_rejects_invalid_structure_before_creating_source(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        from kairos.cli import main
+        from kairos.heartbeat import load_runtime_state
+        runtime = load_runtime_state(self.workspace)
+        goal = json.loads((self.workspace / "goals" / (runtime["active_goal"] + ".json")).read_text(encoding="utf-8"))
+        milestone = next(x for x in goal["milestones"] if x["id"] == runtime["active_milestone"])
+        target = self.workspace / "reports" / "report_PREFLIGHT_REFUSAL.md"
+        args = ["new-report", "--workspace", str(self.workspace), "--id", "REPORT_PREFLIGHT_REFUSAL",
+                "--task", runtime["active_task"], "--goal", goal["id"], "--milestone", milestone["id"],
+                "--title", "Reject invalid generated structure before write",
+                "--outcome", "A bounded creation refusal must not leave malformed source.",
+                "--evidence", "Recorded input\n## Unanchored injected evidence heading\nRecorded tail.",
+                "--state", "partial"]
+        output = io.StringIO()
+        from kairos import cli
+        with patch.object(cli, "run_heartbeat", wraps=cli.run_heartbeat) as heartbeat:
+            with redirect_stdout(output):
+                status = main(args)
+        self.assertNotEqual(status, 0)
+        self.assertIn("H2 headings without stable section anchors", output.getvalue())
+        self.assertFalse(target.exists(), output.getvalue())
+        heartbeat.assert_not_called()
+        self.assertEqual(load_runtime_state(self.workspace)["lifecycle"], runtime["lifecycle"])
+
     def test_tracked_sources_rebuild_absent_derived_state_and_search(self) -> None:
         recovered = self.workspace.parent / f"{self.workspace.name}-recovered"
         try:

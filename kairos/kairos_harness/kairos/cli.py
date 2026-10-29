@@ -14,6 +14,7 @@ from .framework import search_framework, verify_framework_bundle
 from .frontmatter import render_frontmatter, split_frontmatter
 from .golden import (
     build_golden_template,
+    build_framework_distribution,
     materialize_golden_seed,
     render_goal_prompt,
     verify_golden_template,
@@ -36,7 +37,7 @@ from .heartbeat import finalize_workspace, run_heartbeat, status_report
 from .health import health_audit
 from .locking import workspace_write_lock
 from .loops import kickoff_project, start_new_loop
-from .promoter import prepare_document, promote_many
+from .promoter import prepare_document, prepare_rendered_document, promote_many
 from .reconcile import reconcile_documents
 from .recovery import rebuild_derived_state
 from .search import search_database
@@ -175,23 +176,6 @@ def _complete_goal_contract_for_task(
     validate_goal(goal)
     atomic_write_json(goal_path, goal)
     return goal_path
-
-
-def _activate_task(workspace: Path, goal_id: str, milestone_id: str, task_id: str, criteria: list[dict]) -> None:
-    path = workspace / ".kairos" / "runtime_state.json"
-    state = read_json(path)
-    state.update(
-        {
-            "active_goal": goal_id,
-            "active_milestone": milestone_id,
-            "active_task": task_id,
-            "active_criterion": criteria[0]["id"] if criteria else None,
-            "evidence_gap_count": len(criteria),
-            "lifecycle": "ACTIVE",
-            "updated_at": utc_now(),
-        }
-    )
-    atomic_write_json(path, state)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -357,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     graph.add_argument(
         "--inventory",
         default="",
-        choices=("", "relations", "contracts", "artifacts", "drift", "include_edges", "tx_atoms"),
+        choices=("", "relations", "contracts", "artifacts", "drift", "include_edges", "tx_atoms", "tx_chunks", "tx_chunk_atoms"),
         help="One whole table across the corpus, grouped and bounded, instead of "
              "walking every document to build the same list",
     )
@@ -420,6 +404,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_golden.add_argument("--source-root", required=True)
     export_golden.add_argument("--target", required=True)
     export_golden.add_argument("--source-commit", required=True)
+    export_golden.add_argument("--format", choices=("starter", "framework"), default="starter",
+                               help="Select sealed starter or full project-neutral framework sources")
 
     starter_check = sub.add_parser(
         "starter-check",
@@ -550,6 +536,11 @@ GOVERNED_COMMANDS = set(COMMAND_PHASES)
 MUTATING_COMMANDS = set(GOVERNED_COMMANDS)
 assert_command_classification(GOVERNED_COMMANDS)
 SOURCE_ONLY_STARTER_COMMANDS = {"starter-check", "goal-prompt"}
+
+
+def _write_new_artifact(workspace: Path, path: Path, text: str) -> None:
+    prepare_rendered_document(path, workspace, text)
+    atomic_write_text(path, text)
 
 
 def execute(args: argparse.Namespace) -> tuple[Any, int]:
@@ -915,7 +906,9 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
             result["golden_materialization"] = materialization
         return result, 0 if result["status"] == "VERIFIED" else 2
     if command == "export-golden":
-        result = build_golden_template(
+        builder = (build_framework_distribution if args.format == "framework"
+                   else build_golden_template)
+        result = builder(
             source_root=Path(args.source_root),
             target_root=Path(args.target),
             source_commit=args.source_commit,
@@ -954,8 +947,8 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
         path = workspace / "tasks" / f"task_{args.id}.md"
         if path.exists():
             raise ValueError(f"task already exists: {path}")
-        atomic_write_text(
-            path,
+        _write_new_artifact(
+            workspace, path,
             task_document(
                 task_id=args.id,
                 title=args.title,
@@ -967,12 +960,12 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
                 loop=loop,
             ),
         )
-        _activate_task(workspace, args.goal, args.milestone, args.id, selected_criteria)
         result = run_heartbeat(
             workspace,
             requested_mode=args.mode,
             changed_paths=[str(path.relative_to(workspace)).replace("\\", "/")],
             use_reconciliation=True,
+            task_activation=args.id,
         )
         return {"created": str(path), "heartbeat": result}, 0 if result["verified"] else 2
     if command == "new-report":
@@ -994,8 +987,8 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
             milestone_id=args.milestone,
             criteria=criteria,
         )
-        atomic_write_text(
-            path,
+        _write_new_artifact(
+            workspace, path,
             report_document(
                 report_id=args.id,
                 task_id=args.task,
@@ -1099,7 +1092,7 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
             )
         if path.exists():
             raise ValueError(f"artifact already exists: {path}")
-        atomic_write_text(path, content)
+        _write_new_artifact(workspace, path, content)
         result = run_heartbeat(
             workspace,
             requested_mode=args.mode,
@@ -1125,8 +1118,8 @@ def _execute_unlocked(args: argparse.Namespace, workspace: Path) -> tuple[Any, i
             milestone_id=args.milestone,
             criteria=criteria,
         )
-        atomic_write_text(
-            path,
+        _write_new_artifact(
+            workspace, path,
             research_document(
                 research_id=args.id,
                 task_id=args.task,

@@ -9,21 +9,28 @@ import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 class WorkshopError(RuntimeError):
     """A deterministic, user-actionable workshop failure."""
 
-    def __init__(self, code: str, message: str, *, details: Any = None) -> None:
+    def __init__(self, code: str, message: str, *, details: Any = None,
+                 outcome: str | None = None, references: Any = None) -> None:
         super().__init__(message)
         self.code = code
         self.details = details
+        self.outcome = outcome
+        self.references = references
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "message": str(self)}
         if self.details is not None:
             payload["details"] = self.details
+        if self.outcome is not None:
+            payload["outcome"] = self.outcome
+        if self.references is not None:
+            payload["references"] = self.references
         return payload
 
 
@@ -205,6 +212,34 @@ def copy_exact(source: Path, destination: Path) -> None:
     shutil.copyfile(source, destination)
     if source.read_bytes() != destination.read_bytes():
         raise WorkshopError("COPY_VERIFY_FAILED", f"copy is not byte-exact: {source} -> {destination}")
+
+
+def capture_rollback_preimage(live: Path, backup: Path, *, copier: Callable[[Path, Path], None] = copy_exact) -> dict[str, Any]:
+    """Capture bytes and freshness only while the live file stays unchanged."""
+    reject_link_components(live, label="rollback preimage source")
+    before = live.stat()
+    digest = sha256_bytes(live.read_bytes())
+    copier(live, backup)
+    after = live.stat()
+    if (before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns
+            or sha256_bytes(live.read_bytes()) != digest
+            or sha256_bytes(backup.read_bytes()) != digest):
+        raise WorkshopError("ROLLBACK_PREIMAGE_CHANGED", f"live target changed during preimage capture: {live}")
+    return {"sha256": digest, "mtime_ns": before.st_mtime_ns}
+
+
+def restore_rollback_preimage(backup: Path, live: Path, digest: str, mtime_ns: Any, *, copier: Callable[[Path, Path], None] = copy_exact) -> bool:
+    """Restore verified baseline bytes and their original freshness signature."""
+    if type(mtime_ns) is not int:
+        raise WorkshopError("ROLLBACK_FRESHNESS_PREIMAGE_MISSING", "exact rollback requires the captured baseline modification time")
+    reject_link_components(backup, label="rollback preimage")
+    if sha256_bytes(backup.read_bytes()) != digest:
+        raise WorkshopError("ROLLBACK_PREIMAGE_MISMATCH", f"rollback preimage differs from its captured hash: {backup}")
+    copier(backup, live)
+    if sha256_bytes(live.read_bytes()) != digest:
+        raise WorkshopError("ROLLBACK_BYTE_MISMATCH", f"restored bytes differ from baseline: {live}")
+    os.utime(live, ns=(live.stat().st_atime_ns, mtime_ns))
+    return sha256_bytes(live.read_bytes()) == digest and live.stat().st_mtime_ns == mtime_ns
 
 
 def sqlite_snapshot(source: Path, destination: Path) -> None:

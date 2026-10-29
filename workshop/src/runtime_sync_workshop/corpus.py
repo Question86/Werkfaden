@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import ntpath
 import re
 import stat
@@ -456,6 +457,128 @@ def load_config(path: Path) -> WorkshopConfig:
             )
     return config
 
+
+
+RUNTIME_POLICY_PROFILE = "mandatory-runtime/v1"
+RUNTIME_POLICY_FIELDS = ("transaction_documents_required", "tx_retention_required")
+MAX_POLICY_AUTHORITY_BYTES = 32 * 1024 * 1024
+
+
+def _policy_authority_bytes(path: Path) -> bytes:
+    reject_link_components(path, label="runtime policy authority")
+    try:
+        before = path.stat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_size > MAX_POLICY_AUTHORITY_BYTES):
+            raise WorkshopError("POLICY_AUTHORITY_INVALID", "policy authority must be one bounded regular file")
+        with path.open("rb") as stream:
+            data = stream.read(MAX_POLICY_AUTHORITY_BYTES + 1)
+        if len(data) > MAX_POLICY_AUTHORITY_BYTES:
+            raise WorkshopError("POLICY_AUTHORITY_INVALID", "policy authority exceeded its bounded read")
+        reject_link_components(path, label="runtime policy authority")
+        after = path.stat()
+        if (len(data) != before.st_size or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns or before.st_ino != after.st_ino
+                or after.st_nlink != 1):
+            raise WorkshopError("POLICY_BASELINE_CHANGED", "policy authority changed during inspection")
+        return data
+    except OSError as exc:
+        raise WorkshopError("POLICY_AUTHORITY_MISSING", "policy authority cannot be read") from exc
+
+
+def _policy_json(data: bytes) -> dict[str, Any]:
+    def unique(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    def finite(value):
+        raise ValueError("nonfinite JSON number")
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("nonfinite JSON number")
+        return number
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=unique,
+                           parse_constant=finite, parse_float=finite_float)
+        if not isinstance(value, dict):
+            raise ValueError("authority must be an object")
+        return value
+    except (UnicodeError, ValueError) as exc:
+        raise WorkshopError("POLICY_AUTHORITY_INVALID", "policy authority must be unambiguous finite UTF-8 JSON") from exc
+
+
+def runtime_policy_candidate(config: WorkshopConfig, profile: str) -> dict[str, Any]:
+    """Generate exact monotone target bytes, without writing or granting authority."""
+    if profile != RUNTIME_POLICY_PROFILE:
+        raise WorkshopError("POLICY_PROFILE_UNSUPPORTED", "unsupported runtime-policy transition profile")
+    try:
+        relative = config.config_path.relative_to(config.machine_root).as_posix()
+    except ValueError as exc:
+        raise WorkshopError("POLICY_CONFIG_NOT_GOVERNED", "config is outside its machine authority root") from exc
+    if relative not in config.machine_authority_files:
+        raise WorkshopError("POLICY_CONFIG_NOT_GOVERNED", "policy config must already be governed machine authority")
+    baseline = {relative: _policy_authority_bytes(config.config_path)}
+    raw = _policy_json(baseline[relative])
+    if raw.get("schema") != "runtime-sync-workshop-config/v1":
+        raise WorkshopError("POLICY_BASELINE_INVALID", "policy source has an unsupported Workshop schema")
+    if raw != config.raw:
+        raise WorkshopError("POLICY_BASELINE_CHANGED", "loaded config differs from the exact current preimage")
+    for field in RUNTIME_POLICY_FIELDS:
+        if field in raw and type(raw[field]) is not bool:
+            raise WorkshopError("POLICY_BASELINE_INVALID", "required policy fields must be JSON booleans when present")
+    if raw.get("tx_retention_required") is True and raw.get("transaction_documents_required") is not True:
+        raise WorkshopError("POLICY_BASELINE_INVALID", "active retention without documentation requires separate recovery")
+    if all(raw.get(field) is True for field in RUNTIME_POLICY_FIELDS):
+        raise WorkshopError("POLICY_ALREADY_ACTIVE", "mandatory runtime policy is already active")
+    target = {**raw, **{field: True for field in RUNTIME_POLICY_FIELDS}}
+    def encoded(value):
+        return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    files = {relative: encoded(target)}
+    changes = [{"field": field, "before": {"present": field in raw, "value": raw.get(field, False)},
+                "after": True} for field in RUNTIME_POLICY_FIELDS if raw.get(field) is not True]
+    intake_relative = "project-intake.json"
+    intake_path = config.machine_root / intake_relative
+    if intake_path.exists() or intake_relative in config.machine_authority_files:
+        if intake_relative not in config.machine_authority_files:
+            raise WorkshopError("POLICY_INTAKE_NOT_GOVERNED", "an existing intake dependency must be governed before transition")
+        baseline[intake_relative] = _policy_authority_bytes(intake_path)
+        intake = _policy_json(baseline[intake_relative])
+        if (intake.get("schema") != "kairos-project-intake/v1"
+                or intake.get("workshop_config_sha256") != package_hash(raw)):
+            raise WorkshopError("POLICY_INTAKE_BINDING_INVALID", "intake does not bind the exact current semantic config")
+        files[intake_relative] = encoded({**intake, "workshop_config_sha256": package_hash(target)})
+    for name, data in baseline.items():
+        if _policy_authority_bytes(config.machine_root / name) != data:
+            raise WorkshopError("POLICY_BASELINE_CHANGED", "policy source changed while deriving the candidate")
+    return {"profile": profile, "source_files": baseline, "candidate_files": files,
+            "changes": changes, "source_semantic_config_sha256": package_hash(raw),
+            "candidate_semantic_config_sha256": package_hash(target)}
+
+
+def verify_runtime_policy_candidate(config: WorkshopConfig, profile: str, files: dict[str, bytes], *,
+                                    expected_source_hashes: dict[str, str]) -> dict[str, Any]:
+    """Verify a staged target against frozen preimages and the exact allowlist."""
+    expected = runtime_policy_candidate(config, profile)
+    source_hashes = {name: sha256_bytes(data) for name, data in expected["source_files"].items()}
+    if expected_source_hashes != source_hashes:
+        raise WorkshopError("POLICY_BASELINE_CHANGED", "frozen policy preimage hashes no longer match current authority")
+    if not isinstance(files, dict) or set(files) != set(expected["candidate_files"]):
+        raise WorkshopError("POLICY_CANDIDATE_SCOPE_INVALID", "candidate must contain exactly the derived policy authority paths")
+    for name, data in expected["candidate_files"].items():
+        if type(files[name]) is not bytes or files[name] != data:
+            raise WorkshopError("POLICY_CANDIDATE_INVALID", "candidate differs from the deterministic monotone target")
+    return {"schema": "werkfaden-runtime-policy-candidate/v1", "profile": profile, "verified": True,
+            "read_only": True, "mutation_authorized": False, "changes": expected["changes"],
+            "source_semantic_config_sha256": expected["source_semantic_config_sha256"],
+            "candidate_semantic_config_sha256": expected["candidate_semantic_config_sha256"],
+            "files": [{"path": name, "source_sha256": source_hashes[name],
+                       "source_bytes": len(expected["source_files"][name]),
+                       "candidate_sha256": sha256_bytes(files[name]), "candidate_bytes": len(files[name])}
+                      for name in sorted(files)]}
 
 def cmake_membership(config: WorkshopConfig) -> list[str]:
     text = normalized_text(config.cmake_file.read_text(encoding="utf-8"))

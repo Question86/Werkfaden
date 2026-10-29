@@ -8,10 +8,12 @@ from .repair import _runtime_tree_manifest
 from .util import (
     WorkshopError,
     atomic_write_json,
+    capture_rollback_preimage,
     copy_exact,
     file_facts,
     package_hash,
     read_json,
+    restore_rollback_preimage,
     sha256_bytes,
     utc_now,
 )
@@ -235,12 +237,11 @@ class AuxiliaryDocumentTransaction:
             filename = row["filename"]
             live = self.config.blueprint_root / filename
             backup = root / "rollback" / filename
-            copy_exact(live, backup)
             backups.append({
                 "filename": filename,
                 "live": str(live),
                 "backup": str(backup),
-                "sha256": sha256_bytes(live.read_bytes()),
+                **capture_rollback_preimage(live, backup, copier=copy_exact),
             })
         atomic_write_json(root / "rollback" / "targets.json", backups)
         state["state"] = "APPLYING"
@@ -318,10 +319,9 @@ class AuxiliaryDocumentTransaction:
                     live = Path(row["live"])
                     if live.resolve().parent != self.config.blueprint_root.resolve():
                         raise WorkshopError("ROLLBACK_PATH_INVALID", f"invalid rollback target: {live}")
-                    copy_exact(Path(row["backup"]), live)
                     rollback.append({
                         "path": str(live),
-                        "restored": sha256_bytes(live.read_bytes()) == row["sha256"],
+                        "restored": restore_rollback_preimage(Path(row["backup"]), live, row["sha256"], row.get("mtime_ns"), copier=copy_exact),
                     })
                 except Exception as rollback_exc:
                     rollback.append({

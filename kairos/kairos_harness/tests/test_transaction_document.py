@@ -16,6 +16,88 @@ from kairos.transaction_document import (
 
 
 class TransactionDocumentTests(unittest.TestCase):
+    def test_search_contract_questions_match_exact_answer_handles(self):
+        for state in ("CHECKED_OUT", "ABORTED", "POSTCHECK_VERIFIED"):
+            with self.subTest(state=state):
+                tx = {"transaction_id": "TXN_" + "f" * 24, "state": state,
+                      "purpose": "Verify exact transaction retrieval questions"}
+                text = render_transaction_document(transaction=tx, workspace_id="KAIROS_TX_TEST",
+                    goal_id=None, milestone_id=None, task_id=None, loop=None,
+                    task_reference_exists=False)
+                metadata = split_frontmatter(text).metadata
+                answers = {(row["question"], row["target"]) for row in metadata["answers"]}
+                for contract in metadata["search_contract"]:
+                    target = contract["expected"].split("#", 1)[1]
+                    self.assertIn((contract["query"], target), answers)
+
+    def test_repeated_transaction_vocabulary_promotes_with_exact_contracts(self):
+        from kairos.database import KnowledgeDatabase
+        from kairos.promoter import promote_document
+        from kairos.workspace import initialize_workspace
+        with tempfile.TemporaryDirectory(prefix="tx-contract-collision-") as directory:
+            workspace = Path(directory) / "workspace"
+            initialize_workspace(workspace, workspace_id="KAIROS_TX_COLLISION_TEST")
+            database = KnowledgeDatabase(workspace / ".kairos" / "kairos.db")
+            database.initialize()
+            for index in range(24):
+                transaction_id = "TXN_" + format(index, "024x")
+                text = render_transaction_document(transaction={
+                    "transaction_id": transaction_id,
+                    "state": "ABORTED" if index % 2 else "POSTCHECK_VERIFIED",
+                    "purpose": "Distinct transaction evidence with repeated generic failure vocabulary",
+                }, workspace_id="KAIROS_TX_COLLISION_TEST", goal_id=None,
+                    milestone_id=None, task_id=None, loop=None, task_reference_exists=False)
+                path = workspace / document_path(transaction_id)
+                path.write_text(text, encoding="utf-8")
+                with self.subTest(transaction_id=transaction_id):
+                    promote_document(path, workspace, database)
+
+    def test_bound_history_with_long_scope_retains_first_window_contract(self):
+        from kairos.constants import MAX_HEADER_BYTES
+        purpose = "Recover complete verified framework source membership without repeating Apply and preserve native terminal evidence and scope"
+        tx = {"transaction_id":"TXN_"+"a"*24,"state":"POSTCHECK_VERIFIED","purpose":purpose,
+              "baseline_package_sha256":"b"*64,"verified_work_package_sha256":"c"*64,
+              "tx_event_id":"TXE_"+"D"*32,
+              "historical_scope":{"operation":"BIND","scope_status":"BOUND","receipt_sha256":"e"*64}}
+        scope={"workspace_id":"FRAMEWORK_DEVELOPMENT","goal_id":"GOAL_FRAMEWORK_PRODUCT_READINESS_20261025",
+               "milestone_id":"MILESTONE_FRAMEWORK_P0_BASELINE","task_id":"TASK_FRAMEWORK_P0_BOOTSTRAP","loop":1}
+        text=render_transaction_document(transaction=tx,**scope,revision=100,task_reference_exists=True)
+        parsed=split_frontmatter(text)
+        sections=parse_sections(parsed.body,header_bytes=parsed.header_bytes)
+        self.assertLessEqual(parsed.header_bytes,MAX_HEADER_BYTES)
+        self.assertEqual([s.section_id for s in sections],[s[0] for s in SECTION_SPECS])
+        self.assertEqual(len(parsed.metadata["answers"]),6)
+        self.assertEqual(len(parsed.metadata["search_contract"]),2)
+        self.assertEqual(parsed.metadata["task"],scope["task_id"])
+        self.assertEqual(parsed.metadata["tx_event_id"],tx["tx_event_id"])
+        self.assertIn(purpose,parsed.body)
+        self.assertIn("task",parsed.metadata["refs"])
+        self.assertIn("history_method",parsed.metadata["refs"])
+        validate_answer_targets(parsed.metadata,sections)
+
+    def test_bound_history_recycling_hash_and_escaped_utf8_purpose_fit_budget(self):
+        from kairos.constants import MAX_HEADER_BYTES
+        for purpose in ("Complete original purpose "*20, 'ä😀"\n'*80):
+            with self.subTest(purpose=purpose[:20]):
+                tx={"transaction_id":"TXN_"+"a"*24,"state":"POSTCHECK_VERIFIED","purpose":purpose,
+                    "baseline_package_sha256":"b"*64,"verified_work_package_sha256":"c"*64,
+                    "tx_event_id":"TXE_"+"D"*32,
+                    "historical_scope":{"operation":"BIND","scope_status":"BOUND","receipt_sha256":"e"*64},
+                    "recycling":{"status":"REVIEWED","analysis_sha256":"f"*64,"decisions":[]}}
+                text=render_transaction_document(transaction=tx,workspace_id="FRAMEWORK_DEVELOPMENT",
+                    goal_id="GOAL_FRAMEWORK_PRODUCT_READINESS_20261025",milestone_id="MILESTONE_FRAMEWORK_P0_BASELINE",
+                    task_id="TASK_FRAMEWORK_P0_BOOTSTRAP",loop=1,revision=100000,task_reference_exists=True)
+                parsed=split_frontmatter(text)
+                sections=parse_sections(parsed.body,header_bytes=parsed.header_bytes)
+                self.assertLessEqual(parsed.header_bytes,MAX_HEADER_BYTES)
+                self.assertEqual(parsed.metadata["recycling_analysis_sha256"],"f"*64)
+                self.assertEqual(parsed.metadata["tx_event_id"],tx["tx_event_id"])
+                self.assertIn(purpose,parsed.body)
+                self.assertEqual(len(parsed.metadata["answers"]),6)
+                self.assertEqual(len(parsed.metadata["search_contract"]),2)
+                self.assertEqual([s.section_id for s in sections],[s[0] for s in SECTION_SPECS])
+                validate_answer_targets(parsed.metadata,sections)
+
     def test_machine_json_is_literal_bounded_data_without_live_external_references(self):
         from kairos.markdown import mask_markdown_code
         from kairos.health import ABSOLUTE_FILE_REFERENCE

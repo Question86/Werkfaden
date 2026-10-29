@@ -23,6 +23,13 @@ from kairos.framework import (  # noqa: E402
     FRAMEWORK_VERSION,
     FRAMEWORK_WORKSPACE_ID,
     framework_database_content_sha256,
+    TOOL_CATALOG_ID,
+    TOOL_CATALOG_PATH,
+    tool_catalog_document,
+    tool_catalog_source_paths,
+    verify_tool_inventory,
+    verify_context_tool_inventory,
+    tool_catalog_definitions,
 )
 from kairos.promoter import promote_many  # noqa: E402
 import kairos.promoter as promoter_module  # noqa: E402
@@ -30,6 +37,23 @@ from kairos.search import search_database  # noqa: E402
 
 BUILD_EPOCH = "2000-01-01T00:00:00Z"
 GOLD_QUERIES: tuple[tuple[str, tuple[str, ...], int], ...] = (
+    ("How do I create tasks, reports and bug records?", ("KAIROS_CONTEXT_TOOLS#s-records",), 1),
+    ("Which command publishes documented work into the database?", ("KAIROS_CONTEXT_TOOLS#s-publication",), 3),
+    (
+        "How can I recover a transaction whose report is missing from search without applying the code again?",
+        ("KAIROS_WORKSPACE_TOOLS#s-recovery",),
+        3,
+    ),
+    (
+        "Welche Werkzeuge helfen bei einer blockierten Transaktion und beim Aufraeumen alter Arbeitskopien?",
+        ("KAIROS_WORKSPACE_TOOLS#s-retention", "KAIROS_WORKSPACE_TOOLS#s-recovery"),
+        3,
+    ),
+    (
+        "How do I find which supported command handles a workspace management problem?",
+        ("KAIROS_WORKSPACE_TOOLS#s-entry",),
+        3,
+    ),
     (
         "How do I query KAIROS rules before a project workspace exists?",
         ("KAIROS_FRAMEWORK_BOOTSTRAP#s-before-project-intake",),
@@ -123,6 +147,27 @@ def materialize_sources(workspace: Path) -> list[Path]:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         paths.append(target)
+    # Introspect the public parser without constructing an engine or executing
+    # operations. Refuse any command/module that has no reviewed routing entry.
+    workshop_source = ROOT / "workshop" / "src"
+    if str(workshop_source) not in sys.path:
+        sys.path.insert(0, str(workshop_source))
+    from runtime_sync_workshop.cli import _parser
+    parser = _parser()
+    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    package = workshop_source / "runtime_sync_workshop"
+    verify_tool_inventory(list(commands.choices), [path.relative_to(package).as_posix()
+                                                for path in sorted(package.rglob("*.py"))])
+    from kairos.cli import build_parser
+    harness_parser = build_parser()
+    harness_commands = next(action for action in harness_parser._actions
+                            if isinstance(action, argparse._SubParsersAction))
+    verify_context_tool_inventory(list(harness_commands.choices))
+    for _, relative, renderer, _ in tool_catalog_definitions():
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(renderer(FRAMEWORK_WORKSPACE_ID), encoding="utf-8", newline="\n")
+        paths.append(target)
     return paths
 
 
@@ -206,8 +251,16 @@ def build_once(output: Path) -> dict:
         "database_file": FRAMEWORK_DATABASE_NAME,
         "database_sha256": sha256(output),
         "database_content_sha256": framework_database_content_sha256(output),
-        "document_count": len(documents_manifest),
+        "document_count": len(documents_manifest) + len(tool_catalog_definitions()),
         "documents": documents_manifest,
+        "generated_documents": [{
+            "path": relative,
+            "artifact_id": artifact_id,
+            "sha256": hashlib.sha256(renderer(FRAMEWORK_WORKSPACE_ID).encode("utf-8")).hexdigest(),
+            "authority": "routing",
+            "source_bindings": [{"path": source, "sha256": sha256(ROOT / source)}
+                                for source in source_paths()],
+        } for artifact_id, relative, renderer, source_paths in tool_catalog_definitions()],
         "gold_queries": gold_results,
         "build_epoch": BUILD_EPOCH,
         "derived": True,
@@ -241,6 +294,8 @@ def main() -> int:
                 raise SystemExit("framework DB content is not deterministic")
             if [item["sha256"] for item in second_manifest["documents"]] != [item["sha256"] for item in manifest["documents"]]:
                 raise SystemExit("framework document inventory changed between deterministic builds")
+            if second_manifest["generated_documents"] != manifest["generated_documents"]:
+                raise SystemExit("framework generated routing sources changed between deterministic builds")
     compared_database = None
     if args.compare_content_with:
         compared_database = Path(args.compare_content_with).resolve()

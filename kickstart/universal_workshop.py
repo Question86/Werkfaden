@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .binding import _resolve_include_closure
+from .binding import _resolve_include_closure, _auxiliary_name
 from .errors import KickstartError
 from .portable import portable_path, portable_probe_argv, reject_link_components
 from .survey import compiler_context_sha256, compiler_probe_argv, survey_compile_commands
@@ -279,6 +279,7 @@ def prepare_universal_workshop_binding(
     milestone_id: str,
     task_id: str,
     updated_at: str,
+    auxiliary_documents: dict[str, bytes] | None = None,
 ) -> UniversalWorkshopBinding:
     project_root = Path(project_root)
     reject_link_components(project_root, label="project root")
@@ -286,6 +287,19 @@ def prepare_universal_workshop_binding(
     workspace = Path(workspace)
     reject_link_components(workspace, label="KAIROS workspace")
     workspace = workspace.resolve()
+    initial_auxiliary = dict(auxiliary_documents or {})
+    auxiliary_names = set()
+    for name, raw in initial_auxiliary.items():
+        _auxiliary_name(name)
+        if name.casefold() in auxiliary_names:
+            raise KickstartError("AUXILIARY_DOCUMENT_DUPLICATE", "auxiliary snapshot filenames collide portably")
+        auxiliary_names.add(name.casefold())
+        if not isinstance(raw, bytes):
+            raise KickstartError("AUXILIARY_DOCUMENT_INVALID", "auxiliary snapshots must contain exact bytes")
+        try:
+            raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise KickstartError("AUXILIARY_DOCUMENT_INVALID", "auxiliary snapshot must be UTF-8 Markdown") from exc
     c_survey, headers, edge_payload = _c_family_evidence(project_root, compile_commands)
     header_owners = {relative: sorted(owners) for relative, (_, owners) in headers.items()}
 
@@ -316,6 +330,8 @@ def prepare_universal_workshop_binding(
     for relative, text in rendered.items():
         if relative.startswith("code/"):
             _atomic_text(blueprint_root / Path(relative).name, text)
+    for name, raw in sorted(initial_auxiliary.items()):
+        _atomic_bytes(blueprint_root / name, raw)
 
     source_paths = [source.relative_path for source in survey.sources]
     membership_path = intake_dir / "PROJECT_SOURCE_AUTHORITY.cmake"
@@ -403,8 +419,8 @@ def prepare_universal_workshop_binding(
         "translation_unit_include_variants": include_variants,
         "translation_unit_compiler_probes": compiler_probes,
         "expected_translation_units": len(source_paths),
-        "blueprint_ignore": [],
-        "auxiliary_documents": [],
+        "blueprint_ignore": sorted(initial_auxiliary),
+        "auxiliary_documents": sorted(initial_auxiliary),
         "machine_authority_files": sorted(machine_authorities),
         "header_extensions": sorted(C_HEADER_SUFFIXES),
         "additional_header_owners": {},

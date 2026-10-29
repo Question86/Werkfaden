@@ -184,6 +184,8 @@ def _parser() -> argparse.ArgumentParser:
     if "tx-recycle-inspect" not in sub.choices:
         command = sub.add_parser("tx-recycle-inspect", help="hash exact changed TX files and create a decision-proposal template")
         command.add_argument("transaction_id")
+        command.add_argument("--chunk-index", type=int, default=None, help="inspect one deterministic bounded page; omit for the global completion proposal")
+        command.add_argument("--chunk-size", type=int, default=512, help="maximum decisions in the next page, from1 through512; reduce if the source byte budget refuses it")
     if "tx-recycle-submit" not in sub.choices:
         command = sub.add_parser("tx-recycle-submit", help="validate full recycling coverage, preserve bytes and promote an evidence-bound TX report")
         command.add_argument("transaction_id")
@@ -196,6 +198,14 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("transaction_id")
         command.add_argument("--reason", required=True)
 
+
+    command = sub.add_parser("policy-checkout", help="stage an exact reviewed monotone runtime-policy plan under a native lease")
+    command.add_argument("--profile", required=True, choices=("mandatory-runtime/v1",))
+    command.add_argument("--expected-plan-sha256", required=True)
+    command.add_argument("--purpose", required=True)
+    for operation in ("prepare", "verify", "apply", "recover", "abort"):
+        command = sub.add_parser("policy-" + operation, help="native runtime-policy " + operation)
+        command.add_argument("transaction_id")
 
     return parser
 
@@ -223,25 +233,35 @@ def _require_guardian_checkout(engine: WorkshopEngine, arguments: argparse.Names
 
 def execute(arguments: argparse.Namespace) -> dict:
     engine = WorkshopEngine(Path(arguments.config))
-    guard = engine.guardian()
     command = arguments.command
+    # Inspection is not a Guardian session. Each explicit session operation
+    # obtains its owner only when used; native write/checkout gates stay intact.
+
+    if command == "policy-checkout":
+        return engine.policy_checkout(arguments.profile, expected_plan_sha256=arguments.expected_plan_sha256,
+                                      purpose=arguments.purpose)
+    policy_operations = {"policy-prepare": engine.policy_prepare, "policy-verify": engine.policy_verify,
+                         "policy-apply": engine.policy_apply, "policy-recover": engine.policy_recover,
+                         "policy-abort": engine.policy_abort}
+    if command in policy_operations:
+        return policy_operations[command](arguments.transaction_id)
 
     if command == "guard-start":
-        return guard.start(
+        return engine.guardian().start(
             problem=arguments.problem,
             memory_file=Path(arguments.memory_file),
             memory_selectors=arguments.memory_ref,
             package_sha256=engine._verified_package(require_seal=True),
         )
     if command == "guard-enter":
-        return guard.enter_state(
+        return engine.guardian().enter_state(
             arguments.guardian_id,
             step=arguments.step,
             memory_selectors=arguments.memory_ref,
             package_sha256=engine._verified_package(require_seal=True),
         )
     if command == "guard-step":
-        return guard.advance(
+        return engine.guardian().advance(
             arguments.guardian_id,
             step=arguments.step,
             summary=arguments.summary,
@@ -252,9 +272,9 @@ def execute(arguments: argparse.Namespace) -> dict:
             scope_contract=_scope_file(getattr(arguments, "scope_file", "")),
         )
     if command == "guard-status":
-        return guard.status(arguments.guardian_id, full=arguments.full)
+        return engine.guardian().status(arguments.guardian_id, full=arguments.full)
     if command == "guard-reframe":
-        return guard.reframe(
+        return engine.guardian().reframe(
             arguments.guardian_id,
             target=arguments.target,
             reason=arguments.reason,
@@ -262,13 +282,13 @@ def execute(arguments: argparse.Namespace) -> dict:
             package_sha256=engine._verified_package(require_seal=True),
         )
     if command == "guard-patch-close":
-        return guard.patch_close(
+        return engine.guardian().patch_close(
             arguments.guardian_id,
             state_ticket_id=arguments.state_ticket,
             package_sha256=engine._verified_package(require_seal=True),
         )
     if command == "guard-fresh-run":
-        return guard.fresh_run(
+        return engine.guardian().fresh_run(
             arguments.guardian_id,
             receipt_file=Path(arguments.receipt_file),
             state_ticket_id=arguments.state_ticket,
@@ -300,7 +320,7 @@ def execute(arguments: argparse.Namespace) -> dict:
     if command == "tx-space-audit":
         return engine.transaction_storage_audit()
     if command == "tx-recycle-inspect":
-        return engine.inspect_recycling(arguments.transaction_id)
+        return engine.inspect_recycling(arguments.transaction_id, chunk_index=arguments.chunk_index, chunk_size=arguments.chunk_size)
     if command == "tx-recycle-submit":
         return engine.submit_recycling(arguments.transaction_id, Path(arguments.analysis))
     if command == "tx-recycle-drain":
@@ -346,7 +366,7 @@ def execute(arguments: argparse.Namespace) -> dict:
         source_set = UniversalSourceSetMigration(engine)
         if not guardian_id:
             return source_set.checkout(purpose=arguments.purpose)
-        status = guard.status(guardian_id, full=True)
+        status = engine.guardian().status(guardian_id, full=True)
         request = (((status.get("patch_session") or {}).get("available") or {}).get("source_set") or {"operations": []})
         with engine.guardian_transaction(
             guardian_id=guardian_id,
@@ -365,7 +385,7 @@ def execute(arguments: argparse.Namespace) -> dict:
                 compile_commands=Path(arguments.compile_commands),
                 purpose=arguments.purpose,
             )
-        status = guard.status(guardian_id, full=True)
+        status = engine.guardian().status(guardian_id, full=True)
         request = (((status.get("patch_session") or {}).get("available") or {}).get("authority") or {"add_headers": [], "remove_headers": []})
         with engine.guardian_transaction(
             guardian_id=guardian_id,

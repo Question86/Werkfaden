@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from kairos.cli import build_parser, execute
@@ -16,6 +18,172 @@ from kairos.util import atomic_write_json, atomic_write_text, utc_now
 from kairos.workspace import database_path
 
 from support import WorkspaceTestCase
+
+
+class LivePolicyStatusTests(WorkspaceTestCase):
+    def pool(self, enabled=False, count=30, trigger=9):
+        return dict(schema="werkfaden-tx-recycling-pool/v1", enabled=enabled,
+                    required=enabled and count >= trigger, materialized_count=count,
+                    trigger_at=trigger, target_max=trigger-1,
+                    need_to_retire=max(0, count-trigger+1) if enabled else 0,
+                    active_lease=None, rows=[],
+                    next_action="TX_RECYCLING_DISABLED" if not enabled else
+                                "TX_RECYCLING_REQUIRED" if count >= trigger else "NORMAL_WORK_ALLOWED")
+
+    def config(self, values):
+        path = self.workspace / '.kairos/workshop.config.json'
+        atomic_write_json(path, values)
+        return path
+
+    def cache(self, pool):
+        value = {k: pool[k] for k in ('required', 'materialized_count', 'trigger_at',
+                                     'target_max', 'need_to_retire', 'next_action')}
+        value['schema'] = 'werkfaden-tx-recycling-frontier/v1'
+        atomic_write_json(self.workspace / '.kairos/tx_recycling_frontier.json', value)
+        return value
+
+    def observe(self, pool):
+        from kairos.recycling_bridge import live_recycling_status
+        factory = lambda path: SimpleNamespace(config=SimpleNamespace(raw=json.loads(path.read_text(encoding='utf-8'))))
+        with patch('kairos.recycling_bridge._workshop_imports', return_value=(factory, lambda engine, publish: pool)):
+            return live_recycling_status(self.workspace)
+
+    def test_disabled_or_absent_flags_never_become_normal_work(self):
+        cases = ({}, {'transaction_documents_required': False, 'tx_retention_required': False},
+                 {'transaction_documents_required': True, 'tx_retention_required': False})
+        for raw in cases:
+            with self.subTest(raw=raw):
+                self.config(raw); pool = self.pool(); self.cache(pool)
+                before = {p: p.read_bytes() for p in self.workspace.rglob('*') if p.is_file()}
+                result = self.observe(pool)
+                after = {p: p.read_bytes() for p in self.workspace.rglob('*') if p.is_file()}
+                self.assertEqual(before, after)
+                self.assertTrue(result['available'])
+                self.assertEqual(result['policy_state'], 'INACTIVE')
+                self.assertEqual(result['next_action'], 'TX_POLICY_ACTIVATION_REQUIRED')
+                self.assertTrue(result['policy_activation_required'])
+                self.assertTrue(result['cached_frontier_fresh'])
+                self.assertFalse(result['required'])  # Native capacity admission remains distinct.
+                for field in ('transaction_documents_required', 'tx_retention_required'):
+                    self.assertEqual(result['policy'][field]['present'], field in raw)
+                self.assertIn('sealed-policy migration', result['policy_activation_boundary'])
+
+    def test_invalid_or_incompatible_policy_is_unverified(self):
+        for raw in ({'tx_retention_required': True},
+                    {'tx_retention_required': True, 'transaction_documents_required': False},
+                    *({'tx_retention_required': value} for value in (None, 0, 1, 'true', [], {})),
+                    {'transaction_documents_required': 'false'}):
+            with self.subTest(raw=raw):
+                self.config(raw)
+                result = self.observe(self.pool(enabled=raw.get('tx_retention_required') is True))
+                self.assertFalse(result['available'])
+                self.assertEqual(result['policy_state'], 'UNVERIFIED')
+                self.assertTrue(result['reconciliation_required'])
+                self.assertEqual(result['next_action'], 'TX_POLICY_UNVERIFIED')
+                self.assertIn('TX_POLICY_INVALID', result['reason'])
+
+    def test_epoch_binds_policy_bytes_and_native_capacity_without_stale_cache_claims(self):
+        self.config({}); pool = self.pool(); self.cache(pool)
+        initial = self.observe(pool)
+        self.config({'transaction_documents_required': True})
+        policy_change = self.observe(pool)
+        self.assertNotEqual(initial['source_epoch'], policy_change['source_epoch'])
+        capacity_change = self.observe(self.pool(trigger=10))
+        self.assertNotEqual(policy_change['source_epoch'], capacity_change['source_epoch'])
+        self.assertFalse(capacity_change['cached_frontier_fresh'])
+        self.assertTrue(capacity_change['reconciliation_required'])
+        path = self.workspace / '.kairos/tx_recycling_frontier.json'
+        for malformed in ('[]', 'null', '{broken'):
+            atomic_write_text(path, malformed)
+            self.assertFalse(self.observe(pool)['cached_frontier_fresh'])
+        cached = self.cache(pool); cached['required'] = 0
+        atomic_write_json(path, cached)
+        self.assertFalse(self.observe(pool)['cached_frontier_fresh'])
+
+    def test_active_policy_observes_native_pressure_and_missing_package(self):
+        self.config({'transaction_documents_required': True, 'tx_retention_required': True})
+        for count in (0, 9):
+            with self.subTest(count=count):
+                pool = self.pool(enabled=True, count=count); self.cache(pool)
+                result = self.observe(pool)
+                self.assertEqual(result['policy_state'], 'ACTIVE')
+                self.assertEqual(result['required'], count == 9)
+                self.assertFalse(result['policy_activation_required'])
+                self.assertEqual(result['next_action'], 'tx-recycle-inspect or tx-recycle-drain'
+                                 if count == 9 else 'NORMAL_WORK_ALLOWED')
+        from kairos.recycling_bridge import live_recycling_status
+        with patch('kairos.recycling_bridge._workshop_imports', side_effect=ImportError('unavailable')):
+            result = live_recycling_status(self.workspace)
+        self.assertFalse(result['available'])
+        self.assertNotEqual(result['next_action'], 'NORMAL_WORK_ALLOWED')
+
+    def test_malformed_native_pool_never_becomes_normal_work(self):
+        self.config({'transaction_documents_required': True, 'tx_retention_required': True})
+        for key, value in (('schema', 'unknown'), ('required', []), ('materialized_count', '30'),
+                           ('trigger_at', True), ('target_max', 99), ('rows', None), ('rows', [{}]),
+                           ('active_lease', 1), ('next_action', 'unrecognized')):
+            pool = self.pool(enabled=True); pool[key] = value
+            with self.subTest(key=key, value=value):
+                result = self.observe(pool)
+                self.assertFalse(result['available'])
+                self.assertTrue(result['reconciliation_required'])
+                self.assertIn('TX_POOL_UNVERIFIED', result['reason'])
+                self.assertNotEqual(result['next_action'], 'NORMAL_WORK_ALLOWED')
+
+    def test_config_race_is_not_a_verified_live_observation(self):
+        from kairos.recycling_bridge import live_recycling_status
+        self.config({}); pool = self.pool(); self.cache(pool)
+        factory = lambda path: SimpleNamespace(config=SimpleNamespace(raw=json.loads(path.read_text(encoding='utf-8'))))
+        def mutate(engine, publish):
+            self.config({'transaction_documents_required': True})
+            return pool
+        with patch('kairos.recycling_bridge._workshop_imports', return_value=(factory, mutate)):
+            result = live_recycling_status(self.workspace)
+        self.assertFalse(result['available'])
+        self.assertIn('TX_POLICY_CHANGED', result['reason'])
+        self.assertNotIn('source_epoch', result)
+
+    def test_real_native_observation_does_not_initialize_control_state(self):
+        from kairos.recycling_bridge import live_recycling_status
+        from runtime_sync_workshop.engine import WorkshopEngine
+        # Loader-valid observation fixture only; no source/compiler seal is asserted.
+        raw = dict(schema='runtime-sync-workshop-config/v1',
+                   codebase_root=str(self.workspace), runtime_root=str(self.workspace),
+                   cmake_file=str(self.workspace / 'AGENTS.md'),
+                   dataflow_index=str(self.workspace / 'AGENTS.md'),
+                   blueprint_root=str(self.workspace / 'code'),
+                   managed_blueprint_root=str(self.workspace / 'code'),
+                   kairos_workspace=str(self.workspace),
+                   kairos_harness=str(Path(__file__).resolve().parents[1]),
+                   kairos_database=str(self.workspace / '.kairos/kairos.db'),
+                   state_directory='observer_control_state', transaction_directory='observer_transactions')
+        self.config(raw)
+        state = self.workspace / '.kairos/observer_control_state'
+        transactions = self.workspace / '.kairos/observer_transactions'
+        self.assertFalse(state.exists()); self.assertFalse(transactions.exists())
+        before = {p.relative_to(self.workspace).as_posix(): p.read_bytes() if p.is_file() else None
+                  for p in self.workspace.rglob('*')}
+        with patch.object(WorkshopEngine, '__init__', side_effect=AssertionError('writer constructor forbidden')):
+            result = live_recycling_status(self.workspace)
+        self.assertTrue(result['available'], result)
+        self.assertEqual(result['policy_state'], 'INACTIVE')
+        self.assertEqual(result['materialized_count'], 0)
+        self.assertFalse(state.exists()); self.assertFalse(transactions.exists())
+        after = {p.relative_to(self.workspace).as_posix(): p.read_bytes() if p.is_file() else None
+                 for p in self.workspace.rglob('*')}
+        self.assertEqual(before, after)
+
+    def test_session_status_reads_policy_guidance_and_old_workspace_fallback(self):
+        from kairos.heartbeat import status_report
+        self.config({}); pool = self.pool(); self.cache(pool)
+        factory = lambda path: SimpleNamespace(config=SimpleNamespace(raw=json.loads(path.read_text(encoding='utf-8'))))
+        with patch('kairos.recycling_bridge._workshop_imports', return_value=(factory, lambda engine, publish: pool)):
+            result = status_report(self.workspace)
+            self.assertEqual(result['tx_recycling_live']['next_action'], 'TX_POLICY_ACTIVATION_REQUIRED')
+            self.assertEqual(result['next_required_read'], 'docs/KAIROS_WORKSPACE_TOOLS.md#s-retention')
+            (self.workspace / 'docs/KAIROS_WORKSPACE_TOOLS.md').unlink()
+            result = status_report(self.workspace)
+            self.assertEqual(result['next_required_read'], '_LOOP_GATE.md#s-verdict')
 
 
 class HeartbeatFinalizationTests(WorkspaceTestCase):

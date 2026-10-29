@@ -1,11 +1,11 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "ffe1584d012b4de5d6198a142036b4a043bad3a70ebac8e7bbe3887a66670318",
+  "database_content_sha256": "178e733cded8435e26e31f0c215836829b643af912f03eb6741fa8e7aaea3a28",
   "database_file": "framework.db",
-  "database_sha256": "59fbd6ef4b0e0517b8f5427b143e1775e169f699f5e90359a84fabc11fcb6fff",
+  "database_sha256": "2f1735171a2f3e88e60c51620ce6ea5c4d2faf21e0a4395f91f29e1ebb26cc92",
   "derived": true,
-  "document_count": 25,
+  "document_count": 27,
   "documents": [
     {
       "artifact_id": "KAIROS_FRAMEWORK_RULES",
@@ -20,7 +20,7 @@
     {
       "artifact_id": "KAIROS_README",
       "path": "README.md",
-      "sha256": "0bf4e6e7ed248ab494cce18540b4a80d27492d63118e1a0df179d0a66499926f"
+      "sha256": "8f2df87a01d7cb2c6325c67c25a066a7e900f2c81fa0540c7fc06c9ed177e25b"
     },
     {
       "artifact_id": "KAIROS_ARCHITECTURE",
@@ -50,7 +50,7 @@
     {
       "artifact_id": "KAIROS_KNOWN_LIMITATIONS",
       "path": "docs/KNOWN_LIMITATIONS.md",
-      "sha256": "3a8de9c7595cc63dd6d89d20e9fa72b6ca2bc15357e53c255827fb1194edfa09"
+      "sha256": "0d0f306251af40ab11daa196c402590b7b7273205f7c29197717cec53a35e9a6"
     },
     {
       "artifact_id": "KAIROS_LOOP_PROCEDURE",
@@ -133,7 +133,262 @@
       "sha256": "9a6defc711691dbe485fb68807382eaf40876b67fcec724836ede7c5e390171e"
     }
   ],
+  "generated_documents": [
+    {
+      "artifact_id": "KAIROS_WORKSPACE_TOOLS",
+      "authority": "routing",
+      "path": "docs/KAIROS_WORKSPACE_TOOLS.md",
+      "sha256": "f43c25ce336846df22f014678238a0f11da99d9fd20cc68eeac0f2aa81d2dfb6",
+      "source_bindings": [
+        {
+          "path": "kairos/kairos_harness/kairos/framework.py",
+          "sha256": "7ead48b2f887d59ab9be0884cbfc022a41a627c6d1ee382d320e7e4baa4b0283"
+        },
+        {
+          "path": "kairos/kairos_harness/kairos/query.py",
+          "sha256": "7720d93ac44c43252a563d9b24506620435c67a27c63089398a128e4923152db"
+        },
+        {
+          "path": "kairos/kairos_harness/kairos/search.py",
+          "sha256": "17bb3d1f8981f9d7e11adafbe7aa7a672aff15203bf8f93317727f09e5167cea"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/__init__.py",
+          "sha256": "b9dc6e13fb4a441970d005e9890fa8581e1ca29eb28919b71c9758aeb8b6999d"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/__main__.py",
+          "sha256": "e014c07c71c5daede3fe8520fd696eaaed07cb19d77c01c14147273d0f9ed71b"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_cli_core_v1.py",
+          "sha256": "d37c60bb305cfcdfeacc997da7871b0bca57a407b4dda33faeb0bb0dec0c7aa6"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_cli_implementation.py",
+          "sha256": "9e1ef92545420fcce0a7a96ce2027c6d411fe386b0ae0d42c41b5210f9b95d67"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_apply.py",
+          "sha256": "b126f482a887d58777405e213a60f74d1e55ec01953d81c139c37ed4857e56a4"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_checkout.py",
+          "sha256": "5c1ce547076c95ca98158a0f506d95338d7034873890f4086cfbdcceedb98e8a"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_contract.py",
+          "sha256": "e8990cf4bc868a480f6bdce86a1c52dc1b47dc5a98e90f61fee768a5f08537cc"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_metadata.py",
+          "sha256": "aa3e6eb811bd7889837deffc12ead719399b712a7a2ad33a1dd52e01cb1727e9"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_prepare.py",
+          "sha256": "f06706cbb8060e5469c1800ecc3c08b0522a29fff98e89e77daca6864e2a18d2"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_recovery.py",
+          "sha256": "6cd050f62a39e608153e71e67093267def83e35413b45a8a3a802cff652446d4"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_scientific.py",
+          "sha256": "a95e7509173f46ec4b351fbb8dd603564fe462632e912014f102c064135a310d"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_state.py",
+          "sha256": "a4dce48c96e98fac7e16dfffd382c9965f24a79e30816834974609dc0f88a1b0"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_core_verify.py",
+          "sha256": "c0a54d217bcefd831ee7ce3ce4423271b6c6f5e2aa3ff7a08e206daff0178bce"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_engine_core_v1.py",
+          "sha256": "c78df9cb6ae08b9c1a8728c438b03cb734560e41b2cff83216ffa5ccc3431e97"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/_engine_implementation.py",
+          "sha256": "e74be9fc8b6f957ee81774bd6a7863f909443f1ae4b86605f6c98a4672046250"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/auxiliary.py",
+          "sha256": "655decf1ad9402fadf63e3dc80132873e846db3012ca2d52dbbb7e9bf93a3645"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/blueprint.py",
+          "sha256": "d4ec4ced031da20908ce62d9a72ab51038ca9baddc7754f35f2fbc03cc9bda85"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/cli.py",
+          "sha256": "1f306749673b4ac0c550d969a396c720587f82897fd0e37a0a27ebbe4bd612cf"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/context_documents.py",
+          "sha256": "9683d577b36c5c691dcf6215fbe20546b1ed160a8a97d1c1be1ecc446f95bedc"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/corpus.py",
+          "sha256": "9fe11c77d20c12813c5eefaf959cd58c665bf380be4f3db51c4c2240f283826c"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/engine.py",
+          "sha256": "b8b113683249ff888a116191e7f41b32b1b175afe4210e397ddeb5e654fad74c"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian.py",
+          "sha256": "7e3562f6e46c4fe2db3d17f62b3133cf548e2b8e5c15a97256362c4276328a03"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_close.py",
+          "sha256": "4a0b175b5f0260b675856296ed373a626a36cc862424231018c9ecc88f6e72fa"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_common.py",
+          "sha256": "f3ce106c1a137e3b97c41956c40a18c33fdb0fa261aad1033cbf844b9f659fee"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_evidence.py",
+          "sha256": "589b879984152f417f8f30b044aaff765cb61d2629e859f1f88c522e5cdedcbe"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_ledger.py",
+          "sha256": "ac820cf847ab585bac1bfa8b0a33401500f9665331d44bd593ed2cd484167f17"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_patch.py",
+          "sha256": "1c2584caa364b4b75361901036bf7382f1d98a145ade35720f262905720878a5"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_receipts.py",
+          "sha256": "7308646fa54ffcc6bb01bc55c11c404f6f54b9cbf396ca60ce5f9c671e9b03fe"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_state.py",
+          "sha256": "ef6f548cf56979fc05f7b61039c5c02ccffdf776c1ec4a803794b44ae64dfd1c"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/guardian_transaction.py",
+          "sha256": "9166f8fcdaec4f095e37beaf53cdebf93a8bfae852ace158138bb9a9af37cdf7"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/header_blueprint.py",
+          "sha256": "f66cbda3e0a4dcc52b53c1c9927c9cbfc0fd6107edc1bc166166242d04c91bed"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/jev_admission.py",
+          "sha256": "74b4cca157ce209432c831fbebfaf381df4e0eab0282db0f76b23e85533b4f29"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/metadata_gate.py",
+          "sha256": "737913e4359d28247d5e723048561496f5504a18abe45a7dafb021ba01c98d99"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/migration.py",
+          "sha256": "4cab68f2d28e27e59fad5e77bfef65b80fe1c5a47c878d62fb3ce82429e49150"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/repair.py",
+          "sha256": "83a398499113fcc995835c887a8182c98cb2105138092549bb20d8699f8a3ce7"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/scientific.py",
+          "sha256": "9cd9b65fe9ebc234dab047ebb00e47ee8d743443a3bb751adb9ca01ca7d5a56e"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/tx_documents.py",
+          "sha256": "e3c03f89bf4beaba43cfd630706aac3ead1774bfab6618e6bf8ee251896bff60"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/tx_lifecycle.py",
+          "sha256": "a8df329617a41e6b69d9d3e70e74900c90811f32bc006985eaa2efc194f0b82f"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/tx_recycling.py",
+          "sha256": "c5da6103cf9b2864bdfc90988f9055299348bbddea847a333fd6cfbeef555701"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/tx_retention.py",
+          "sha256": "877f2f170d085d528df756ce40bb234d0a6584fbabb223c8165ea09310226b24"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/universal_migration.py",
+          "sha256": "16a9a60da0d336fccfc77691fbddc965c370d4b4826fce30241423d9940c534c"
+        },
+        {
+          "path": "workshop/src/runtime_sync_workshop/util.py",
+          "sha256": "88bdc6364a26dff3f50a3acf1eb79844cf7bb9d15b5d688ef060590fba40f121"
+        }
+      ]
+    },
+    {
+      "artifact_id": "KAIROS_CONTEXT_TOOLS",
+      "authority": "routing",
+      "path": "docs/KAIROS_CONTEXT_TOOLS.md",
+      "sha256": "7a31ab6df89b10aa0feafb725f48da49e753feb928f8a1719616bad50ff95526",
+      "source_bindings": [
+        {
+          "path": "kairos/kairos_harness/kairos/framework.py",
+          "sha256": "7ead48b2f887d59ab9be0884cbfc022a41a627c6d1ee382d320e7e4baa4b0283"
+        },
+        {
+          "path": "kairos/kairos_harness/kairos/query.py",
+          "sha256": "7720d93ac44c43252a563d9b24506620435c67a27c63089398a128e4923152db"
+        },
+        {
+          "path": "kairos/kairos_harness/kairos/search.py",
+          "sha256": "17bb3d1f8981f9d7e11adafbe7aa7a672aff15203bf8f93317727f09e5167cea"
+        },
+        {
+          "path": "kairos/kairos_harness/kairos/cli.py",
+          "sha256": "67f1af1c1974695dacb9d1d97ac155e701ab79faeb3d6a4b0f55cc3e453aa4f8"
+        }
+      ]
+    }
+  ],
   "gold_queries": [
+    {
+      "expected": [
+        "KAIROS_CONTEXT_TOOLS#s-records"
+      ],
+      "primary": "KAIROS_CONTEXT_TOOLS#s-records",
+      "query": "How do I create tasks, reports and bug records?",
+      "required_top_k": 1
+    },
+    {
+      "expected": [
+        "KAIROS_CONTEXT_TOOLS#s-publication"
+      ],
+      "primary": "KAIROS_CONTEXT_TOOLS#s-publication",
+      "query": "Which command publishes documented work into the database?",
+      "required_top_k": 3
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSPACE_TOOLS#s-recovery"
+      ],
+      "primary": "KAIROS_WORKSPACE_TOOLS#s-recovery",
+      "query": "How can I recover a transaction whose report is missing from search without applying the code again?",
+      "required_top_k": 3
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSPACE_TOOLS#s-retention",
+        "KAIROS_WORKSPACE_TOOLS#s-recovery"
+      ],
+      "primary": "KAIROS_WORKSPACE_TOOLS#s-retention",
+      "query": "Welche Werkzeuge helfen bei einer blockierten Transaktion und beim Aufraeumen alter Arbeitskopien?",
+      "required_top_k": 3
+    },
+    {
+      "expected": [
+        "KAIROS_WORKSPACE_TOOLS#s-entry"
+      ],
+      "primary": "KAIROS_WORKSPACE_TOOLS#s-entry",
+      "query": "How do I find which supported command handles a workspace management problem?",
+      "required_top_k": 3
+    },
     {
       "expected": [
         "KAIROS_FRAMEWORK_BOOTSTRAP#s-before-project-intake"

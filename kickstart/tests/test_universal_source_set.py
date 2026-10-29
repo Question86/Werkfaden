@@ -222,5 +222,108 @@ class UniversalSourceSetTests(unittest.TestCase):
             self.assertTrue(state["orphan_recovery"]["live_corpus_verified"])
 
 
+    def test_orphan_recovery_preserves_witness_and_never_invents_current_actor_origin(self) -> None:
+        import io
+        import json
+        import sqlite3
+        from contextlib import closing, redirect_stdout
+        from kairos.cli import main
+        from kairos.frontmatter import split_frontmatter
+        from kairos.transaction_document import document_id, document_path
+        from runtime_sync_workshop.tx_documents import assert_projected
+        from unittest.mock import patch
+
+        for with_checkout_witness in (False, True):
+            with self.subTest(with_checkout_witness=with_checkout_witness):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    project = root / "project"
+                    project.mkdir()
+                    source = project / "app.py"
+                    source.write_bytes(b"VALUE = 1\n")
+                    before = source.read_bytes()
+                    intake = initialize_universal_markdown(
+                        project_root=project, workspace=root / "workspace", project_spec=_project_spec(),
+                    )
+                    engine = WorkshopEngine(Path(intake["workshop_config"]))
+                    seal = engine.seal()
+                    migration = UniversalSourceSetMigration(engine)
+                    expected_scope = None
+                    if with_checkout_witness:
+                        class SimulatedProcessExit(BaseException):
+                            pass
+                        saved = {}
+                        native_save = engine._save_transaction
+                        def stop_after_staging(root_path, state, **kwargs):
+                            native_save(root_path, state, **kwargs)
+                            saved["tx"] = state["transaction_id"]
+                            raise SimulatedProcessExit()
+                        with patch.object(engine, "_save_transaction", side_effect=stop_after_staging):
+                            with self.assertRaises(SimulatedProcessExit):
+                                migration.checkout(purpose="Preserve real checkout provenance across interrupted staging")
+                        tx = saved["tx"]
+                        tx_root, staged = engine._load_transaction(tx)
+                        self.assertEqual(staged["state"], "CHECKOUT_STAGING")
+                        expected_scope = staged["original_scope"].copy()
+                        self.assertEqual(expected_scope["task_id"], "TASK_SET_001")
+                        self.assertTrue(engine.lease_path.exists())
+                    else:
+                        tx = "TXN_" + "a" * 24
+                        engine._acquire_lease(tx)
+                        tx_root = engine._transaction_path(tx)
+                        tx_root.mkdir(parents=True)
+                        self.assertFalse((tx_root / "state.json").exists())
+                    current_path = engine.config.kairos_workspace / "current.json"
+                    original_actor = json.loads(current_path.read_text(encoding="utf-8"))
+                    self.assertEqual(original_actor["active_task"], "TASK_SET_001")
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        code = main([
+                            "search", "Which task constrains the next recovery actor?",
+                            "--workspace", str(engine.config.kairos_workspace), "--limit", "1",
+                        ])
+                    self.assertEqual(code, 0, output.getvalue())
+                    output = io.StringIO()
+                    with redirect_stdout(output):
+                        code = main([
+                            "new-task", "--workspace", str(engine.config.kairos_workspace),
+                            "--id", "TASK_RECOVERY_ACTOR", "--goal", original_actor["active_goal"],
+                            "--milestone", original_actor["active_milestone"],
+                            "--title", "Separate native recovery actor",
+                            "--objective", "Recover missing-state orphan without inventing original checkout scope.",
+                        ])
+                    self.assertEqual(code, 0, output.getvalue())
+                    recovery_actor = json.loads(current_path.read_text(encoding="utf-8"))
+                    self.assertEqual(recovery_actor["active_task"], "TASK_RECOVERY_ACTOR")
+                    recovered = migration.recover_orphan_checkout(
+                        tx, expected_sealed_package_sha256=seal["package_sha256"],
+                    )
+                    self.assertEqual(recovered["state"], "ABORTED_ORPHANED_CHECKOUT")
+                    _, state = engine._load_transaction(tx)
+                    self.assertIn("original_scope", state)
+                    self.assertEqual(state["original_scope"], expected_scope)
+                    self.assertIsNone(state.get("historical_scope"))
+                    assert_projected(engine, tx)
+                    metadata = split_frontmatter(
+                        (engine.config.kairos_workspace / document_path(tx)).read_text(encoding="utf-8")
+                    ).metadata
+                    with closing(sqlite3.connect(engine.config.kairos_database)) as connection:
+                        row = connection.execute(
+                            "SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),),
+                        ).fetchone()
+                    self.assertIsNotNone(row)
+                    projected = json.loads(row[0])
+                    self.assertEqual(metadata["scope_status"], "BOUND" if with_checkout_witness else "SCOPE_UNRESOLVED")
+                    expected_task = "TASK_SET_001" if with_checkout_witness else None
+                    self.assertEqual(metadata.get("task"), expected_task)
+                    self.assertEqual(projected.get("task"), expected_task)
+                    self.assertEqual(state["tx_event_id"], metadata["tx_event_id"])
+                    self.assertEqual(state["tx_event_id"], projected["tx_event_id"])
+                    self.assertFalse(engine.lease_path.exists())
+                    self.assertFalse((tx_root / "rollback" / "targets.json").exists())
+                    self.assertEqual(source.read_bytes(), before)
+
+
+
 if __name__ == "__main__":
     unittest.main()

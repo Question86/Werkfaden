@@ -4,6 +4,7 @@ from typing import Any
 
 from .constants import MAX_INDEX_CAPSULE_CHARS
 from .frontmatter import render_frontmatter
+from .references import REF_RE
 from .util import utc_now
 
 
@@ -24,21 +25,29 @@ def pointer(
     return f"[ref:{locator}|{'|'.join(fields)}]"
 
 
+def _capsule(value: str, limit: int = 470) -> str:
+    # Typed pointers belong to body/header refs. Summaries retain the plain
+    # locator so a length bound cannot create a dangling pointer expression.
+    plain = REF_RE.sub(lambda match: match.group(1).split("|", 1)[0].strip(), value)
+    return " ".join(plain.split())[:limit].rstrip()
+
+
 def render_document(metadata: dict[str, Any], title: str, sections: list[dict[str, str]]) -> str:
     index_lines = ["## CONTEXT INDEX", ""]
     for section in sections:
-        summary = " ".join(section["capsule"].split())
+        summary = _capsule(section["capsule"], MAX_INDEX_CAPSULE_CHARS)
         if len(summary) > MAX_INDEX_CAPSULE_CHARS:
             summary = summary[:MAX_INDEX_CAPSULE_CHARS].rstrip()
         index_lines.append(f"- [`{section['id']}`](#{section['id']}) — {summary}")
     body = [f"# {title}", "", *index_lines, ""]
     for section in sections:
+        capsule = _capsule(section["capsule"])
         body.extend(
             [
                 f'<a id="{section["id"]}"></a>',
                 f"## {section['title']}",
                 "",
-                f"> Capsule: {section['capsule']}",
+                f"> Capsule: {capsule}",
                 "",
                 section["content"].strip(),
                 "",
@@ -82,7 +91,7 @@ def task_document(
         "goal": goal_id,
         "milestone": milestone_id,
         "updated_at": updated_at or utc_now(),
-        "capsule": objective[:470],
+        "capsule": _capsule(objective),
         "claim_boundary": "This task defines required work and evidence; it does not prove implementation or acceptance.",
         "entities": [task_id, goal_id, milestone_id, "KAIROS"],
         "facets": ["goal-decomposition", "task-contract", "context-harness"],
@@ -105,7 +114,7 @@ def task_document(
         },
         "search_contract": [
             {
-                "query": f"Which acceptance criteria must {task_id} satisfy?",
+                "query": f"Which acceptance criteria and evidence does {task_id} require?",
                 "expected": f"{task_id}#s-acceptance",
                 "required_top_k": 5,
             }
@@ -216,25 +225,25 @@ def report_document(
         {
             "id": "s-work",
             "title": "WORK PERFORMED",
-            "capsule": work_performed.replace("\n", " ")[:470],
+            "capsule": _capsule(work_performed),
             "content": work_performed,
         },
         {
             "id": "s-evidence",
             "title": "VALIDATION EVIDENCE",
-            "capsule": evidence_text.replace("\n", " ")[:470],
+            "capsule": _capsule(evidence_text),
             "content": evidence_text,
         },
         {
             "id": "s-limitations",
             "title": "LIMITATIONS AND OPEN WORK",
-            "capsule": limitations.replace("\n", " ")[:470],
+            "capsule": _capsule(limitations),
             "content": limitations,
         },
         {
             "id": "s-next",
             "title": "NEXT ACTION",
-            "capsule": next_action.replace("\n", " ")[:470],
+            "capsule": _capsule(next_action),
             "content": next_action,
         },
     ]
@@ -276,7 +285,7 @@ def bug_document(
         "goal": goal_id,
         "milestone": milestone_id,
         "updated_at": utc_now(),
-        "capsule": observation.replace("\n", " ")[:470],
+        "capsule": _capsule(observation),
         "claim_boundary": "This diagnostic explains the freshness risk and required invariant; it does not prove that any particular workspace is stale.",
         "entities": [bug_id, task_id, title],
         "facets": ["root-cause", "impact", "resolution", "regression"],
@@ -309,19 +318,19 @@ def bug_document(
         {
             "id": "s-observation",
             "title": "OBSERVATION",
-            "capsule": observation.replace("\n", " ")[:470],
+            "capsule": _capsule(observation),
             "content": observation,
         },
         {
             "id": "s-impact",
             "title": "IMPACT",
-            "capsule": impact.replace("\n", " ")[:470],
+            "capsule": _capsule(impact),
             "content": impact,
         },
         {
             "id": "s-root-cause",
             "title": "ROOT CAUSE",
-            "capsule": root_cause.replace("\n", " ")[:470],
+            "capsule": _capsule(root_cause),
             "content": root_cause + "\n\nResolution route: "
             + pointer(
                 bug_path,
@@ -335,7 +344,7 @@ def bug_document(
         {
             "id": "s-resolution",
             "title": "RESOLUTION DESIGN",
-            "capsule": resolution.replace("\n", " ")[:470],
+            "capsule": _capsule(resolution),
             "content": resolution + "\n\nRegression evidence route: "
             + pointer(
                 bug_path,
@@ -349,7 +358,7 @@ def bug_document(
         {
             "id": "s-regression",
             "title": "REGRESSION CONTRACT",
-            "capsule": regression.replace("\n", " ")[:470],
+            "capsule": _capsule(regression),
             "content": regression,
         },
     ]
@@ -391,7 +400,7 @@ def code_document(
         "goal": goal_id,
         "milestone": milestone_id,
         "updated_at": utc_now(),
-        "capsule": purpose.replace("\n", " ")[:470],
+        "capsule": _capsule(purpose),
         "claim_boundary": "This document locates and explains implementation surfaces; test results remain separate execution evidence.",
         "entities": [code_id, task_id, title],
         "facets": ["implementation", "interfaces", "invariants", "dependencies", "testing"],
@@ -424,37 +433,37 @@ def code_document(
         {
             "id": "s-purpose",
             "title": "PURPOSE",
-            "capsule": purpose.replace("\n", " ")[:470],
+            "capsule": _capsule(purpose),
             "content": purpose,
         },
         {
             "id": "s-components",
             "title": "COMPONENTS AND SYMBOLS",
-            "capsule": components.replace("\n", " ")[:470],
+            "capsule": _capsule(components),
             "content": components,
         },
         {
             "id": "s-interfaces",
             "title": "INTERFACES",
-            "capsule": interfaces.replace("\n", " ")[:470],
+            "capsule": _capsule(interfaces),
             "content": interfaces,
         },
         {
             "id": "s-invariants",
             "title": "INVARIANTS",
-            "capsule": invariants.replace("\n", " ")[:470],
+            "capsule": _capsule(invariants),
             "content": invariants,
         },
         {
             "id": "s-dependencies",
             "title": "DEPENDENCIES",
-            "capsule": dependencies.replace("\n", " ")[:470],
+            "capsule": _capsule(dependencies),
             "content": dependencies,
         },
         {
             "id": "s-testing",
             "title": "TESTING",
-            "capsule": testing.replace("\n", " ")[:470],
+            "capsule": _capsule(testing),
             "content": testing,
         },
     ]
@@ -497,7 +506,7 @@ def decision_document(
         "goal": goal_id,
         "milestone": milestone_id,
         "updated_at": utc_now(),
-        "capsule": selected.replace("\n", " ")[:470],
+        "capsule": _capsule(selected),
         "claim_boundary": "This record owns the selected project decision and rationale; it does not prove implementation or runtime validation.",
         "entities": [decision_id, task_id, title],
         "facets": ["decision", "tradeoff", "risk", "rollback", "validation"],
@@ -530,43 +539,43 @@ def decision_document(
         {
             "id": "s-question",
             "title": "DECISION QUESTION",
-            "capsule": question.replace("\n", " ")[:470],
+            "capsule": _capsule(question),
             "content": question,
         },
         {
             "id": "s-context",
             "title": "CONTEXT AND CONSTRAINTS",
-            "capsule": context.replace("\n", " ")[:470],
+            "capsule": _capsule(context),
             "content": context,
         },
         {
             "id": "s-options",
             "title": "OPTIONS CONSIDERED",
-            "capsule": options.replace("\n", " ")[:470],
+            "capsule": _capsule(options),
             "content": options,
         },
         {
             "id": "s-decision",
             "title": "SELECTED DECISION",
-            "capsule": selected.replace("\n", " ")[:470],
+            "capsule": _capsule(selected),
             "content": selected,
         },
         {
             "id": "s-rationale",
             "title": "RATIONALE",
-            "capsule": rationale.replace("\n", " ")[:470],
+            "capsule": _capsule(rationale),
             "content": rationale,
         },
         {
             "id": "s-risks",
             "title": "RISKS, REVERSIBILITY, AND ROLLBACK",
-            "capsule": risks.replace("\n", " ")[:470],
+            "capsule": _capsule(risks),
             "content": risks,
         },
         {
             "id": "s-validation",
             "title": "VALIDATION CONTRACT",
-            "capsule": validation.replace("\n", " ")[:470],
+            "capsule": _capsule(validation),
             "content": validation,
         },
     ]
@@ -612,7 +621,7 @@ def research_document(
         "goal": goal_id,
         "milestone": milestone_id,
         "updated_at": utc_now(),
-        "capsule": source_fact[:470],
+        "capsule": _capsule(source_fact),
         "claim_boundary": "The source binding and extracted fact are distinct from model interpretation; independent verification is required before this research can support final completion.",
         "entities": [research_id, task_id, source_kind, source_uri[:160]],
         "facets": ["research", "context-acquisition", normalized_kind],
@@ -661,25 +670,25 @@ def research_document(
         {
             "id": "s-fact",
             "title": "EXTRACTED SOURCE FACT",
-            "capsule": source_fact[:470],
+            "capsule": _capsule(source_fact),
             "content": source_fact,
         },
         {
             "id": "s-interpretation",
             "title": "MODEL INTERPRETATION",
-            "capsule": interpretation[:470],
+            "capsule": _capsule(interpretation),
             "content": interpretation,
         },
         {
             "id": "s-contradictions",
             "title": "CONTRADICTIONS AND EXCLUDED BRANCHES",
-            "capsule": contradictions[:470],
+            "capsule": _capsule(contradictions),
             "content": contradictions,
         },
         {
             "id": "s-next-query",
             "title": "NEXT QUERY",
-            "capsule": next_query[:470],
+            "capsule": _capsule(next_query),
             "content": next_query,
         },
     ]

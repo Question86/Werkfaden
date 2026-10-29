@@ -158,12 +158,17 @@ def initialize_universal_markdown(
     compile_commands: Path | None = None,
     workspace_id: str | None = None,
     project_spec: dict[str, Any] | None = None,
+    auxiliary_documents: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     """Create and Workshop-bind the initial exact Markdown layer.
 
     Initial derivation is the sole non-Workshop Markdown creation phase. The governed
     project is read-only throughout. After the returned corpus is sealed, all governed
     source/Markdown mutations belong to Workshop transactions.
+
+    auxiliary_documents selects exact initial read-only Markdown inputs, never
+    inferred source membership. The generated declaration document records their
+    initial hashes; later Auxiliary content remains owned by native transactions.
     """
     (
         issue_external_edit_permit,
@@ -183,11 +188,11 @@ def initialize_universal_markdown(
     workspace = Path(workspace)
     reject_link_components(workspace, label="KAIROS workspace")
     workspace = workspace.resolve()
+    from .binding import _assert_initial_binding_absent, _read_auxiliary_documents, _document_initial_auxiliary
+    _assert_initial_binding_absent(workspace)
     if not project_root.is_dir():
         raise KickstartError("PROJECT_ROOT_INVALID", f"project_root is not a directory: {project_root}")
-    if (workspace / ".kairos" / "universal-intake.json").exists():
-        raise KickstartError("PROJECT_ALREADY_BOUND", "workspace already contains universal intake provenance")
-
+    initial_auxiliary = None
     if not (workspace / ".kairos" / "config.json").is_file():
         if workspace.exists() and any(workspace.iterdir()):
             raise KickstartError("WORKSPACE_NOT_FRESH", f"workspace is not a KAIROS workspace and is not empty: {workspace}")
@@ -197,6 +202,7 @@ def initialize_universal_markdown(
             goal, milestone, task, selected_criteria, _ = validate_project_kickoff_contract(project_spec)
         except Exception as exc:
             raise KickstartError("PROJECT_INTENT_INVALID", str(exc)) from exc
+        initial_auxiliary = _read_auxiliary_documents(auxiliary_documents)
         derived_id = workspace_id or f"KAIROS_PROJECT_{hashlib.sha256(project_root.as_posix().encode('utf-8')).hexdigest()[:12].upper()}"
         initialize_project_workspace(
             workspace,
@@ -208,6 +214,8 @@ def initialize_universal_markdown(
         )
 
     workspace_id_actual, goal_id, milestone_id, task_id = _workspace_scope(workspace, load_config, read_json)
+    if initial_auxiliary is None:
+        initial_auxiliary = _read_auxiliary_documents(auxiliary_documents)
     if workspace_id is not None and _safe_workspace_id(workspace_id) != workspace_id_actual:
         raise KickstartError("WORKSPACE_ID_MISMATCH", f"workspace already declares {workspace_id_actual!r}, not {workspace_id!r}")
 
@@ -221,6 +229,7 @@ def initialize_universal_markdown(
         task_id=task_id,
         updated_at=updated_at,
     )
+    base_documents = _document_initial_auxiliary(base_documents, initial_auxiliary)
     binding = prepare_universal_workshop_binding(
         project_root=project_root,
         workspace=workspace,
@@ -232,6 +241,7 @@ def initialize_universal_markdown(
         milestone_id=milestone_id,
         task_id=task_id,
         updated_at=updated_at,
+        auxiliary_documents=initial_auxiliary,
     )
     documents = binding.documents
     machine_root = binding.config_path.parent.resolve()
@@ -275,6 +285,11 @@ def initialize_universal_markdown(
             "project_root was read-only during initial derivation. After seal, governed source, build files and Markdown may advance only through verified Workshop transactions."
         ),
     }
+    if initial_auxiliary:
+        intake["initial_auxiliary_documents"] = [
+            {"filename": name, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+            for name, raw in initial_auxiliary.items()
+        ]
     atomic_write_json(workspace / ".kairos" / "universal-intake.json", intake)
 
     heartbeat = run_heartbeat(

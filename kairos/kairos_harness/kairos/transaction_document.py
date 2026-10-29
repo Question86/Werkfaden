@@ -16,15 +16,18 @@ from .util import utc_now
 
 HISTORY_METHOD_ID = "WERKFADEN_TRANSACTION_HISTORY_METHOD"
 HISTORY_METHOD_PATH = "docs/HISTORICAL_TRANSACTION_SCOPE.md"
+HISTORY_METHOD_INSTANCE_TIMESTAMP_POLICY = 'For a fixed workspace and method revision, updated_at is the only instance-owned header variance accepted by the canonical matcher. It must come from the existing native artifact metadata, and the whole document must equal the current renderer for that exact timestamp with a matching artifact path, content hash and reconciled projection. Unpublished timestamp edits, other metadata/body drift and older method revisions are refused. Timestamp variance never grants a new publication permit or rewrites the live method.'
 
 
-def render_history_contract(workspace_id: str) -> str:
-    """One canonical, project-neutral method per governed workspace."""
+def render_history_contract(workspace_id: str, *, updated_at: str | None = None) -> str:
+    """One workspace-bound policy; only a proven native instance may supply its timestamp."""
+    if updated_at is not None and (not isinstance(updated_at, str) or not 1 <= len(updated_at) <= 128):
+        raise ValueError("canonical history method timestamp must be a bounded string")
     metadata = {
         "schema": "kairos-context/v1", "id": HISTORY_METHOD_ID, "type": "documentation",
-        "revision": 1, "state": "active", "authority": "operating_contract", "workspace": workspace_id,
-        "route": workspace_id + "/" + HISTORY_METHOD_ID, "updated_at": "2026-10-25T00:00:00Z",
-        "capsule": "Canonical protocol for explicit historical transaction intake, evidence-bound scope assignment and safe projection recovery.",
+        "revision": 4, "state": "active", "authority": "operating_contract", "workspace": workspace_id,
+        "route": workspace_id + "/" + HISTORY_METHOD_ID, "updated_at": updated_at if updated_at is not None else "2026-10-29T00:00:00Z",
+        "capsule": "Canonical historical intake with verified-origin or quarantine-only old-anchor admission, separate binding and exact recovery.",
         "claim_boundary": "Framework method only; no transaction provenance, project success, historical execution, provider attestation or deployment is certified by this document.",
         "entities": [HISTORY_METHOD_ID, "tx-scope-inspect", "tx-history-intake", "tx-scope-bind"],
         "facets": ["transaction-history", "legacy-intake", "scope-provenance"], "criteria": [],
@@ -43,6 +46,15 @@ def render_history_contract(workspace_id: str) -> str:
         {"id": "s-recovery", "title": "RECOVERY", "capsule": "Reconcile the persisted event without applying code again or renewing mutation authority.",
          "content": "Intake and binding require a technically terminal, unleased TX and the retention writer lock. Outbox staging precedes the state commit. If publication fails after the state is saved, retry the exact operation with the same inspected hash and explanation, or use `tx-document-reconcile TX`. Do not repeat Apply. A committed operation has one event identity; replay does not create a new event or false document revision. Explicitly adopted history keeps its projection obligation for later annotations and compaction even under a legacy optional default. Pending mandatory documentation blocks new checkout. Conflict quarantine is retained until historical evidence is consistent; it never transfers ownership to the active Task."},
     ]
+    metadata["entities"].extend(["werkfaden-tx-legacy-event-admission/v1", "werkfaden-tx-legacy-event-admission/v2"])
+    metadata["facets"].extend(["legacy-event-format", "unattested-material-boundary"])
+    metadata["answers"].append({"intent": "workflow", "question": "How are pre-material-epoch transaction event anchors migrated?", "target": "s-workflow"})
+    metadata["search_contract"].append({"query": "How are pre-material-epoch transaction event anchors migrated?", "expected": HISTORY_METHOD_ID + "#s-workflow", "required_top_k": 5})
+    sections[0]["content"] += "\n\nThe same explicit INTAKE admits two exact first-anchor field families without stored history: pre-material-epoch-anchor/v0 lacks old epoch, baseline, time and projection-obligation bindings; v1 records baseline/time/boolean obligation but still lacks the material epoch. Verified-origin admission/v1 requires complete VERIFIED recorded scope. Quarantine-only admission/v2 accepts an exact native MISSING or CONFLICT inspection, or witnessed origin loss, without assigning Task, Goal or Loop; an exact reviewed report hash is mandatory in both modes. The versioned werkfaden-tx-legacy-event-admission/v1 or /v2 declaration is stored in the immutable intake receipt, binding exact old state bytes and event identity. Original scope and old event bytes are preserved; separate BIND remains required. Partial, inconsistent or other old formats fail closed."
+    sections[1]["content"] += "\n\nMissing old material epochs, history-prefix hashes and the v0 baseline/time/obligation fields remain explicitly UNATTESTED. The new INTAKE event proves only the newly observed current state and its projection. It does not manufacture old execution, an old baseline binding or a committed Apply. Generic current-event validation remains strict; a mere old event self-hash or scope inspection never grants deployment authority."
+    sections[2]["content"] += "\n\nCanonical method revision4 and its renderer must be installed together through verified source/document migration. An existing nonmatching method is TX_HISTORY_METHOD_DRIFT, requiring verified document migration; INTAKE does not silently overwrite it. Publication grants bind exact canonical content bytes. Receipt admission declarations and raw preimages are revalidated during replay, retaining one current event identity without repeating Apply."
+    sections[1]["content"] += "\n\nQuarantine-only admission preserves missing/conflicting claims and raw prior bytes but grants no BIND or success attribution. Historical origin and any unbound old scope-receipt reference remain explicitly UNATTESTED. Later binding still requires a fresh complete VERIFIED inspection and actual Task/Goal source proof; unknown field families and inconsistent event identities remain refused."
+    sections[2]["content"] += "\n\n" + HISTORY_METHOD_INSTANCE_TIMESTAMP_POLICY
     return render_document(metadata, "Historical transaction scope: canonical intake and binding method", sections)
 
 
@@ -79,9 +91,9 @@ def document_path(transaction_id: str) -> str:
     return "reports/" + document_id(transaction_id) + ".md"
 
 
-def _json(value: Any, limit: int = 8000) -> str:
+def _json(value: Any, limit: int | None = 8000) -> str:
     raw = json.dumps(value, sort_keys=True, ensure_ascii=False, indent=2, default=str)
-    truncated = len(raw) > limit
+    truncated = limit is not None and len(raw) > limit
     if truncated:
         raw = raw[:limit] + "\n... [TRUNCATED; full evidence remains in TX journal]"
     # Machine-recorded paths/references are literal evidence, not live links.
@@ -89,6 +101,73 @@ def _json(value: Any, limit: int = 8000) -> str:
     longest = max((len(match.group()) for match in re.finditer(r"`+", raw)), default=0)
     fence = "`" * max(3, longest + 1)
     return "\n" + fence + ("text" if truncated else "json") + "\n" + raw + "\n" + fence
+
+
+def _event_obligations(transaction: dict[str, Any]) -> str:
+    """Retain every identity without duplicating full replay endpoint payloads."""
+    history = [{k: event.get(k) for k in ("sequence", "event_id", "event", "phase", "previous_event_id")}
+               for event in transaction.get("tx_event_history", [])]
+    resolutions = [{"event_id": item.get("event", {}).get("event_id"),
+                    "sequence": item.get("event", {}).get("sequence"), "outcome": item.get("outcome"),
+                    "intent_sha256": item.get("intent_sha256")}
+                   for item in transaction.get("tx_event_resolutions", [])]
+    # No truncation: losing a pending identity would defeat the recovery proof.
+    return "\n\nPrior event identities:\n" + _json(history, None) + "\n\nResolved state-commit obligations:\n" + _json(resolutions, None)
+
+
+def recycling_chunk_identity(transaction_id: str, inventory_sha256: str, chunk_index: int) -> tuple[str, str]:
+    if (not re.fullmatch(r"TXN_[0-9a-f]{24}", transaction_id)
+            or not re.fullmatch(r"[0-9a-f]{64}", inventory_sha256)
+            or type(chunk_index) is not int or chunk_index < 0):
+        raise ValueError("invalid recycling chunk source identity")
+    identity = f"RECYCLING_CHUNK_{transaction_id.upper()}_{inventory_sha256[:16].upper()}_{chunk_index:08d}"
+    return identity, "reports/" + identity + ".md"
+
+
+def render_recycling_chunk(*, transaction_id: str, workspace_id: str,
+                            packet: dict[str, Any], receipt_sha256: str) -> str:
+    """Immutable subordinate source; only the parent TX can grant clearance."""
+    identity, relative = recycling_chunk_identity(transaction_id, packet["inventory_sha256"], packet["chunk_index"])
+    payload = {"schema": "werkfaden-tx-recycling-chunk-source/v1",
+               "transaction_id": transaction_id, "receipt_sha256": receipt_sha256, "packet": packet}
+    scope = packet["scope"]
+    metadata = {
+        "schema": "kairos-context/v1", "id": identity, "type": "report",
+        "revision": 1, "state": "partial", "authority": "execution_evidence",
+        "workspace": workspace_id, "route": "/".join((scope["goal"], scope["milestone"], scope["task"], identity)),
+        "goal": scope["goal"], "milestone": scope["milestone"], "task": scope["task"], "loop": scope["loop"],
+        "updated_at": packet["created_at"],
+        "capsule": f"Immutable partial recycling chunk {packet['chunk_index']} for {transaction_id}; no compaction clearance.",
+        "claim_boundary": "Recorded per-file declarations and observed evidence hashes only; global acceptance belongs exclusively to the parent transaction review.",
+        "entities": [identity, transaction_id], "facets": ["recycling-chunk", "partial-review"],
+        "criteria": [], "does_not_answer": ["global review clearance", "semantic correctness", "deployment approval"],
+        "recycling_chunk_schema": payload["schema"], "transaction_id": transaction_id,
+        "answers": [{"intent": "evidence", "question": f"What partial review does {identity} record?", "target": "s-outcome"},
+                    {"intent": "implementation_location", "question": f"Where are the exact decisions for {identity}?", "target": "s-graph-metadata"}],
+        "refs": {"parent": pointer(document_path(transaction_id), section="s-graph-metadata",
+                                    artifact_id=document_id(transaction_id), version="dynamic",
+                                    relation="documents", tags=("recycling", "partial"))},
+    }
+    fence = chr(96) * 3
+    return render_document(metadata, "Partial recycling evidence " + identity, [
+        {"id": "s-outcome", "title": "PARTIAL REVIEW",
+         "capsule": "This immutable chunk records bounded intermediate work and grants no final review.",
+         "content": f"Global inventory: {packet['inventory_sha256']}\nChunk: {packet['chunk_index']}\nHalf-open range: {packet['range']}\nReceipt: {receipt_sha256}\nParent transaction: {transaction_id}\nSource: {relative}\nLifetime: retain as the parent transaction's exact evidence; only a separately verified history/tiering operation may retire this source."},
+        {"id": "s-graph-metadata", "title": "EXACT CHUNK EVIDENCE",
+         "capsule": "The normalized SQL chunk is derived exclusively from this exact source payload.",
+         "content": fence + "json\n" + json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                                                  separators=(",", ":"), allow_nan=False) + "\n" + fence},
+    ])
+
+
+def _recycling_chunk_refs(chunks: list[dict[str, Any]], transaction_id: str,
+                          inventory_sha256: str) -> list[dict[str, Any]]:
+    result = []
+    for chunk in chunks:
+        identity, path = recycling_chunk_identity(transaction_id, inventory_sha256, chunk["chunk_index"])
+        result.append({key: chunk[key] for key in ("chunk_index", "range", "chunk_sha256", "receipt_sha256", "document_sha256")})
+        result[-1].update(artifact_id=identity, path=path, decision_count=len(chunk["decisions"]))
+    return result
 
 
 def render_transaction_document(
@@ -115,6 +194,11 @@ def render_transaction_document(
     else:
         document_state = "partial"
     purpose = str(transaction.get("purpose") or "No verified transaction purpose recorded")
+    # Budget the serialized UTF-8 excerpt, including TOML/JSON escaping.
+    # The complete declared purpose remains in s-purpose and s-execution.
+    purpose_excerpt = purpose[:64]
+    while len(json.dumps(purpose_excerpt, ensure_ascii=False).encode("utf-8")) > 66:
+        purpose_excerpt = purpose_excerpt[:-1]
     history = transaction.get("historical_scope") or {}
     if history.get("scope_status") == "SCOPE_UNRESOLVED":
         document_state = "blocked"
@@ -122,6 +206,8 @@ def render_transaction_document(
     q = chr(96)
     recycle = transaction.get("recycling") if isinstance(transaction.get("recycling"), dict) else {}
     reviewed = recycle.get("status") == "REVIEWED"
+    progress = transaction.get("recycling_progress") or {}
+    paged = bool(recycle.get("chunks")) if reviewed else bool(progress)
     decisions = recycle.get("decisions", []) if reviewed else []
     if not isinstance(decisions, list):
         decisions = []
@@ -130,7 +216,16 @@ def render_transaction_document(
         for name in ("RETAIN_FOR_REUSE", "RETAIN_EVIDENCE", "REJECT_FOR_REUSE")
     }
     graph_data = "none"
-    if reviewed:
+    if paged:
+        owner = recycle if reviewed else progress
+        graph_data = q * 3 + "json\n" + json.dumps({
+            "schema": "werkfaden-tx-recycling-index/v2", "transaction_id": transaction_id,
+            "status": "REVIEWED" if reviewed else "PARTIAL",
+            "analysis_sha256": owner.get("analysis_sha256") if reviewed else owner.get("progress_sha256"),
+            "inventory_sha256": owner["inventory_sha256"], "global_unit_count": owner["global_unit_count"],
+            "chunks": _recycling_chunk_refs(owner["chunks"], transaction_id, owner["inventory_sha256"]),
+        }, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n" + q * 3
+    elif reviewed:
         graph_data = q * 3 + "json\n" + json.dumps({
             "schema": "werkfaden-tx-recycling-index/v1",
             "transaction_id": transaction_id,
@@ -175,7 +270,8 @@ def render_transaction_document(
         "s-primitives": "none",
         "s-execution": attempt + "\n\nAtomic dispositions (overview):\n" + summary
                        + "\n\nOther declared notes:\n" + _json((transaction.get("transaction_notes") or [])[-30:], 6000)
-                       + "\n\nRecent machine events:\n" + _json((transaction.get("journal") or [])[-8:], 4000),
+                       + "\n\nRecent machine events:\n" + _json((transaction.get("journal") or [])[-8:], 4000)
+                       + _event_obligations(transaction),
         "s-output": "- Technical TX state: " + status
                     + "\n- Postcheck package: " + str(transaction.get("postcheck_package_sha256") or "none")
                     + "\n- Heartbeat: " + str((transaction.get("heartbeat") or {}).get("heartbeat_id") or "none")
@@ -201,6 +297,13 @@ def render_transaction_document(
         ) + (" Workshop postcheck was recorded; deployment beyond the Workshop corpus remains unproven."
              if document_state == "completed" else " No successful Workshop postcheck is established."),
     }
+    if paged:
+        owner = recycle if reviewed else progress
+        covered = sum(len(chunk["decisions"]) for chunk in owner["chunks"])
+        content["s-output"] += (f"\n- Subordinate PARTIAL chunks: {len(owner['chunks'])}"
+                                f"\n- Recorded file decisions: {covered}/{owner['global_unit_count']}"
+                                "\n- A chunk is intermediate evidence; parent clearance is separate.")
+        content["s-determinism"] += "\n- Partial frontier SHA-256: " + str(progress.get("progress_sha256") or "none")
     sections = [{"id": key, "title": title, "capsule": capsule, "content": content[key]}
                 for key, title, capsule in SECTION_SPECS]
     metadata = {
@@ -220,7 +323,7 @@ def render_transaction_document(
         # Exact checkout scope bytes remain in TX state and are named below.
 
         "updated_at": updated_at or transaction.get("updated_at") or transaction.get("created_at") or utc_now(),
-        "capsule": f"TX {transaction_id}: {purpose[:125]}; state {status}.",
+        "capsule": f"TX {transaction_id}: {purpose_excerpt}; state {status}.",
         "claim_boundary": "Recorded Workshop state and selected evidence only; not JEV authenticity, semantic truth, deployment or criterion closure.",
         "entities": [artifact_id, task_id] if scope_bound else ([artifact_id, "HISTORICAL_UNRESOLVED/" + transaction_id] if history else [artifact_id]),
         "facets": ["workshop", "transaction-history", "candidate-lineage"],
@@ -231,15 +334,16 @@ def render_transaction_document(
         "baseline_package_sha256": str(transaction.get("baseline_package_sha256") or ""),
         "verified_work_package_sha256": str(transaction.get("verified_work_package_sha256") or ""),
         "recycling_analysis_sha256": str(recycle.get("analysis_sha256") or ""),
+        "recycling_progress_sha256": str(progress.get("progress_sha256") or ""),
         "tx_event_id": str(transaction.get("tx_event_id") or ""),
 
         "answers": [
-            {"intent": "implementation_location", "question": f"Which source paths are selected by {artifact_id}?", "target": "s-symbols"},
-            {"intent": "failure_semantics", "question": f"What failures were recorded for {artifact_id}?", "target": "s-failures"},
-            {"intent": "determinism", "question": f"Which package hashes are bound to {artifact_id}?", "target": "s-determinism"},
-            {"intent": "boundary", "question": f"What does {artifact_id} not establish?", "target": "s-boundary"},
-            {"intent": "transaction_outcome", "question": f"What was the observed Workshop outcome of {artifact_id}?", "target": "s-output"},
-            {"intent": "transaction_lineage", "question": f"Which previous patches or transaction events does {artifact_id} record?", "target": "s-execution"},
+            {"intent": "implementation_location", "question": f"{artifact_id}: selected sources?", "target": "s-symbols"},
+            {"intent": "failure_semantics", "question": f"{artifact_id}: failures?", "target": "s-failures"},
+            {"intent": "determinism", "question": f"{artifact_id}: package hashes?", "target": "s-determinism"},
+            {"intent": "boundary", "question": f"{artifact_id}: evidence limits?", "target": "s-boundary"},
+            {"intent": "transaction_outcome", "question": f"{artifact_id}: observed outcome?", "target": "s-output"},
+            {"intent": "transaction_lineage", "question": f"{artifact_id}: prior patches/events?", "target": "s-execution"},
         ],
         "refs": {
             **({"task": pointer(f"tasks/task_{task_id}.md", section="s-objective", artifact_id=task_id,
@@ -251,8 +355,8 @@ def render_transaction_document(
         **({"loop": loop, "goal": goal_id, "milestone": milestone_id, "task": task_id}
            if scope_bound else {}),
         "search_contract": [
-            {"query": f"What was the observed Workshop outcome of {artifact_id}?", "expected": f"{artifact_id}#s-output", "required_top_k": 5},
-            {"query": f"What failures were recorded for {artifact_id}?", "expected": f"{artifact_id}#s-failures", "required_top_k": 5},
+            {"query": f"{artifact_id}: observed outcome?", "expected": f"{artifact_id}#s-output", "required_top_k": 5},
+            {"query": f"{artifact_id}: failures?", "expected": f"{artifact_id}#s-failures", "required_top_k": 5},
         ],
     }
     return render_document(metadata, f"WORKSHOP TRANSACTION {transaction_id}", sections)

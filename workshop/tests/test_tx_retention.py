@@ -28,6 +28,7 @@ class FakeEngine:
                  "tx_max_materialized": 2, "tx_recycle_trigger": 2},
         )
         self.lease_path = self.config.state_directory / "lease.json"
+        self.seal_path = self.config.state_directory / "seal.json"
         self.config.transaction_directory.mkdir(parents=True, exist_ok=True)
 
     def _transaction_path(self, tx):
@@ -68,6 +69,124 @@ class TransactionRetentionTests(unittest.TestCase):
         stack.enter_context(patch("runtime_sync_workshop.tx_documents.update_document"))
         stack.enter_context(patch("runtime_sync_workshop.tx_documents.assert_projected"))
         return stack
+
+    def _junction(self, link, target):
+        if sys.platform != "win32":
+            self.skipTest("a real Windows junction is required")
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        except (AttributeError, OSError) as exc:
+            self.skipTest(f"Windows junction creation unavailable: {exc}")
+        self.assertTrue(link.is_junction())
+        self.assertEqual(link.resolve(), target.resolve())
+
+        def remove_link():
+            self.assertTrue(link.is_junction())
+            self.assertEqual(link.resolve(), target.resolve())
+            self.assertTrue(link.parent.resolve().is_relative_to(self.root.resolve()))
+            self.assertTrue(target.resolve().is_relative_to(self.root.resolve()))
+            link.rmdir()
+
+        self.addCleanup(remove_link)
+        return link
+
+    def test_windows_junction_descendant_root_and_ancestor_are_rejected(self):
+        from runtime_sync_workshop.tx_retention import _safe_files
+        from runtime_sync_workshop.tx_recycling import _files
+        root = self.root / "source-tree"
+        root.mkdir()
+        canary = self.root / "canary"
+        (canary / "nested").mkdir(parents=True)
+        (canary / "nested" / "proof.txt").write_text("keep canary", encoding="utf-8")
+        link = self._junction(root / "portal", canary)
+        for target in (root, link, link / "nested"):
+            with self.subTest(target=target):
+                with self.assertRaises(WorkshopError) as caught:
+                    list(_safe_files(target))
+                self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        with self.assertRaises(WorkshopError) as caught:
+            _files(link)
+        self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        self.assertEqual((canary / "nested" / "proof.txt").read_text(encoding="utf-8"), "keep canary")
+
+    def test_windows_junction_snapshot_refuses_before_storing_any_file(self):
+        txid, root = self.make_tx("a", "ABORTED")
+        canary = self.root / "outside"
+        canary.mkdir()
+        (canary / "proof.txt").write_text("keep canary", encoding="utf-8")
+        self._junction(root / "work" / "portal", canary)
+        with patch("runtime_sync_workshop.tx_retention._store", side_effect=AssertionError("archive read before path validation")) as store:
+            with self.assertRaises(WorkshopError) as caught:
+                snapshot(self.engine, txid, include_entire_tx=True)
+        self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        store.assert_not_called()
+        self.assertTrue((root / "work" / "code.py").is_file())
+        self.assertEqual((canary / "proof.txt").read_text(encoding="utf-8"), "keep canary")
+
+    def test_windows_junction_staging_is_refused_before_move_or_delete(self):
+        from runtime_sync_workshop.tx_retention import _resume_compaction_locked
+        txid, root = self.make_tx("b", "ABORTED")
+        canary = self.root / "outside"
+        canary.mkdir()
+        (canary / "proof.txt").write_text("keep canary", encoding="utf-8")
+        self._junction(root / ".reclaim", canary)
+        plan = {"manifest_sha256": "test", "reclaimed_worktree_bytes": 0}
+        with patch("runtime_sync_workshop.tx_retention._verified_plan", return_value=(plan, self.root / "manifest")), \
+             patch("runtime_sync_workshop.tx_retention.os.replace") as move, \
+             patch("runtime_sync_workshop.tx_retention.shutil.rmtree") as remove:
+            with self.assertRaises(WorkshopError) as caught:
+                _resume_compaction_locked(self.engine, txid)
+        self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        move.assert_not_called()
+        remove.assert_not_called()
+        self.assertTrue((root / "work" / "code.py").is_file())
+        self.assertEqual((canary / "proof.txt").read_text(encoding="utf-8"), "keep canary")
+
+    def test_windows_junction_transaction_alias_is_rejected_by_pool_and_recovery(self):
+        from runtime_sync_workshop.tx_retention import materialized_worktrees
+        txid, root = self.make_tx("d", "ABORTED")
+        alias_id = "TXN_" + "e" * 24
+        self._junction(self.engine.config.transaction_directory / alias_id, root)
+        operations = (
+            lambda: materialized_worktrees(self.engine),
+            lambda: recover_interrupted_compactions(self.engine),
+            lambda: storage_inventory(self.engine),
+            lambda: snapshot(self.engine, alias_id, include_entire_tx=True),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                with self.assertRaises(WorkshopError) as caught:
+                    operation()
+                self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        self.assertTrue((root / "work" / "code.py").is_file())
+
+    def test_windows_junction_recycling_receipt_root_is_rejected(self):
+        txid, root = self.make_tx("f", "ABORTED")
+        canary = self.root / "outside-receipts"
+        canary.mkdir()
+        (canary / "proof.txt").write_text("keep canary", encoding="utf-8")
+        self.engine.config.state_directory.mkdir(parents=True, exist_ok=True)
+        self._junction(self.engine.config.state_directory / "tx-recycling", canary)
+        with self.assertRaises(WorkshopError) as caught:
+            inventory(self.engine, txid, persist=True)
+        self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        self.assertFalse((canary / "inventories").exists())
+        self.assertEqual((canary / "proof.txt").read_text(encoding="utf-8"), "keep canary")
+        self.assertTrue((root / "work" / "code.py").is_file())
+
+    def test_windows_junction_restore_destination_ancestor_is_rejected(self):
+        txid, root = self.make_tx("c", "ABORTED")
+        archived = snapshot(self.engine, txid, include_entire_tx=True)
+        canary = self.root / "outside"
+        canary.mkdir()
+        (canary / "proof.txt").write_text("keep canary", encoding="utf-8")
+        link = self._junction(self.root / "restore-link", canary)
+        with self.assertRaises(WorkshopError) as caught:
+            rehydrate(self.engine, txid, Path(archived["manifest"]), link / "restored")
+        self.assertEqual(caught.exception.code, "PATH_LINK_UNSAFE")
+        self.assertFalse((canary / "restored").exists())
+        self.assertEqual((canary / "proof.txt").read_text(encoding="utf-8"), "keep canary")
 
     def test_storage_census_and_budget_block_only_new_work(self):
         txid, root = self.make_tx("a", "ABORTED")

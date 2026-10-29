@@ -15,7 +15,7 @@ from .constants import (
 )
 from .frontmatter import ParsedFrontmatter, split_frontmatter
 from .query import fts_match, tokenize
-from .references import Reference, collect_references, validate_reference_targets
+from .references import Reference, ReferenceError, collect_references, validate_reference_targets
 from .sections import Section, parse_sections, validate_answer_targets
 from .util import (
     atomic_write_json,
@@ -25,6 +25,7 @@ from .util import (
     sha256_text,
     utc_now,
     workspace_relative,
+    resolve_workspace_path,
 )
 
 
@@ -137,57 +138,7 @@ def project_graph_layer(connection: Any, artifact_id: str, metadata: dict[str, A
     return counts
 
 
-def project_transaction_recycling(connection: Any, document: "PreparedDocument") -> int:
-    """Normalize the single canonical recycling ledger inside transaction Markdown.
-
-    The body is the source; SQLite is derived and can be rebuilt from Markdown.
-    An invalid/incomplete ledger fails the entire document promotion.
-    """
-    metadata = document.frontmatter.metadata
-    artifact_id = str(metadata["id"])
-    connection.execute("DELETE FROM tx_recycling_atoms WHERE artifact_id=?", (artifact_id,))
-    connection.execute("DELETE FROM tx_recycling_reviews WHERE artifact_id=?", (artifact_id,))
-    if metadata["type"] != "transaction":
-        return 0
-    section = next((row for row in document.sections if row.section_id == "s-graph-metadata"), None)
-    if section is None:
-        raise PromotionError("transaction document must contain s-graph-metadata")
-    # parse_sections keeps the leading blockquote capsule in section.body.
-    # It is a routing summary, not part of the indexed machine ledger.
-    full_body = section.body.strip()
-    if full_body.startswith("> Capsule:"):
-        parts = full_body.split("\n\n", 1)
-        if len(parts) != 2:
-            raise PromotionError("recycling graph section is missing its content after the capsule")
-        full_body = parts[1].strip()
-    if full_body == "none":
-        if metadata.get("recycling_analysis_sha256"):
-            raise PromotionError("transaction declares a recycling receipt but the machine ledger is missing")
-        return 0
-    match = re.fullmatch(r"\`\`\`json\n([^\x00]+?)\n\`\`\`", full_body, re.DOTALL)
-    if match is None:
-        raise PromotionError("transaction recycling graph section must contain one exact JSON block")
-    try:
-        payload = json.loads(match.group(1), parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name)))
-    except (ValueError, TypeError) as exc:
-        raise PromotionError("transaction recycling ledger is invalid strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("schema") != "werkfaden-tx-recycling-index/v1":
-        raise PromotionError("transaction recycling ledger has an invalid schema")
-    txid = metadata.get("transaction_id")
-    if (not isinstance(txid, str)
-            or payload.get("transaction_id") != txid
-            or metadata.get("id") != "TRANSACTION_" + txid.upper()):
-        raise PromotionError("transaction recycling ledger has mismatched identity")
-    sha = payload.get("analysis_sha256")
-    inventory = payload.get("inventory_sha256")
-    if any(not isinstance(val, str) or re.fullmatch(r"[0-9a-f]{64}", val) is None
-           for val in (sha, inventory)):
-        raise PromotionError("transaction recycling hashes must be SHA-256")
-    if sha != metadata.get("recycling_analysis_sha256"):
-        raise PromotionError("transaction recycling report hash does not match its header")
-    rows = payload.get("decisions")
-    if not isinstance(rows, list) or len(rows) > 4000:
-        raise PromotionError("transaction recycling decision rows are unbounded")
+def _validated_recycling_decisions(rows):
     seen = set()
     for entry in rows:
         if not isinstance(entry, dict):
@@ -221,6 +172,172 @@ def project_transaction_recycling(connection: Any, document: "PreparedDocument")
                            or re.fullmatch(r"[0-9a-f]{64}", fact["content_sha256"]) is None
                            for fact in proofs)):
                 raise PromotionError("transaction recycling evidence hashes are not structurally bound")
+        yield entry
+
+
+
+def _chunk_payload(document: "PreparedDocument") -> dict[str, Any]:
+    section = next((row for row in document.sections if row.section_id == "s-graph-metadata"), None)
+    if section is None:
+        raise PromotionError("chunk source requires s-graph-metadata")
+    body = section.body.strip()
+    if body.startswith("> Capsule:"):
+        body = body.split("\n\n", 1)[1].strip()
+    match = re.fullmatch(r"\x60\x60\x60json\n([^\x00]+?)\n\x60\x60\x60", body, re.DOTALL)
+    if not match:
+        raise PromotionError("chunk source requires one exact JSON payload")
+    try:
+        payload = json.loads(match[1], parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    except (ValueError, TypeError) as exc:
+        raise PromotionError("invalid strict chunk JSON") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != "werkfaden-tx-recycling-chunk-source/v1":
+        raise PromotionError("invalid chunk source schema")
+    return payload
+
+
+def _project_chunk_source(connection: Any, document: "PreparedDocument") -> None:
+    from .transaction_document import recycling_chunk_identity
+    import hashlib
+    meta = document.frontmatter.metadata
+    payload = _chunk_payload(document)
+    packet = payload.get("packet")
+    if not isinstance(packet, dict) or packet.get("schema") != "werkfaden-tx-recycling-chunk-receipt/v1":
+        raise PromotionError("invalid immutable chunk packet")
+    tx, inventory, index = packet.get("transaction_id"), packet.get("inventory_sha256"), packet.get("chunk_index")
+    try:
+        identity, path = recycling_chunk_identity(tx, inventory, index)
+    except (TypeError, ValueError) as exc:
+        raise PromotionError("invalid chunk source identity") from exc
+    if (meta["id"] != identity or meta["type"] != "report" or meta["state"] != "partial"
+            or meta.get("transaction_id") != tx or payload.get("transaction_id") != tx
+            or document.relative_path != path or meta["revision"] != 1
+            or meta["updated_at"] != packet.get("created_at")):
+        raise PromotionError("chunk source scope or immutable revision mismatch")
+    if not isinstance(packet.get("scope"), dict) or any(meta.get(key) != packet["scope"].get(key) for key in ("goal", "milestone", "task", "loop")):
+        raise PromotionError("chunk source must preserve its exact native parent scope")
+    bounds = packet.get("range")
+    rows = packet.get("decisions")
+    if (not isinstance(bounds, list) or len(bounds) != 2 or any(type(value) is not int for value in bounds)
+            or bounds[0] < 0 or not 1 <= bounds[1] - bounds[0] <= 512
+            or not isinstance(rows, list) or len(rows) != bounds[1] - bounds[0]):
+        raise PromotionError("chunk source must contain one bounded explicit range")
+    list(_validated_recycling_decisions(rows))
+    canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    descriptor = {"inventory_sha256": inventory, "chunk_index": index, "range": bounds,
+                  "unit_ids": [row["unit_id"] for row in rows]}
+    if packet.get("chunk_sha256") != hashlib.sha256(canonical(descriptor)).hexdigest():
+        raise PromotionError("chunk membership hash mismatch")
+    receipt = hashlib.sha256(canonical(packet)).hexdigest()
+    if payload.get("receipt_sha256") != receipt:
+        raise PromotionError("chunk receipt hash mismatch")
+    connection.execute("""INSERT INTO tx_recycling_chunks(
+        artifact_id,transaction_id,inventory_sha256,chunk_index,range_start,range_stop,
+        chunk_sha256,receipt_sha256,source_sha256,source_path,decision_count,decisions_json,status
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (identity, tx, inventory, index, bounds[0], bounds[1], packet["chunk_sha256"],
+         receipt, sha256_text(document.text), path, len(rows), json_dumps(rows, pretty=False), "PARTIAL"))
+
+
+def _paged_recycling_rows(connection: Any, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    from .transaction_document import recycling_chunk_identity
+    count = payload.get("global_unit_count")
+    refs = payload.get("chunks")
+    if (payload.get("status") not in {"PARTIAL", "REVIEWED"}
+            or type(count) is not int or count < 1 or not isinstance(refs, list) or not refs):
+        raise PromotionError("paged recycling index requires bounded-source references and explicit status")
+    rows = []
+    stop = 0
+    for index, ref in enumerate(refs):
+        if not isinstance(ref, dict) or type(ref.get("chunk_index")) is not int or ref["chunk_index"] != index:
+            raise PromotionError("paged chunk indices must be unique and consecutive")
+        identity, path = recycling_chunk_identity(payload["transaction_id"], payload["inventory_sha256"], index)
+        item = connection.execute("SELECT * FROM tx_recycling_chunks WHERE artifact_id=?", (identity,)).fetchone()
+        bounds = ref.get("range")
+        if (item is None or ref.get("artifact_id") != identity or ref.get("path") != path
+                or not isinstance(bounds, list) or len(bounds) != 2
+                or any(type(value) is not int for value in bounds)
+                or bounds != [item["range_start"], item["range_stop"]] or bounds[0] != stop
+                or bounds[1] > count or item["inventory_sha256"] != payload["inventory_sha256"]
+                or item["transaction_id"] != payload["transaction_id"]
+                or ref.get("chunk_sha256") != item["chunk_sha256"]
+                or ref.get("receipt_sha256") != item["receipt_sha256"]
+                or ref.get("document_sha256") != item["source_sha256"]
+                or type(ref.get("decision_count")) is not int or ref["decision_count"] != item["decision_count"]):
+            raise PromotionError("paged index differs from exact promoted subordinate chunk sources")
+        stop = bounds[1]
+        rows.extend(json.loads(item["decisions_json"]))
+    if payload["status"] == "REVIEWED" and stop != count:
+        raise PromotionError("completed paged review has missing global coverage")
+    return rows
+
+def project_transaction_recycling(connection: Any, document: "PreparedDocument") -> int:
+    """Normalize the single canonical recycling ledger inside transaction Markdown.
+
+    The body is the source; SQLite is derived and can be rebuilt from Markdown.
+    An invalid/incomplete ledger fails the entire document promotion.
+    """
+    metadata = document.frontmatter.metadata
+    artifact_id = str(metadata["id"])
+    connection.execute("DELETE FROM tx_recycling_atoms WHERE artifact_id=?", (artifact_id,))
+    connection.execute("DELETE FROM tx_recycling_reviews WHERE artifact_id=?", (artifact_id,))
+    connection.execute("DELETE FROM tx_recycling_chunks WHERE artifact_id=?", (artifact_id,))
+    if "recycling_chunk_schema" in metadata:
+        if metadata["recycling_chunk_schema"] != "werkfaden-tx-recycling-chunk-source/v1":
+            raise PromotionError("unsupported recycling chunk source schema")
+        _project_chunk_source(connection, document)
+        return 0
+    if metadata["type"] != "transaction":
+        return 0
+    section = next((row for row in document.sections if row.section_id == "s-graph-metadata"), None)
+    if section is None:
+        raise PromotionError("transaction document must contain s-graph-metadata")
+    # parse_sections keeps the leading blockquote capsule in section.body.
+    # It is a routing summary, not part of the indexed machine ledger.
+    full_body = section.body.strip()
+    if full_body.startswith("> Capsule:"):
+        parts = full_body.split("\n\n", 1)
+        if len(parts) != 2:
+            raise PromotionError("recycling graph section is missing its content after the capsule")
+        full_body = parts[1].strip()
+    if full_body == "none":
+        if metadata.get("recycling_analysis_sha256"):
+            raise PromotionError("transaction declares a recycling receipt but the machine ledger is missing")
+        return 0
+    match = re.fullmatch(r"\`\`\`json\n([^\x00]+?)\n\`\`\`", full_body, re.DOTALL)
+    if match is None:
+        raise PromotionError("transaction recycling graph section must contain one exact JSON block")
+    try:
+        payload = json.loads(match.group(1), parse_constant=lambda name: (_ for _ in ()).throw(ValueError(name)))
+    except (ValueError, TypeError) as exc:
+        raise PromotionError("transaction recycling ledger is invalid strict JSON") from exc
+    if not isinstance(payload, dict) or payload.get("schema") not in {"werkfaden-tx-recycling-index/v1", "werkfaden-tx-recycling-index/v2"}:
+        raise PromotionError("transaction recycling ledger has an invalid schema")
+    txid = metadata.get("transaction_id")
+    if (not isinstance(txid, str)
+            or payload.get("transaction_id") != txid
+            or metadata.get("id") != "TRANSACTION_" + txid.upper()):
+        raise PromotionError("transaction recycling ledger has mismatched identity")
+    sha = payload.get("analysis_sha256")
+    inventory = payload.get("inventory_sha256")
+    if any(not isinstance(val, str) or re.fullmatch(r"[0-9a-f]{64}", val) is None
+           for val in (sha, inventory)):
+        raise PromotionError("transaction recycling hashes must be SHA-256")
+    paged = payload["schema"] == "werkfaden-tx-recycling-index/v2"
+    completed = not paged or payload.get("status") == "REVIEWED"
+    if sha != metadata.get("recycling_analysis_sha256" if completed else "recycling_progress_sha256"):
+        raise PromotionError("transaction recycling report hash does not match its header")
+    rows = _paged_recycling_rows(connection, payload) if paged else payload.get("decisions")
+    if not isinstance(rows, list) or (not paged and len(rows) > 4000):
+        raise PromotionError("transaction recycling decision rows are unbounded")
+    if not completed:
+        # Explicit unfinished work is searchable through its subordinate sources,
+        # never through completed-review or completed-atom rows.
+        list(_validated_recycling_decisions(rows))
+        return 0
+    for entry in _validated_recycling_decisions(rows):
+        uid, rel = entry["unit_id"], entry["path"]
+        disposition, reason, refs = entry["disposition"], entry["reason"], entry["evidence_refs"]
+        proofs = entry.get("evidence_proofs", [])
         source = str(entry.get("source_transaction") or "")
         successor = str(entry.get("successor_transaction") or "")
         connection.execute(
@@ -303,10 +420,27 @@ def _validate_contract_targets(
 def prepare_document(path: Path, workspace: Path) -> PreparedDocument:
     if path.suffix.lower() != ".md":
         raise PromotionError(f"KAIROS document promotion currently requires Markdown: {path}")
+    # Retain the physical-byte bound before universal-newline decoding.
     size = path.stat().st_size
     if size > MAX_DOCUMENT_BYTES:
         raise PromotionError(f"document uses {size} bytes; maximum is {MAX_DOCUMENT_BYTES}: {path}")
-    text = path.read_text(encoding="utf-8")
+    return _prepare_document_text(path, workspace, path.read_text(encoding="utf-8"), size=size)
+
+
+def prepare_rendered_document(path: Path, workspace: Path, text: str) -> PreparedDocument:
+    """Validate an unwritten native artifact; no file, SQL or runtime mutation."""
+    if path.exists() or path.is_symlink():
+        raise PromotionError(f"new document already exists: {path}")
+    return _prepare_document_text(path, workspace, text, size=len(text.encode("utf-8")),
+                                  pending_self=True)
+
+
+def _prepare_document_text(path: Path, workspace: Path, text: str, *, size: int,
+                           pending_self: bool = False) -> PreparedDocument:
+    if path.suffix.lower() != ".md":
+        raise PromotionError(f"KAIROS document promotion currently requires Markdown: {path}")
+    if size > MAX_DOCUMENT_BYTES:
+        raise PromotionError(f"document uses {size} bytes; maximum is {MAX_DOCUMENT_BYTES}: {path}")
     frontmatter = split_frontmatter(text)
     external_origin = _external_origin(workspace, frontmatter.metadata)
     # The first-window budget protects the cost of opening a document KAIROS itself wrote.
@@ -327,7 +461,24 @@ def prepare_document(path: Path, workspace: Path) -> PreparedDocument:
     _validate_contract_targets(frontmatter.metadata, sections)
     validate_answer_targets(frontmatter.metadata, sections)
     references = collect_references(frontmatter.metadata, sections)
-    validate_reference_targets(workspace, references, resolve=not external_origin)
+    if pending_self and not external_origin:
+        # Defer only the exact new document path. Validate its self-anchors
+        # against the rendered candidate; all other targets resolve normally.
+        current = path.resolve()
+        known_sections = {section.section_id for section in sections}
+        existing = []
+        for owner, reference in references:
+            target = resolve_workspace_path(workspace, reference.target_path)
+            if target == current:
+                if reference.target_section and reference.target_section not in known_sections:
+                    raise ReferenceError(
+                        f"reference section does not exist in new document: {reference.target_path}#{reference.target_section}"
+                    )
+            else:
+                existing.append((owner, reference))
+        validate_reference_targets(workspace, existing)
+    else:
+        validate_reference_targets(workspace, references, resolve=not external_origin)
     return PreparedDocument(
         path=path,
         relative_path=workspace_relative(path, workspace),

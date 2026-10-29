@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
 import re
 import shutil
 import sys
@@ -26,11 +25,13 @@ from .util import (
     atomic_write_bytes,
     atomic_write_json,
     canonical_json,
+    capture_rollback_preimage,
     copy_exact,
     sqlite_snapshot,
     package_hash,
     read_json,
     reject_link_components,
+    restore_rollback_preimage,
     sha256_bytes,
     utc_now,
 )
@@ -360,7 +361,8 @@ class AuthorityMigration:
         baseline_manifest = build_corpus_manifest(self.config)
         if not baseline_manifest.get("verified"):
             raise WorkshopError("CORPUS_NOT_VERIFIED", "authority migration requires a verified live corpus", details=baseline_manifest.get("issues"))
-        seal = read_json(self.engine.seal_path)
+        baseline_seal_bytes = self.engine.seal_path.read_bytes()
+        seal = json.loads(baseline_seal_bytes)
         if seal.get("package_sha256") != baseline_manifest["package_sha256"]:
             raise WorkshopError("SEAL_DRIFT", "live corpus differs from the trusted seal")
 
@@ -610,6 +612,7 @@ class AuthorityMigration:
                 "deterministic_updated_at": created_at,
                 "purpose": purpose,
                 "baseline_package_sha256": baseline_manifest["package_sha256"],
+                "baseline_seal_sha256": sha256_bytes(baseline_seal_bytes),
                 "candidate_root_source": candidate_root.as_posix(),
                 "candidate_compile_commands_sha256": sha256_bytes(compile_commands.read_bytes()),
                 "candidate_compiler_context_sha256": candidate_compiler_context_sha256,
@@ -1233,7 +1236,6 @@ class AuthorityMigration:
             )
 
         # Assemble candidate managed active docs from shadow and external active docs.
-        external_final = root / "work" / "external-final"
         candidate_config = load_config(machine_verify / "workshop.config.json")
         candidate_manifest = build_corpus_manifest(candidate_config, verify_database=True)
         if not candidate_manifest.get("verified"):
@@ -1304,13 +1306,12 @@ class AuthorityMigration:
     def _backup_target(self, root: Path, live: Path, role: str, rows: list[dict[str, Any]]) -> None:
         exists = live.is_file()
         backup = root / "rollback" / role / f"{sha256_bytes(str(live).encode('utf-8'))[:16]}_{live.name}"
-        if exists:
-            copy_exact(live, backup)
+        preimage = capture_rollback_preimage(live, backup, copier=copy_exact) if exists else {"sha256": None, "mtime_ns": None}
         rows.append({
             "live": str(live),
             "backup": str(backup),
             "existed": exists,
-            "sha256": sha256_bytes(live.read_bytes()) if exists else None,
+            **preimage,
         })
 
     def _rollback(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1319,8 +1320,7 @@ class AuthorityMigration:
             live = Path(row["live"])
             try:
                 if row["existed"]:
-                    copy_exact(Path(row["backup"]), live)
-                    ok = sha256_bytes(live.read_bytes()) == row["sha256"]
+                    ok = restore_rollback_preimage(Path(row["backup"]), live, row["sha256"], row.get("mtime_ns"), copier=copy_exact)
                 else:
                     if live.exists():
                         if live.is_dir():
@@ -1355,15 +1355,7 @@ class AuthorityMigration:
             *state.get("authority_documents", []),
         })
         governance, heartbeat = self.engine._import_kairos()
-        permit = governance.issue_external_edit_permit(
-            self.config.kairos_workspace,
-            paths=changed_managed,
-            reason=f"Runtime Sync Workshop authority migration {transaction_id}: {state['purpose']}",
-            ttl_seconds=1800,
-        )
-
         baseline_manifest = read_json(root / "baseline" / "manifest.json")
-        active_candidate = set(state["candidate_sources"]) | set(state["candidate_headers"])
         removed = set(state["removed_sources"]) | set(state["removed_headers"])
         affected_runtime = sorted(set(state["content_changed"]) | set(state["added_sources"]) | set(state["added_headers"]) | removed)
         rollback_rows: list[dict[str, Any]] = []
@@ -1382,6 +1374,12 @@ class AuthorityMigration:
         for relative in self.config.machine_authority_files:
             self._backup_target(root, self.config.machine_root / relative, "machine", rollback_rows)
         atomic_write_json(root / "rollback" / "targets.json", rollback_rows)
+        permit = governance.issue_external_edit_permit(
+            self.config.kairos_workspace,
+            paths=changed_managed,
+            reason=f"Runtime Sync Workshop authority migration {transaction_id}: {state['purpose']}",
+            ttl_seconds=1800,
+        )
 
         state["state"] = "APPLYING"
         state["permit"] = permit
@@ -1512,39 +1510,134 @@ class AuthorityMigration:
         if (not verified or verified != state.get("prepared_work_package_sha256")
                 or self._work_package(root, state)["package_sha256"] != verified):
             raise WorkshopError("AUTHORITY_RECOVERY_WORK_DRIFT", "preserved compiler work/review no longer equals the verified candidate")
-        # A compiler postcheck seal is written only after exact source/config
-        # projection, verified heartbeat and health. Never adopt an older or
-        # foreign seal, and never copy Apply targets during this route.
-        current = self.engine._verified_package(require_seal=True)
-        seal = read_json(self.engine.seal_path)
-        if (seal.get("transaction_id") != transaction_id or seal.get("authority_migration") is not True
-                or (state.get("postcheck_package_sha256") and state["postcheck_package_sha256"] != current)):
-            raise WorkshopError("AUTHORITY_RECOVERY_SEAL_MISMATCH", "no matching compiler TX postcheck seal proves this result")
+        seal_bytes = self.engine.seal_path.read_bytes()
+        seal = json.loads(seal_bytes)
+        sealed_result = (seal.get("transaction_id") == transaction_id
+                         and seal.get("authority_migration") is True)
         governance, heartbeat = self.engine._import_kairos()
+        if not sealed_result:
+            pin = state.get("baseline_seal_sha256")
+            if not pin:
+                raise WorkshopError("AUTHORITY_RECOVERY_BASELINE_UNBOUND", "unsealed compiler recovery requires its original checkout seal binding")
+            if (sha256_bytes(seal_bytes) != pin
+                    or seal.get("package_sha256") != state.get("baseline_package_sha256")):
+                raise WorkshopError("AUTHORITY_RECOVERY_SEAL_MISMATCH", "seal is neither this compiler TX result nor its exact original baseline")
+            raw = build_corpus_manifest(self.config, verify_database=False)
+            baseline = read_json(root / "baseline" / "manifest.json")
+            source_baseline = package_hash({"authority": baseline["authority"],
+                "records": {name: {key: value for key, value in record.items() if key != "database"}
+                            for name, record in baseline["records"].items()}})
+            if raw.get("verified") and raw["package_sha256"] == source_baseline:
+                self.engine._verified_package(require_seal=True)
+                permit = state.get("permit")
+                revoked = governance.revoke_action_permit(self.config.kairos_workspace,
+                    permit_id=str(permit["permit_id"]),
+                    reason=f"Compiler TX {transaction_id} proves its exact untouched baseline; Apply will not resume") if permit else None
+                state["state"] = "ROLLED_BACK"
+                state["permit_revocation"] = revoked
+                state["recovery_verification"] = {"schema":"werkfaden-compiler-baseline-recovery/v1",
+                    "package_sha256":state["baseline_package_sha256"], "baseline_seal_sha256":pin,
+                    "runtime_write_performed":False}
+                self.engine._save_transaction(root, state, event="AUTHORITY_RECOVERY_BASELINE_ROLLED_BACK",
+                                              details=state["recovery_verification"])
+                self.engine._release_lease(transaction_id)
+                return {"schema":"runtime-sync-authority-recovery/v1", "transaction_id":transaction_id,
+                        "state":"ROLLED_BACK", "runtime_write_performed":False,
+                        "package_sha256":state["baseline_package_sha256"]}
+        self._assert_recovery_targets(root, state)
+        if sealed_result:
+            current = self.engine._verified_package(require_seal=True)
+            if state.get("postcheck_package_sha256") and state["postcheck_package_sha256"] != current:
+                raise WorkshopError("AUTHORITY_RECOVERY_SEAL_MISMATCH", "preserved compiler postcheck differs from its sealed result")
+        else:
+            raw = build_corpus_manifest(self.config, verify_database=False)
+            if not raw.get("verified"):
+                raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "complete compiler source/config authority is not verified", details=raw.get("issues"))
+            current = raw["package_sha256"]
+        changed = [] if sealed_result else sorted({
+            *(f"code/{name}" for name in state.get("prepared_active", {}).values()),
+            *(f"code/{name}" for name in state.get("tombstones", {}).values()),
+            *state.get("authority_documents", []),
+        })
         receipt = heartbeat.run_heartbeat(self.engine.config.kairos_workspace,
-            requested_mode="verify", changed_paths=[], use_reconciliation=True,
-            trigger=f"authority-sealed-recovery:{transaction_id}")
+            requested_mode="verify", changed_paths=changed, use_reconciliation=True,
+            trigger=f"authority-result-recovery:{transaction_id}")
         if not receipt.get("verified"):
             raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "fresh recovery heartbeat is not verified", details=receipt)
         health = importlib.import_module("kairos.health").health_audit(self.engine.config.kairos_workspace, full=True)
         if health.get("verdict") != "PASS":
             raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "fresh recovery health is not PASS", details=health.get("failures"))
-        # Recheck after the derived verification work, before source finalization.
-        if (self.engine._verified_package(require_seal=True) != current
-                or read_json(self.engine.seal_path) != seal
+        observed = (self.engine._verified_package(require_seal=True) if sealed_result else
+                    build_corpus_manifest(self.config, verify_database=False)["package_sha256"])
+        if (observed != current or self.engine.seal_path.read_bytes() != seal_bytes
                 or self._work_package(root, state)["package_sha256"] != verified):
-            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "compiler result, seal or work changed during recovery verification")
+            raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "compiler result, seal or verified work changed during recovery")
+        self._assert_recovery_targets(root, state)
+        if not sealed_result:
+            post = build_corpus_manifest(self.config)
+            if not post.get("verified"):
+                raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "post-heartbeat compiler corpus is not verified", details=post.get("issues"))
+            current = post["package_sha256"]
+            mirror = self.engine._mirror(post)
+            if (self.engine._verified_package(require_seal=False) != current
+                    or self.engine.seal_path.read_bytes() != seal_bytes
+                    or self._work_package(root, state)["package_sha256"] != verified):
+                raise WorkshopError("AUTHORITY_RECOVERY_STILL_BLOCKED", "compiler result changed while creating recovery mirror")
+            self._assert_recovery_targets(root, state)
+            atomic_write_json(self.engine.seal_path, {"schema":"runtime-sync-seal/v1",
+                "created_at":utc_now(), "package_sha256":current,
+                "mirror_sha256":mirror["mirror_sha256"],
+                "mirror_manifest":str(self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
+                "counts":post["counts"], "transaction_id":transaction_id, "authority_migration":True,
+                "recovered":True, "baseline_seal_sha256":state["baseline_seal_sha256"]})
         state["recovery_verification"] = {
-            "schema": "werkfaden-compiler-sealed-recovery/v1", "observed_at": utc_now(),
-            "prior_state": state["state"], "verified_work_package_sha256": verified,
-            "postcheck_package_sha256": current, "seal_transaction_id": transaction_id,
-            "heartbeat_id": receipt.get("heartbeat_id"), "health": {"verdict": "PASS", "failure_count": 0}}
+            "schema": "werkfaden-compiler-sealed-recovery/v1" if sealed_result else "werkfaden-compiler-unsealed-result-recovery/v1",
+            "seal_created":not sealed_result, "observed_at":utc_now(),
+            "prior_state":state["state"], "verified_work_package_sha256":verified,
+            "postcheck_package_sha256":current, "seal_transaction_id":transaction_id,
+            "heartbeat_id":receipt.get("heartbeat_id"), "health":{"verdict":"PASS", "failure_count":0}}
         state["state"] = "POSTCHECK_VERIFIED"
         state["postcheck_package_sha256"] = current
         state["heartbeat"] = receipt
         state["health"] = {"verdict": "PASS", "failure_count": 0}
         self.engine._save_transaction(root, state, event="AUTHORITY_RECOVERY_POSTCHECK_VERIFIED", details=state["recovery_verification"])
         return self.engine._finish_transaction_receipt(root, state, kind="authority-postcheck", payload=self._receipt_payload(state))
+
+    def _assert_recovery_targets(self, root: Path, state: dict[str, Any]) -> None:
+        """Check compiler-authoritative targets only; do not infer build membership."""
+        roots = {"candidate":self.config.codebase_root, "blueprint":self.config.blueprint_root,
+                 "external-final":self.config.blueprint_root, "managed":self.config.managed_blueprint_root,
+                 "authority":self.config.kairos_workspace, "machine":self.config.machine_root}
+        machine_staging = {"compile_commands.json":"project-intake/compile_commands.json",
+                           "PROJECT_BUILD_AUTHORITY.cmake":"project-intake/PROJECT_BUILD_AUTHORITY.cmake"}
+        for row in self._work_package(root, state)["files"]:
+            role = row["role"]
+            if role == "review":
+                continue  # Already part of the unchanged verified work package.
+            if role not in roots:
+                raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "unknown verified recovery role")
+            relative = row["path"]
+            if role == "machine":
+                relative = machine_staging.get(relative, relative)
+                if relative not in self.config.machine_authority_files:
+                    raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "machine work has no configured Apply destination")
+            path = Path(relative)
+            if path.is_absolute() or ".." in path.parts:
+                raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "unsafe recovery target")
+            target = roots[role] / path
+            reject_link_components(target, label="compiler recovery target")
+            if not target.is_file() or target.stat().st_nlink != 1 or sha256_bytes(target.read_bytes()) != row["sha256"]:
+                raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", f"live {role} target differs from verified work: {relative}")
+        baseline = read_json(root / "baseline" / "manifest.json")
+        for relative in set(state["removed_sources"]) | set(state["removed_headers"]):
+            name = baseline["records"][relative]["blueprint"]["filename"]
+            if ((self.config.codebase_root / relative).exists()
+                    or (self.config.blueprint_root / name).exists()):
+                raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "retired source/header or external blueprint is still present")
+        manifest = build_corpus_manifest(self.config, verify_database=False)
+        if (set(manifest["authority"]["translation_units"]) != set(state["candidate_sources"])
+                or set(manifest["authority"]["include_headers"]) != set(state["candidate_headers"])):
+            raise WorkshopError("AUTHORITY_RECOVERY_TARGET_DRIFT", "compiler-backed source/header authority differs from verified candidate")
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
         root, state = self.engine._load_transaction(transaction_id)

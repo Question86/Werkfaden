@@ -8,12 +8,34 @@ second attempt or prevent a safe Abort/Recovery.
 from __future__ import annotations
 
 import json
+import fnmatch
+import os
+import re
 import sqlite3
+import stat
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from .util import WorkshopError, atomic_write_json
+from .util import WorkshopError, atomic_write_json, reject_link_components, sha256_bytes
+
+PENDING_OUTCOME = "TX_DOCUMENT_PROJECTION_PENDING"
+MAX_PENDING_REFERENCES = 20
+MAX_PENDING_MARKERS = 10000
+MAX_PENDING_MARKER_BYTES = 1024 * 1024
+
+
+def _publication_identity(transaction_id: str, event_id: str,
+                          content_sha256: str, scope: dict[str, Any]) -> str:
+    """A replay grant identifies exact intended bytes and its current owner."""
+    intent = {
+        "event_id": event_id,
+        "content_sha256": content_sha256,
+        "scope": {key: scope.get(key) for key in
+                  ("goal_id", "milestone_id", "task_id", "criterion_id")},
+    }
+    digest = sha256_bytes(json.dumps(intent, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    return f"{transaction_id}:{digest}"
 
 
 # Publication is selected from authoritative state transitions by tx_lifecycle.
@@ -53,16 +75,87 @@ def pending_record(state: dict[str, Any], *, event: str, reason: str,
     return record
 
 
+def _pending_marker_observation(path: Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Describe bounded marker bytes without treating them as state authority."""
+    result: dict[str, Any] = {"marker": path.name, "transaction_id": path.stem,
+                              "event_id": None, "event_sequence": None, "status": "UNVERIFIED"}
+    try:
+        reject_link_components(path, label="pending marker")
+        before = path.stat()
+        if not stat.S_ISREG(before.st_mode):
+            result["reason"] = "NOT_REGULAR_FILE"
+            return result, None
+        if before.st_size > MAX_PENDING_MARKER_BYTES:
+            result["reason"] = "MARKER_TOO_LARGE"
+            return result, None
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_PENDING_MARKER_BYTES + 1)
+        reject_link_components(path, label="pending marker")
+        after = path.stat()
+        if (len(raw) > MAX_PENDING_MARKER_BYTES or len(raw) != before.st_size
+                or before.st_size != after.st_size or before.st_mtime_ns != after.st_mtime_ns):
+            result["reason"] = "MARKER_CHANGED_DURING_READ"
+            return result, None
+        result["marker_sha256"] = sha256_bytes(raw)
+        marker = json.loads(raw.decode("utf-8"))
+        if not isinstance(marker, dict):
+            raise ValueError("marker is not a JSON object")
+        event_id = marker.get("event_id")
+        sequence = marker.get("event_sequence")
+        if (marker.get("schema") != "werkfaden-tx-projection-pending/v1"
+                or marker.get("pending") is not True
+                or marker.get("transaction_id") != path.stem or not isinstance(event_id, str)
+                or re.fullmatch(r"TXE_[0-9A-F]{32}", event_id) is None
+                or type(sequence) is not int or sequence < 1):
+            result["reason"] = "marker identity is missing or invalid"
+            return result, marker
+        result.update(event_id=event_id, event_sequence=sequence, status="OBSERVED")
+        return result, marker
+    except Exception as exc:
+        result["reason"] = str(getattr(exc, "code", type(exc).__name__))
+        return result, None
+
+
 def assert_no_pending(engine: Any) -> None:
     pending = engine.config.state_directory / "transaction-document-pending"
-    if pending.is_dir():
-        failures = sorted(path.name for path in pending.glob("TXN_*.json") if path.is_file())
-        if failures:
-            raise WorkshopError(
-                "TX_DOCUMENT_SYNC_PENDING",
-                "transaction documentation requires repair before another checkout",
-                details=failures[:20],
-            )
+    try:
+        pending.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise WorkshopError("TX_DOCUMENT_SYNC_PENDING", "pending transaction directory cannot be inspected",
+                            details=[], outcome=PENDING_OUTCOME,
+                            references={"status": "UNVERIFIED_DIRECTORY", "reason": type(exc).__name__}) from exc
+    try:
+        reject_link_components(pending, label="pending directory")
+        if not pending.is_dir():
+            raise ValueError("pending path is not a directory")
+        names: list[str] = []
+        overflow = False
+        with os.scandir(pending) as entries:
+            for entry in entries:
+                if fnmatch.fnmatch(entry.name, "TXN_*.json"):
+                    names.append(entry.name)
+                    if len(names) > MAX_PENDING_MARKERS:
+                        overflow = True
+                        break
+        names.sort()
+    except Exception as exc:
+        raise WorkshopError("TX_DOCUMENT_SYNC_PENDING", "pending transaction directory cannot be inspected",
+                            details=[], outcome=PENDING_OUTCOME,
+                            references={"status": "UNVERIFIED_DIRECTORY", "reason": type(exc).__name__}) from exc
+    if names:
+        selected = names[:MAX_PENDING_REFERENCES]
+        observations = [_pending_marker_observation(pending / name)[0] for name in selected]
+        raise WorkshopError(
+            "TX_DOCUMENT_SYNC_PENDING",
+            "transaction documentation requires repair before another checkout",
+            details=selected,
+            outcome=PENDING_OUTCOME,
+            references={"total": len(names), "total_exact": not overflow,
+                        "omitted": len(names) - len(selected), "omitted_exact": not overflow,
+                        "items": observations},
+        )
 
 
 def _sync_scope(workspace: Path, old_metadata: dict[str, Any] | None,
@@ -169,6 +262,17 @@ def load_scope_transition(engine: Any, state: dict[str, Any]) -> dict[str, Any] 
         previous = receipt["previous_state_utf8"].encode("utf-8")
         if sha256_bytes(previous) != receipt["previous_state_sha256"]:
             raise ValueError("prior state snapshot does not match the receipt")
+        admission = receipt.get("legacy_event_format")
+        declared = history.get("legacy_event_format_schema")
+        if admission is not None:
+            from .tx_lifecycle import legacy_event_anchor_admission
+            expected = legacy_event_anchor_admission(
+                json.loads(previous), inspection, receipt["previous_state_sha256"])
+            if (operation != "INTAKE" or admission != expected
+                    or declared != expected["schema"]):
+                raise ValueError("legacy format admission differs from its exact native receipt")
+        elif declared is not None:
+            raise ValueError("legacy format admission declaration has no immutable receipt")
         document = receipt.get("previous_document_utf8")
         if document is not None and sha256_bytes(document.encode("utf-8")) != receipt.get("previous_document_sha256"):
             raise ValueError("prior document snapshot does not match the receipt")
@@ -204,6 +308,15 @@ def prepare_scope_transition(engine: Any, transaction_id: str, *, operation: str
     report = inspect_historical_scope(engine, transaction_id)
     if report["report_sha256"] != expected_report_sha256:
         raise WorkshopError("TX_SCOPE_INSPECTION_STALE", "review the exact current historical evidence before mutation")
+    legacy_admission = None
+    anchor = state.get("tx_event")
+    if (operation == "INTAKE" and isinstance(anchor, dict)
+            and ("source_epoch_kind" not in anchor or "source_epoch" not in anchor)):
+        from .tx_lifecycle import legacy_event_anchor_admission
+        try:
+            legacy_admission = legacy_event_anchor_admission(state, report, sha256_bytes(previous))
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise WorkshopError("TX_LEGACY_EVENT_ADMISSION_INVALID", str(exc)) from exc
     owner_sources = []
     if operation == "BIND":
         if not old or old["operation"] != "INTAKE":
@@ -228,6 +341,8 @@ def prepare_scope_transition(engine: Any, transaction_id: str, *, operation: str
                "previous_document_sha256": sha256_bytes(prior_document) if prior_document is not None else None,
                "scope": report["scope"] if operation == "BIND" else None,
                "claim_boundary": "Verified local source identities and explicit historical metadata decision; not independent historical execution attestation"}
+    if legacy_admission is not None:
+        receipt["legacy_event_format"] = legacy_admission
     raw = canonical_json(receipt).encode("utf-8")
     if len(raw) > 8 * 1024 * 1024:
         raise WorkshopError("TX_SCOPE_RECEIPT_TOO_LARGE", "scope transition receipt exceeds its byte budget")
@@ -250,6 +365,8 @@ def prepare_scope_transition(engine: Any, transaction_id: str, *, operation: str
         "scope_status": "BOUND" if operation == "BIND" else "SCOPE_UNRESOLVED",
         "conflict_count": len(report["conflicts"]),
         "evidence_conflict_count": sum(row["status"] == "CONFLICT" for row in report["evidence"]), "reason": reason.strip()}
+    if legacy_admission is not None:
+        state["historical_scope"]["legacy_event_format_schema"] = legacy_admission["schema"]
     if operation == "BIND":
         state["original_scope"] = {**report["scope"], "binding_kind": "HISTORICAL_VERIFIED",
                                    "bound_at": receipt["created_at"], "source_receipt_sha256": digest}
@@ -570,23 +687,39 @@ def ensure_history_contract(engine: Any) -> dict[str, Any]:
     path = workspace / HISTORY_METHOD_PATH
     reject_link_components(path, label="canonical history method")
     expected = render_history_contract(str(cfg["workspace_id"]))
-    if path.exists() and (not path.is_file() or path.read_bytes() != expected.encode("utf-8")):
-        raise WorkshopError("TX_HISTORY_METHOD_DRIFT", "canonical history method differs; a verified document migration is required")
+    if path.exists() and not path.is_file():
+        raise WorkshopError("TX_HISTORY_METHOD_DRIFT", "canonical history method must be a regular file")
     if path.is_file():
+        observed = path.read_bytes()
         connection = KnowledgeDatabase(engine.config.kairos_database).connect(read_only=True)
         try:
-            row = connection.execute("SELECT path,content_sha256 FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()
+            row = connection.execute("SELECT path,content_sha256,metadata_json FROM artifacts WHERE artifact_id=?", (HISTORY_METHOD_ID,)).fetchone()
         finally:
             connection.close()
+        instance_timestamp = observed != expected.encode("utf-8")
+        if instance_timestamp:
+            try:
+                if not row or row["path"] != HISTORY_METHOD_PATH:
+                    raise ValueError("canonical method has no native artifact identity")
+                stamp = json.loads(row["metadata_json"])["updated_at"]
+                if not isinstance(stamp, str) or not 1 <= len(stamp) <= 128:
+                    raise ValueError("native method timestamp is invalid")
+                expected = render_history_contract(str(cfg["workspace_id"]), updated_at=stamp)
+                if observed != expected.encode("utf-8"):
+                    raise ValueError("canonical policy bytes differ from the current renderer")
+            except (ValueError, TypeError, KeyError) as exc:
+                raise WorkshopError("TX_HISTORY_METHOD_DRIFT", "canonical history method differs; a verified document migration is required") from exc
         reconciliation = reconcile_documents(workspace)
         source_pending = any(candidate.resolve() == path.resolve() for candidate in reconciliation.changed)
         if (row and row["path"] == HISTORY_METHOD_PATH
                 and row["content_sha256"] == prepare_document(path, workspace).content_sha256 and not source_pending):
             return {"path": HISTORY_METHOD_PATH, "artifact_id": HISTORY_METHOD_ID, "replayed": True}
+        if instance_timestamp:
+            raise WorkshopError("TX_HISTORY_METHOD_DRIFT", "instance timestamp requires an existing exact reconciled native projection")
     governance, heartbeat = engine._import_kairos()
     permit = governance.issue_external_edit_permit(
         workspace, paths=[HISTORY_METHOD_PATH], reason="Publish the canonical historical transaction intake method",
-        ttl_seconds=1800, publication_id="HISTORY_METHOD:" + str(cfg["workspace_id"]) + ":1",
+        ttl_seconds=1800, publication_id="HISTORY_METHOD:" + sha256_bytes(expected.encode("utf-8")),
         expected_sha256={HISTORY_METHOD_PATH: sha256_text(expected)})
     if not path.exists():
         atomic_write_text(path, expected)
@@ -605,6 +738,145 @@ def ensure_history_contract(engine: Any) -> dict[str, Any]:
 
 
 
+def assert_projection_lineage(engine: Any, state: dict[str, Any]) -> None:
+    """Do not replace an acknowledged event with an unproved restored prefix/fork.
+
+    Receipts and SQL remain derived evidence: they may block an inconsistent
+    restore but NEVER authorize reconstructing or overwriting canonical state.
+    """
+    from .tx_lifecycle import (MAX_INTENT_BYTES, SOURCE_EPOCH_KIND, canonical,
+                               event_for_marker, source_epoch, validate_event_chain)
+    txid = str(state.get("transaction_id") or "")
+    if not txid:
+        return
+    checkpoint = engine.config.state_directory / "transaction-document-projections" / (txid + ".json")
+    proofs: list[dict[str, Any]] = []
+
+    def bounded(path: Path, limit: int) -> bytes | None:
+        reject_link_components(path, label="acknowledged projection evidence")
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise WorkshopError("TX_DOCUMENT_ACK_EVIDENCE_UNSAFE",
+                "acknowledged projection evidence is not a bounded regular file",
+                outcome=PENDING_OUTCOME)
+        with path.open("rb") as stream:
+            raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise WorkshopError("TX_DOCUMENT_ACK_EVIDENCE_UNSAFE",
+                "acknowledged projection evidence exceeds its byte bound",
+                outcome=PENDING_OUTCOME)
+        return raw
+
+    raw = bounded(checkpoint, MAX_INTENT_BYTES)
+    if raw is None:
+        workspace = engine.config.kairos_workspace
+        reject_link_components(workspace, label="acknowledged projection workspace")
+        try:
+            workspace.lstat()
+        except FileNotFoundError:
+            # No checkpoint and no workspace means there can be no earlier
+            # document/SQL acknowledgement. Do not require a harness binding
+            # for a storage-only operation with no publication evidence.
+            return
+    if raw is not None:
+        try:
+            ack = json.loads(raw)
+            snapshot_raw = ack["source_state_utf8"].encode("utf-8")
+            snapshot = json.loads(snapshot_raw)
+            validate_event_chain(snapshot)
+            event = snapshot["tx_event"]
+            valid = (ack["schema"] == "werkfaden-tx-projection/v1"
+                and ack["transaction_id"] == snapshot["transaction_id"] == txid
+                and sha256_bytes(snapshot_raw) == ack["source_state_sha256"]
+                and ack["source_epoch_kind"] == SOURCE_EPOCH_KIND
+                and source_epoch(snapshot) == ack["source_epoch"]
+                and ack["event_id"] == snapshot["tx_event_id"] == event["event_id"]
+                and type(ack["event_sequence"]) is int
+                and ack["event_sequence"] == snapshot["tx_event_sequence"] == event["sequence"]
+                and isinstance(ack["heartbeat_id"], str) and bool(ack["heartbeat_id"]))
+            if valid:
+                proofs.append({"kind": "projection_checkpoint", "path": str(checkpoint),
+                    "sha256": sha256_bytes(raw), "event_id": event["event_id"],
+                    "event": event, "content_sha256": ack["content_sha256"]})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            # A corrupt derived checkpoint is repairable from actual source and
+            # native publication; it cannot become an alternative authority.
+            pass
+
+    engine._import_kairos()
+    from kairos.constants import MAX_DOCUMENT_BYTES
+    from kairos.database import KnowledgeDatabase
+    from kairos.frontmatter import split_frontmatter
+    from kairos.promoter import prepare_document
+    from kairos.transaction_document import document_id, document_path
+    document = engine.config.kairos_workspace / document_path(txid)
+    document_raw = bounded(document, MAX_DOCUMENT_BYTES)
+    if document_raw is not None:
+        try:
+            metadata = split_frontmatter(document_raw.decode("utf-8")).metadata
+            with closing(KnowledgeDatabase(engine.config.kairos_database).connect(read_only=True)) as connection:
+                row = connection.execute(
+                    "SELECT revision,content_sha256,path,metadata_json FROM artifacts "
+                    "WHERE artifact_id=? AND document_type='transaction'", (document_id(txid),)).fetchone()
+            projected = json.loads(row["metadata_json"]) if row else {}
+            event_id = metadata.get("tx_event_id")
+            valid = (row is not None and metadata.get("id") == document_id(txid)
+                and metadata.get("type") == "transaction" and metadata.get("transaction_id") == txid
+                and isinstance(event_id, str) and bool(re.fullmatch(r"TXE_[A-F0-9]{32}", event_id))
+                and projected.get("tx_event_id") == event_id
+                and int(row["revision"]) == metadata["revision"]
+                and row["path"] == document_path(txid)
+                and row["content_sha256"] == prepare_document(document, engine.config.kairos_workspace).content_sha256)
+            if valid:
+                proofs.append({"kind": "matching_markdown_sql", "path": str(document),
+                    "sha256": sha256_bytes(document_raw), "event_id": event_id,
+                    "content_sha256": row["content_sha256"]})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+    for proof in proofs:
+        try:
+            represented = event_for_marker(state, proof["event_id"])
+        except ValueError:
+            represented = None
+        if represented is not None and ("event" not in proof or canonical(represented) == canonical(proof["event"])):
+            continue
+        # Only the existing reviewed, immutable legacy INTAKE declaration may
+        # explain replacement of an incompatible pre-material event family.
+        # Check the exact previous document, not a caller-supplied exemption.
+        admitted = False
+        if (state.get("tx_event") or {}).get("event") == "TX_HISTORY_INTAKE":
+            control = load_scope_transition(engine, state)
+            if control and control.get("operation") == "INTAKE" and control.get("legacy_event_format"):
+                from kairos.util import sha256_text
+                previous_document = control.get("previous_document_utf8")
+                admitted = (isinstance(previous_document, str)
+                    and sha256_text(previous_document) == proof["content_sha256"])
+        if admitted:
+            continue
+        source_path = engine._transaction_path(txid) / "state.json"
+        reference = {key: value for key, value in proof.items() if key != "event"}
+        source_raw = bounded(source_path, MAX_INTENT_BYTES)
+        actual = json.loads(source_raw) if source_raw is not None else {}
+        reference.update(status="ACKNOWLEDGED_HISTORY_NOT_IN_SOURCE",
+                         source_path=str(source_path),
+                         source_sha256=sha256_bytes(source_raw) if source_raw is not None else None,
+                         source_event_id=actual.get("tx_event_id"),
+                         source_event_sequence=actual.get("tx_event_sequence"),
+                         candidate_event_id=state.get("tx_event_id"),
+                         candidate_event_sequence=state.get("tx_event_sequence"))
+        raise WorkshopError("TX_DOCUMENT_SOURCE_HISTORY_CONFLICT",
+            "authoritative source does not retain the last acknowledged event; "
+            "preserve restore evidence and recover verified source authority before retrying native reconcile; "
+            "do not reconstruct source from derived SQL/checkpoint",
+            details=reference, outcome=PENDING_OUTCOME,
+            references={"total": 1, "total_exact": True, "omitted": 0,
+                        "omitted_exact": True, "items": [reference]})
+
+
 def capture_projection_source(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     """Capture the actual authoritative bytes; never acknowledge a caller-only view."""
     from .tx_lifecycle import SOURCE_EPOCH_KIND, source_epoch
@@ -615,6 +887,8 @@ def capture_projection_source(engine: Any, state: dict[str, Any]) -> dict[str, A
     persisted = json.loads(raw)
     if canonical_json(persisted) != canonical_json(state):
         raise WorkshopError("TX_DOCUMENT_SOURCE_STATE_MISMATCH", "provided transaction differs from its persisted authoritative state")
+    from .tx_lifecycle import validate_event_chain
+    validate_event_chain(persisted)
     epoch = source_epoch(persisted)
     identity = persisted.get("tx_event") or {}
     if identity.get("source_epoch") and identity["source_epoch"] != epoch:
@@ -628,6 +902,119 @@ def assert_projection_source_unchanged(engine: Any, transaction_id: str, capture
     path = engine._transaction_path(transaction_id) / "state.json"
     if sha256_bytes(path.read_bytes()) != captured["source_state_sha256"]:
         raise WorkshopError("TX_DOCUMENT_SOURCE_CHANGED", "authoritative state changed before the projection acknowledgement")
+
+
+def _chunk_sources(engine: Any, state: dict[str, Any], workspace_id: str) -> dict[str, str]:
+    """Resolve only native receipt-bound subordinate sources; never adopt drift."""
+    from kairos.transaction_document import recycling_chunk_identity, render_recycling_chunk
+    from kairos.constants import MAX_DOCUMENT_BYTES
+    from .tx_recycling import _canonical, _chunk_path
+    owner = state.get("recycling") if (state.get("recycling") or {}).get("chunks") else state.get("recycling_progress")
+    if not owner:
+        return {}
+    result = {}
+    for item in owner["chunks"]:
+        receipt = _chunk_path(engine._transaction_path(state["transaction_id"]), owner["inventory_sha256"], item["chunk_index"])
+        raw = receipt.read_bytes()
+        packet = json.loads(raw)
+        if (raw != _canonical(packet) or sha256_bytes(raw) != item["receipt_sha256"]
+                or packet["transaction_id"] != state["transaction_id"]
+                or packet["inventory_sha256"] != owner["inventory_sha256"]
+                or packet["decisions"] != item["decisions"] or packet["range"] != item["range"]
+                or packet["chunk_sha256"] != item["chunk_sha256"]):
+            raise WorkshopError("TX_RECYCLING_CHUNK_CORRUPT", "subordinate source differs from its immutable packet")
+        _, relative = recycling_chunk_identity(state["transaction_id"], owner["inventory_sha256"], item["chunk_index"])
+        text = render_recycling_chunk(transaction_id=state["transaction_id"], workspace_id=workspace_id,
+                                      packet=packet, receipt_sha256=item["receipt_sha256"])
+        if sha256_bytes(text.encode("utf-8")) != item["document_sha256"] or len(text.encode("utf-8")) > MAX_DOCUMENT_BYTES:
+            raise WorkshopError("TX_RECYCLING_CHUNK_SOURCE_DRIFT", "chunk source recipe or unchanged byte budget differs")
+        result[relative] = text
+    return result
+
+
+def _assert_chunk_projection(engine: Any, state: dict[str, Any]) -> None:
+    from kairos.workspace import load_config
+    owner = state.get("recycling") if (state.get("recycling") or {}).get("chunks") else state.get("recycling_progress")
+    if not owner:
+        return
+    sources = _chunk_sources(engine, state, str(load_config(engine.config.kairos_workspace)["workspace_id"]))
+    with closing(sqlite3.connect(engine.config.kairos_database)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT * FROM tx_recycling_chunks WHERE transaction_id=? AND inventory_sha256=? ORDER BY chunk_index",
+            (state["transaction_id"], owner["inventory_sha256"])).fetchall()
+    if len(rows) != len(owner["chunks"]):
+        raise WorkshopError("TX_RECYCLING_CHUNK_SQL_PENDING", "partial chunk coverage has no exact source/SQL projection")
+    for item, row in zip(owner["chunks"], rows):
+        relative = row["source_path"]
+        path = engine.config.kairos_workspace / relative
+        reject_link_components(path, label="recycling chunk source")
+        if (relative not in sources or not path.is_file() or path.read_bytes() != sources[relative].encode("utf-8")
+                or row["source_sha256"] != item["document_sha256"]
+                or row["chunk_index"] != item["chunk_index"]
+                or [row["range_start"], row["range_stop"]] != item["range"]
+                or row["chunk_sha256"] != item["chunk_sha256"]
+                or row["receipt_sha256"] != item["receipt_sha256"]
+                or row["decision_count"] != len(item["decisions"])
+                or json.loads(row["decisions_json"]) != item["decisions"]):
+            raise WorkshopError("TX_RECYCLING_CHUNK_SQL_PENDING", "chunk source/SQL bytes differ from the accepted immutable record")
+
+
+def _ensure_chunk_projection_schema(database: Any) -> None:
+    """Native additive initialization, only on the explicit publication path."""
+    with closing(database.connect(read_only=True)) as connection:
+        available = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE name IN ('tx_recycling_chunks','tx_recycling_chunk_atoms')")}
+    if available != {"tx_recycling_chunks", "tx_recycling_chunk_atoms"}:
+        database.initialize()
+
+
+def _publish_chunk_sources(engine: Any, state: dict[str, Any], workspace_id: str,
+                            captured: dict[str, Any]) -> None:
+    """Publish bounded child batches before their parent; preserve the TX outbox."""
+    from kairos.database import KnowledgeDatabase
+    from kairos.heartbeat import run_heartbeat
+    from kairos.util import atomic_write_text, sha256_text
+    sources = _chunk_sources(engine, state, workspace_id)
+    if not sources:
+        return
+    workspace = engine.config.kairos_workspace
+    pending = []
+    database = KnowledgeDatabase(engine.config.kairos_database)
+    # Keep additive migration out of read-only assertions and do it before
+    # the first lookup, including when resuming a legacy-schema outbox.
+    _ensure_chunk_projection_schema(database)
+    with closing(database.connect(read_only=True)) as connection:
+        for relative, text in sources.items():
+            path = workspace / relative
+            reject_link_components(path, label="recycling chunk source")
+            if path.exists() and (not path.is_file() or path.stat().st_nlink != 1 or path.read_bytes() != text.encode("utf-8")):
+                raise WorkshopError("TX_RECYCLING_CHUNK_SOURCE_DRIFT", "immutable subordinate source differs; do not overwrite it")
+            row = connection.execute("SELECT source_sha256 FROM tx_recycling_chunks WHERE source_path=?", (relative,)).fetchone()
+            if not path.exists() or row is None or row["source_sha256"] != sha256_text(text):
+                pending.append(relative)
+    governance, _ = engine._import_kairos()
+    for start in range(0, len(pending), 32):
+        paths = pending[start:start + 32]
+        hashes = {relative: sha256_text(sources[relative]) for relative in paths}
+        identity = sha256_bytes(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        permit = governance.issue_external_edit_permit(
+            workspace, paths=paths, reason="Publish immutable subordinate recycling evidence without review clearance",
+            ttl_seconds=1800, publication_id=_publication_identity(state["transaction_id"],
+                str(state.get("tx_event_id") or ""), identity, governance.runtime_scope(workspace)),
+            expected_sha256=hashes)
+        for relative in paths:
+            path = workspace / relative
+            if not path.exists():
+                atomic_write_text(path, sources[relative])
+        result = run_heartbeat(workspace, requested_mode="verify", changed_paths=paths,
+                               use_reconciliation=False, trigger="workshop-recycling-chunk-sources",
+                               resume_publication_permit_id=permit["permit_id"])
+        if not result.get("verified"):
+            raise WorkshopError("TX_RECYCLING_CHUNK_SQL_PENDING", "bounded subordinate source heartbeat failed",
+                                details=result.get("failures"))
+        assert_projection_source_unchanged(engine, state["transaction_id"], captured)
+    _assert_chunk_projection(engine, state)
 
 
 def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
@@ -662,8 +1049,10 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     control = load_scope_transition(engine, state)
     goal, milestone, task, loop = _sync_scope(workspace, old, state, expected_workspace_id=str(cfg["workspace_id"]), history_control=control)
     captured = capture_projection_source(engine, state)
+    assert_projection_lineage(engine, state)
     if control:
         ensure_history_contract(engine)
+    _publish_chunk_sources(engine, state, str(cfg["workspace_id"]), captured)
     # A diagnostic-only save may change journal/time bytes without changing
     # the material projection. Keep the previously acknowledged full snapshot.
     if old and (old.get("tx_event_id") or "") == (state.get("tx_event_id") or ""):
@@ -723,11 +1112,15 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
     validate_answer_targets(parsed.metadata, sections)
 
     governance, _ = engine._import_kairos()
+    intended_sha256 = sha256_text(text)
     publication_permit = governance.issue_external_edit_permit(
         workspace, paths=[relative], reason=f"Workshop lifecycle {txid}: {state.get('state', 'unknown')}",
         ttl_seconds=1800,
-        publication_id=f"{txid}:{state.get('tx_event_id') or sha256_text(text)}",
-        expected_sha256={relative: sha256_text(text)},
+        publication_id=_publication_identity(
+            txid, str(state.get("tx_event_id") or ""), intended_sha256,
+            governance.runtime_scope(workspace),
+        ),
+        expected_sha256={relative: intended_sha256},
     )
     if not replay:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -768,35 +1161,105 @@ def publish(engine: Any, state: dict[str, Any]) -> dict[str, Any]:
             "source_state_sha256": captured["source_state_sha256"], "replayed": replay}
 
 
+def pending_identity_matches(record: dict[str, Any], identity: dict[str, Any]) -> bool:
+    view = {"transaction_id": identity["transaction_id"], "state": identity["state_after"],
+            "tx_event": identity, "tx_event_id": identity["event_id"], "tx_event_sequence": identity["sequence"]}
+    expected = pending_record(view, event=str(identity.get("event") or ""), reason="")
+    keys = ("schema", "transaction_id", "event_id", "event_sequence", "state", "candidate_sha256",
+            "baseline_sha256", "scope_receipt_sha256", "pending")
+    if any(type(record.get(k)) is not type(expected[k]) or record.get(k) != expected[k] for k in keys):
+        return False
+    return not (identity.get("event") == "TX_RECYCLE_REVIEWED" or record.get("event") == "TX_RECYCLE_REVIEWED") or record.get("event") == expected["event"]
+
+
+def acknowledge_pending_marker(engine: Any, state: dict[str, Any],
+                               observed: dict[str, Any] | None) -> None:
+    """Only the exact observed marker and a proved represented event may retire."""
+    from .tx_lifecycle import event_for_marker
+    txid = str(state["transaction_id"])
+    marker = pending_path(engine, txid)
+    try:
+        marker.lstat()
+    except FileNotFoundError:
+        if observed is None:
+            return
+        after = {"transaction_id": txid, "status": "MISSING"}
+        record = None
+    else:
+        after, record = _pending_marker_observation(marker)
+    identity = event_for_marker(state, str((record or {}).get("event_id") or ""))
+    if (observed is None or after.get("status") != "OBSERVED"
+            or observed.get("marker_sha256") != after.get("marker_sha256")
+            or identity is None or not pending_identity_matches(record, identity)):
+        raise WorkshopError("TX_DOCUMENT_SYNC_PENDING", "pending marker changed or has no exact native event proof",
+                            outcome=PENDING_OUTCOME, details=[marker.name],
+                            references={"total": 1, "total_exact": True, "omitted": 0,
+                                        "omitted_exact": True, "items": [after]})
+    marker.unlink()
+
+
 def update_document(engine: Any, state: dict[str, Any], *, event: str) -> None:
+    from .tx_retention import _retention_lock
+    from .tx_lifecycle import acknowledge_event_intents
     txid = str(state.get("transaction_id", ""))
     if not txid:
         return
-    marker = pending_path(engine, txid)
-    try:
-        result = publish(engine, state)
-    except Exception as exc:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(marker, pending_record(
-            state, event=event, reason="lifecycle document publication failed", error=exc,
-        ))
-        return
-    if marker.is_file():
-        marker.unlink()
+    with _retention_lock(engine):
+        marker = pending_path(engine, txid)
+        try:
+            marker.lstat()
+        except FileNotFoundError:
+            observed = None
+        else:
+            observed, _ = _pending_marker_observation(marker)
+        try:
+            publish(engine, state)
+            assert_projected(engine, txid, ignore_pending=True)
+            acknowledge_pending_marker(engine, state, observed)
+            acknowledge_event_intents(engine, state)
+        except Exception as exc:
+            # Never replace a newer, malformed or unrelated obligation merely
+            # because publication of this event failed. Its native intent stays.
+            try:
+                marker.lstat()
+            except FileNotFoundError:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(marker, pending_record(
+                    state, event=event, reason="lifecycle document publication failed", error=exc))
+            else:
+                current, _ = _pending_marker_observation(marker)
+                if (observed is not None and current.get("status") == "OBSERVED"
+                        and current.get("marker_sha256") == observed.get("marker_sha256")
+                        and current.get("event_id") == state.get("tx_event_id")):
+                    atomic_write_json(marker, pending_record(
+                        state, event=event, reason="lifecycle document publication failed", error=exc))
+            return
 
 
 def assert_projected(engine: Any, transaction_id: str, *, ignore_pending: bool = False) -> None:
     marker = pending_path(engine, transaction_id)
-    if marker.is_file() and not ignore_pending:
-        pending = json.loads(marker.read_text(encoding="utf-8"))
+    try:
+        marker.lstat()
+        marker_exists = True
+    except FileNotFoundError:
+        marker_exists = False
+    except OSError:
+        marker_exists = True
+    if marker_exists and not ignore_pending:
+        observed, pending = _pending_marker_observation(marker)
+        details = pending if pending is not None else {"marker": marker.name, "status": "UNVERIFIED"}
         raise WorkshopError(
             "TX_DOCUMENT_SYNC_PENDING",
             "Workshop transaction document projection is pending; do not repeat Apply. "
-            + str(pending.get("code")) + ": " + str(pending.get("message")),
-            details=pending,
+            + str(details.get("code")) + ": " + str(details.get("message")),
+            details=details, outcome=PENDING_OUTCOME,
+            references={"total": 1, "total_exact": True, "omitted": 0,
+                        "omitted_exact": True, "items": [observed]},
         )
     # The persisted source and SQL projection must match the actual terminal
     # state, not just share an artifact identity from an earlier heartbeat.
+    # Resolve KAIROS through the configured Workshop binding on this entry path.
+    engine._import_kairos()
     from kairos.transaction_document import document_path, document_id
     from kairos.promoter import prepare_document
     from kairos.frontmatter import split_frontmatter
@@ -859,6 +1322,7 @@ def assert_projected(engine: Any, transaction_id: str, *, ignore_pending: bool =
         raise WorkshopError("TX_DOCUMENT_OUTBOX_UNACKNOWLEDGED",
                             "current material source has no matching full-state Markdown/SQL projection checkpoint")
     review = state.get("recycling") if isinstance(state.get("recycling"), dict) else {}
+    _assert_chunk_projection(engine, state)
     if review.get("status") == "REVIEWED":
         with closing(sqlite3.connect(engine.config.kairos_database)) as con:
             con.row_factory = sqlite3.Row

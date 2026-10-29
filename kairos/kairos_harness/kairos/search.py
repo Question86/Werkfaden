@@ -34,6 +34,9 @@ AUTHORITY_BOOSTS = {
 }
 
 INTENT_TYPE_PREFERENCES = {
+    # Explicit operational questions need a relevant tool/procedure route before
+    # opening its governing authority. This does not raise a router's truth role.
+    "procedure": {"router"},
     "architecture": {"documentation", "router"},
     "content_placement": {"documentation", "router"},
     "contextual_knowledge": {"documentation", "research", "decision"},
@@ -71,12 +74,13 @@ def _candidate_rows(connection, frame: QueryFrame, candidate_limit: int):
             a.task_id,
             a.updated_at,
             a.claim_boundary,
-            bm25(section_fts,0.0,0.0,10.0,8.0,12.0,6.0,4.0,1.0) AS fts_rank
+            f.rank AS fts_rank
         FROM section_fts f
         JOIN sections s ON s.artifact_id=f.artifact_id AND s.section_id=f.section_id
         JOIN artifacts a ON a.artifact_id=f.artifact_id
         WHERE section_fts MATCH ?
-        ORDER BY fts_rank
+          AND f.rank MATCH 'bm25(0.0,0.0,10.0,8.0,12.0,6.0,4.0,1.0)'
+        ORDER BY f.rank
         LIMIT ?
         """,
         (match, candidate_limit),

@@ -2,12 +2,12 @@
 schema = "kairos-context/v1"
 id = "KAIROS_KNOWN_LIMITATIONS"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_KNOWN_LIMITATIONS"
-updated_at = "2026-10-25T18:32:39Z"
+updated_at = "2026-10-29T23:00:00Z"
 capsule = "Current developer-preview support and refusal boundaries for project intake, structural migration, verification, model integration and licensing."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_KNOWN_LIMITATIONS"]
@@ -40,12 +40,12 @@ query = "What are the current limitations of KAIROS?"
 expected = "KAIROS_KNOWN_LIMITATIONS#s-overview"
 required_top_k = 1
 +++
-# Known limitations — 0.1.0-alpha.2
+# Known limitations — current developer preview
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — KAIROS 0.1.0-alpha.2 is a developer preview. The verified core is intended for technically
-- [`s-project-intake-scope`](#s-project-intake-scope) — The project-binding edge currently targets C, C++ and CUDA translation units represented
+- [`s-overview`](#s-overview) — The 2026-10-30 technical snapshot is a developer preview. The framework is intended for technically
+- [`s-project-intake-scope`](#s-project-intake-scope) — Bounded static intake covers multiple ecosystems; C-family membership remains compiler-authoritative.
 - [`s-structural-migration-scope`](#s-structural-migration-scope) — Ordinary source/header edits and include-owner changes use the normal Workshop transaction.
 - [`s-verification-boundary`](#s-verification-boundary) — KAIROS verifies synchronization among admitted source/header bytes, Markdown authority,
 - [`s-product-and-model-integration-scope`](#s-product-and-model-integration-scope) — kickstart prompt renders the bounded prompt for an LLM to create the initial
@@ -54,9 +54,9 @@ required_top_k = 1
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: KAIROS 0.1.0-alpha.2 is a developer preview. The verified core is intended for technically
+> Capsule: The 2026-10-30 technical snapshot is a developer preview. The framework is intended for technically
 
-KAIROS 0.1.0-alpha.2 is a developer preview. The verified core is intended for technically
+The 2026-10-30 technical snapshot is a developer preview. The framework is intended for technically
 experienced users who are comfortable with compiler databases, command-line tooling, and
 fail-closed workflows. This release is not a stable compatibility or production-support
 promise.
@@ -64,10 +64,12 @@ promise.
 <a id="s-project-intake-scope"></a>
 ## Project intake scope
 
-> Capsule: The project-binding edge currently targets C, C++ and CUDA translation units represented
+> Capsule: Bounded static intake covers multiple ecosystems; C-family membership remains compiler-authoritative.
 
-- The project-binding edge currently targets C, C++ and CUDA translation units represented
-  by compiler-produced `compile_commands.json`, or CMake projects that can emit that database.
+- Automatic intake covers bounded local Python, JavaScript/TypeScript, Rust, Go, JVM,
+  .NET, Ruby and PHP source sets. Exact membership does not prove runtime reachability.
+- C/C++/CUDA require compiler-produced compile_commands.json, or CMake that emits it.
+  Mixed projects combine static and compiler authority with --auto-compile-commands.
 - Source/header intake requires UTF-8 regular files with representable project-relative paths.
   Symlink/reparse components are refused where an exact byte identity cannot be guaranteed.
 - Translation-unit membership comes from compiler evidence. KAIROS does not infer membership
@@ -85,6 +87,8 @@ promise.
 > Capsule: Ordinary source/header edits and include-owner changes use the normal Workshop transaction.
 
 - Ordinary source/header edits and include-owner changes use the normal Workshop transaction.
+- Static non-C-family create/delete/rename uses the source-set migration workflow; it
+  refuses build-authority changes and edits to existing sealed source bytes.
 - Adding/removing governed local headers can use the explicit authority-migration transaction
   while translation-unit membership and normalized compiler context stay unchanged.
 - Translation-unit additions/removals/renames or compiler-context changes require refreshed
@@ -120,7 +124,7 @@ promise.
   answering.
 - `kickstart prompt` renders the bounded prompt for an LLM to create the initial
   `kairos-project-kickoff/v1` contract. This release does not call or bundle an LLM provider.
-  The returned contract must be reviewed before compiler discovery.
+  The generated contract must be reviewed before project discovery and initialization.
 - Public `workspace/docs/` contains general framework methods only. Local project goals,
   tasks, reports and state are excluded; real project work uses a fresh external workspace.
 - There is no GUI or one-click installer in this alpha. The supported interface is the Python

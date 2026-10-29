@@ -15,7 +15,7 @@ from collections import Counter
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
-from .corpus import WorkshopConfig
+from .corpus import WorkshopConfig, build_corpus_manifest
 from .util import (
     WorkshopError,
     atomic_write_bytes,
@@ -85,8 +85,8 @@ class ContextDocuments:
         for relative in sorted(selected):
             path = workspace / relative
             managed = relative in canonical or any(relative.startswith(f"{root}/") for root in roots)
-            if (not managed or relative in dynamic or relative.startswith((".kairos/", "code/"))
-                    or path in protected or path.is_relative_to(self.config.managed_blueprint_root)):
+            if (not managed or relative in dynamic or relative.startswith(".kairos/")
+                    or path in protected):
                 raise WorkshopError(
                     "CONTEXT_DOCUMENT_INVALID",
                     f"document is unmanaged, generated, or owned by a source/authority transaction: {relative}",
@@ -95,7 +95,36 @@ class ContextDocuments:
             parsed = self._parse(raw, relative)
             if parsed.metadata["type"] in {"router", "gate", "session"}:
                 raise WorkshopError("CONTEXT_DOCUMENT_INVALID", f"generated routing documents cannot be edited here: {relative}")
+            self._assert_authored_code_context(relative, parsed)
         return sorted(selected)
+
+    def _assert_authored_code_context(self, relative: str, parsed: Any) -> None:
+        """Separate authored code prose from exact source/header projections.
+
+        The default managed directory also contains native new-code artifacts.
+        Its directory name alone does not establish ownership of every file.
+        """
+        path = self.config.kairos_workspace / relative
+        if not (relative.startswith("code/") or path.is_relative_to(self.config.managed_blueprint_root)):
+            return
+        if (not relative.startswith("code/") or parsed.metadata.get("type") != "code"
+                or parsed.metadata.get("authority") != "implementation_documentation"):
+            raise WorkshopError("CONTEXT_DOCUMENT_INVALID", f"document is not authored code context: {relative}")
+        sections = self._module("sections").parse_sections(
+            parsed.body, header_bytes=parsed.header_bytes, ingested=True,
+        )
+        if {section.section_id for section in sections} & {"s-mapping", "s-source-ledger", "s-header-ledger"}:
+            raise WorkshopError("CONTEXT_DOCUMENT_INVALID", f"native source mapping/ledger belongs to its source transaction: {relative}")
+        manifest = build_corpus_manifest(self.config)
+        if not manifest["verified"] or manifest["issues"]:
+            raise WorkshopError("CONTEXT_DOCUMENT_INVALID", "authored code context requires verified exact source ownership",
+                                details=manifest["issues"])
+        owned = {
+            self.config.managed_blueprint_root / record["blueprint"]["filename"]
+            for record in manifest["records"].values()
+        }
+        if path in owned:
+            raise WorkshopError("CONTEXT_DOCUMENT_INVALID", f"source-owned blueprint cannot be selected as context: {relative}")
 
     def _parse(self, raw: bytes, relative: str) -> Any:
         try:
@@ -225,6 +254,7 @@ class ContextDocuments:
             baseline_raw = self._file(root / "baseline" / "documents" / relative)
             baseline = self._parse(baseline_raw, relative)
             work = self._parse(self._file(root / "work" / "documents" / relative), relative)
+            self._assert_authored_code_context(relative, work)
             for key in ("id", "workspace", "type"):
                 if work.metadata[key] != baseline.metadata[key]:
                     raise WorkshopError("CONTEXT_DOCUMENT_INVALID", f"context identity {key} cannot change: {relative}")

@@ -292,5 +292,139 @@ class GoldenTemplateTests(unittest.TestCase):
         self.assertEqual(json.loads(kickoff.stdout)["status"], "VERIFIED")
 
 
+
+
+class FrameworkDistributionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="framework-distribution-tests-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        from kairos.golden import _FRAMEWORK_ROOT_FILES, _FRAMEWORK_ROOT_DIRS, _FRAMEWORK_REQUIRED
+        for relative in _FRAMEWORK_ROOT_DIRS:
+            (self.source / relative).mkdir(parents=True, exist_ok=True)
+        for relative in (*_FRAMEWORK_ROOT_FILES, *_FRAMEWORK_REQUIRED):
+            path = self.source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(("fixture " + relative).encode("utf-8"))
+
+    def export(self, name="candidate"):
+        from kairos.golden import build_framework_distribution
+        return build_framework_distribution(source_root=self.source,
+            target_root=self.root / name, source_commit="fixture-source-sha")
+
+    def test_deterministic_manifest_and_complete_product_roots(self):
+        from kairos.golden import FRAMEWORK_DISTRIBUTION_MANIFEST, verify_framework_distribution
+        first = self.export("first")
+        second = self.export("second")
+        self.assertTrue(first["verified"])
+        self.assertEqual(first["files_sha256"], second["files_sha256"])
+        self.assertEqual((self.root/"first"/FRAMEWORK_DISTRIBUTION_MANIFEST).read_bytes(),
+                         (self.root/"second"/FRAMEWORK_DISTRIBUTION_MANIFEST).read_bytes())
+        self.assertTrue(verify_framework_distribution(self.root/"first")["verified"])
+
+    def test_local_history_private_requirements_and_caches_are_excluded(self):
+        for relative in ("workspace/tasks/old.md", "workspace/goals/old.json",
+                         "workspace/reports/run.md", "workspace/bugs/bug.md",
+                         "workspace/.kairos/config.json", ".kairos/private.db",
+                         ".git/config", "WERKFADEN_AUSBAUPLAN_PRIVATE.md",
+                         "workshop/.state/seal.json", "review/__pycache__/module.pyc"):
+            path = self.source/relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"private")
+        self.export()
+        for path in (self.root/"candidate").rglob("*"):
+            if path.is_file():
+                self.assertNotEqual(path.read_bytes(), b"private")
+
+    def test_missing_module_fails_before_target_creation(self):
+        from kairos.golden import GoldenTemplateError
+        (self.source/"workshop/workshop.py").unlink()
+        with self.assertRaises(GoldenTemplateError):
+            self.export()
+        self.assertFalse((self.root/"candidate").exists())
+
+    def test_unexpected_database_and_credentials_fail_closed(self):
+        from kairos.golden import GoldenTemplateError
+        for relative in ("docs/private.db", "review/.env", "templates/key.pem"):
+            path = self.source/relative
+            path.write_bytes(b"private")
+            with self.assertRaises(GoldenTemplateError):
+                self.export()
+            self.assertFalse((self.root/"candidate").exists())
+            path.unlink()
+
+    def test_tamper_and_extra_runtime_file_are_rejected(self):
+        from kairos.golden import GoldenTemplateError, verify_framework_distribution
+        self.export()
+        target = self.root/"candidate"
+        (target/"README.md").write_bytes(b"tampered")
+        with self.assertRaises(GoldenTemplateError):
+            verify_framework_distribution(target)
+        self.export("other")
+        target = self.root/"other"
+        (target/"workspace/tasks").mkdir()
+        (target/"workspace/tasks/injected.md").write_bytes(b"injected")
+        with self.assertRaises(GoldenTemplateError):
+            verify_framework_distribution(target)
+
+    def test_target_source_overlap_and_existing_target_are_rejected(self):
+        from kairos.golden import GoldenTemplateError, build_framework_distribution
+        for target in (self.source, self.source/"nested", self.root):
+            with self.assertRaises(GoldenTemplateError):
+                build_framework_distribution(source_root=self.source,
+                    target_root=target, source_commit="fixture")
+        self.assertFalse((self.source/"nested").exists())
+
+    def test_linked_included_input_is_rejected(self):
+        from kairos.golden import GoldenTemplateError
+        link = self.source/"docs/linked.md"
+        try:
+            link.symlink_to(self.source/"README.md")
+        except (OSError, NotImplementedError):
+            self.skipTest("OS does not permit symlink creation")
+        with self.assertRaises(GoldenTemplateError):
+            self.export()
+        self.assertFalse((self.root/"candidate").exists())
+
+    def test_cli_framework_format_is_explicit_and_starter_remains_default(self):
+        common = ["export-golden", "--workspace", str(self.root/"workspace"),
+                  "--source-root", str(self.source), "--target", str(self.root/"candidate"),
+                  "--source-commit", "fixture"]
+        self.assertEqual(build_parser().parse_args(common).format, "starter")
+        args = build_parser().parse_args(common+["--format", "framework"])
+        self.assertEqual(args.format, "framework")
+        # Dispatch is exercised without fabricating a live governed workspace.
+        from kairos.cli import _execute_unlocked
+        result, code = _execute_unlocked(args, self.root/"workspace")
+        self.assertEqual(code, 0)
+        self.assertTrue(result["verified"])
+
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows junction regression")
+    def test_windows_junction_inputs_and_target_parents_fail_closed(self):
+        from kairos.golden import GoldenTemplateError, build_framework_distribution
+        outside = self.root/"outside"
+        outside.mkdir()
+        link = self.source/"docs/junction"
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        # rmdir removes this exact junction, never the external target tree.
+        self.addCleanup(link.rmdir)
+        with self.assertRaises(GoldenTemplateError):
+            self.export()
+        target_link = self.root/"target-link"
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(target_link), str(outside)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.addCleanup(target_link.rmdir)
+        with self.assertRaises(GoldenTemplateError):
+            build_framework_distribution(source_root=self.source,
+                target_root=target_link/"candidate", source_commit="fixture")
+        self.assertFalse((outside/"candidate").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

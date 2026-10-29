@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from kickstart.universal_init import initialize_universal_markdown
+from kickstart.binding import initialize_project
+from kickstart.errors import KickstartError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +57,342 @@ def _project_spec() -> dict:
             "criteria": ["CRIT_UW_001"],
         },
     }
+
+
+class InitialAuxiliaryAuthorityTests(unittest.TestCase):
+    def _project(self, root, compiler):
+        project = root / 'project'
+        project.mkdir()
+        source = project / ('unit.cpp' if compiler else 'app.py')
+        source.write_bytes(b'int value = 1;\n' if compiler else b'value = 1\n')
+        arguments = {'project_root': project, 'workspace': root / 'workspace',
+                     'project_spec': _project_spec()}
+        if compiler:
+            commands = root / 'compile_commands.json'
+            commands.write_bytes(json.dumps([{'directory': str(project),
+                'file': str(source), 'arguments': ['c++', '-c', str(source)]}]).encode())
+            arguments['compile_commands'] = commands
+        return source, arguments, initialize_project if compiler else initialize_universal_markdown
+
+    def _roundtrip(self, compiler):
+        from runtime_sync_workshop.auxiliary import AuxiliaryDocumentTransaction
+        from runtime_sync_workshop.tx_documents import assert_projected
+        with tempfile.TemporaryDirectory(prefix='initial-auxiliary-') as temporary:
+            root = Path(temporary)
+            source, arguments, initialize = self._project(root, compiler)
+            original_source = source.read_bytes()
+            document = root / 'PROCESS_AUTHORITY.md'
+            original = b'# Process authority\r\n\r\nExact initial authority.\r\n'
+            document.write_bytes(original)
+            result = initialize(**arguments, auxiliary_documents=(document,))
+            from kairos.database import KnowledgeDatabase
+            from kairos.search import search_database
+            database = KnowledgeDatabase(arguments['workspace'] / '.kairos/kairos.db')
+            question = "Which Auxiliary process documents were declared during this project's initial intake?"
+            found = search_database(database, question, record_trace=False)
+            self.assertEqual(found['primary']['artifact_id'], 'PROJECT_AUXILIARY_DECLARATION')
+            self.assertEqual(found['primary']['section_id'], 's-initial-auxiliary-authority')
+            guide = arguments['workspace'] / 'docs/PROJECT_AUXILIARY_DECLARATION.md'
+            guide_before = guide.read_bytes()
+            self.assertIn(hashlib.sha256(original).hexdigest().encode(), guide_before)
+            config_path = (Path(result['manifest']).parent / 'workshop.config.json'
+                           if compiler else Path(result['workshop_config']))
+            engine = WorkshopEngine(config_path)
+            self.assertEqual(engine.config.auxiliary_documents, (document.name,))
+            self.assertIn(document.name, engine.config.blueprint_ignore)
+            self.assertEqual((engine.config.blueprint_root / document.name).read_bytes(), original)
+            native_manifest = build_corpus_manifest(engine.config)
+            self.assertTrue(native_manifest['verified'], native_manifest['issues'])
+            self.assertEqual(native_manifest['counts']['auxiliary_documents'], 1)
+            self.assertEqual(len(native_manifest['records']), 1)
+            engine.seal()
+            owner = AuxiliaryDocumentTransaction(WorkshopEngine(engine.config.config_path))
+            checkout = owner.checkout([document.name], purpose='Exercise genuinely declared initial Auxiliary authority and native projection.')
+            tx = checkout['transaction_id']
+            assert_projected(owner.engine, tx)
+            (Path(checkout['work_directory']) / document.name).write_bytes(original + b'\r\nReviewed process update.\r\n')
+            owner.verify(tx)
+            assert_projected(owner.engine, tx)
+            applied = owner.apply(tx)
+            self.assertTrue(applied['bit_exact'])
+            self.assertEqual(applied['state'], 'POSTCHECK_VERIFIED')
+            assert_projected(owner.engine, tx)
+            self.assertEqual(document.read_bytes(), original)
+            self.assertEqual(source.read_bytes(), original_source)
+            self.assertEqual(guide.read_bytes(), guide_before)
+            self.assertNotIn(hashlib.sha256(original + b'\r\nReviewed process update.\r\n').hexdigest().encode(), guide.read_bytes())
+            # The same loaded binding cannot be repurposed by another init mode.
+            for initializer in (initialize_project, initialize_universal_markdown):
+                with self.assertRaises(KickstartError) as failure:
+                    initializer(**arguments, auxiliary_documents=(document,))
+                self.assertEqual(failure.exception.code, 'PROJECT_ALREADY_BOUND')
+
+    def test_universal_auxiliary_declaration_loads_from_disk_and_applies_natively(self):
+        self._roundtrip(False)
+
+    def test_compiler_auxiliary_declaration_loads_from_disk_and_applies_natively(self):
+        self._roundtrip(True)
+
+    def test_invalid_auxiliary_inputs_refuse_before_workspace_creation(self):
+        cases = [('missing', 'MISSING.md', 'AUXILIARY_DOCUMENT_MISSING'),
+                 ('directory', 'DIRECTORY.md', 'AUXILIARY_DOCUMENT_MISSING'),
+                 ('code', 'unreviewed.py', 'AUXILIARY_DOCUMENT_NAME_INVALID'),
+                 ('generated', 'PROJECT_CODE_0123456789AB.md', 'AUXILIARY_DOCUMENT_NAME_INVALID'),
+                 ('device', 'CON.md', 'AUXILIARY_DOCUMENT_NAME_INVALID'),
+                 ('encoding', 'BINARY.md', 'AUXILIARY_DOCUMENT_INVALID')]
+        for compiler in (False, True):
+            for kind, name, code in cases:
+                with self.subTest(compiler=compiler, kind=kind):
+                    with tempfile.TemporaryDirectory(prefix='invalid-initial-auxiliary-') as temporary:
+                        root = Path(temporary)
+                        source, arguments, initialize = self._project(root, compiler)
+                        before = source.read_bytes()
+                        document = root / name
+                        if kind == 'directory':
+                            document.mkdir()
+                        elif kind not in ('missing', 'device'):
+                            document.write_bytes(b'\xff' if kind == 'encoding' else b'# Exact input\n')
+                        with self.assertRaises(KickstartError) as failure:
+                            initialize(**arguments, auxiliary_documents=(document,))
+                        self.assertEqual(failure.exception.code, code)
+                        self.assertFalse(arguments['workspace'].exists())
+                        self.assertEqual(source.read_bytes(), before)
+
+    def test_duplicate_portable_names_refuse_without_workspace(self):
+        for compiler in (False, True):
+            with self.subTest(compiler=compiler):
+                with tempfile.TemporaryDirectory(prefix='duplicate-initial-auxiliary-') as temporary:
+                    root = Path(temporary)
+                    _, arguments, initialize = self._project(root, compiler)
+                    first = root / 'first'; first.mkdir()
+                    second = root / 'second'; second.mkdir()
+                    documents = (first / 'PROCESS.md', second / 'process.MD')
+                    for document in documents:
+                        document.write_bytes(b'# Exact process input\n')
+                    with self.assertRaises(KickstartError) as failure:
+                        initialize(**arguments, auxiliary_documents=documents)
+                    self.assertEqual(failure.exception.code, 'AUXILIARY_DOCUMENT_DUPLICATE')
+                    self.assertFalse(arguments['workspace'].exists())
+
+    def test_changing_auxiliary_input_is_refused_before_workspace_creation(self):
+        original_read = Path.read_bytes
+        for compiler in (False, True):
+            with self.subTest(compiler=compiler):
+                with tempfile.TemporaryDirectory(prefix='changing-initial-auxiliary-') as temporary:
+                    root = Path(temporary)
+                    _, arguments, initialize = self._project(root, compiler)
+                    document = root / 'PROCESS.md'; document.write_bytes(b'# Before\n')
+                    reads = []
+                    def change_after_first_read(path):
+                        data = original_read(path)
+                        if path == document:
+                            reads.append(data)
+                            if len(reads) == 1:
+                                document.write_bytes(b'# Changed by test actor\n')
+                        return data
+                    with patch.object(Path, 'read_bytes', change_after_first_read):
+                        with self.assertRaises(KickstartError) as failure:
+                            initialize(**arguments, auxiliary_documents=(document,))
+                    self.assertEqual(failure.exception.code, 'AUXILIARY_DOCUMENT_CHANGED')
+                    self.assertEqual(len(reads), 2)
+                    self.assertFalse(arguments['workspace'].exists())
+                    self.assertEqual(document.read_bytes(), b'# Changed by test actor\n')
+
+    def test_intent_precedes_auxiliary_input_discovery(self):
+        for compiler in (False, True):
+            with self.subTest(compiler=compiler):
+                with tempfile.TemporaryDirectory(prefix='intent-before-auxiliary-') as temporary:
+                    root = Path(temporary)
+                    _, arguments, initialize = self._project(root, compiler)
+                    arguments['project_spec'] = None
+                    with patch('kickstart.binding._read_auxiliary_documents', side_effect=AssertionError('input read before intent')):
+                        with self.assertRaises(KickstartError) as failure:
+                            initialize(**arguments, auxiliary_documents=(root / 'MISSING.md',))
+                    self.assertEqual(failure.exception.code, 'PROJECT_INTENT_REQUIRED')
+                    self.assertFalse(arguments['workspace'].exists())
+
+    def test_public_init_cli_declares_multiple_auxiliary_inputs_in_both_modes(self):
+        for compiler in (False, True):
+            with self.subTest(compiler=compiler):
+                with tempfile.TemporaryDirectory(prefix='initial auxiliary cli ') as temporary:
+                    root = Path(temporary)
+                    source, arguments, _ = self._project(root, compiler)
+                    documents = (root / 'PROCESS.md', root / 'OPERATING_RULES.md')
+                    for document in documents:
+                        document.write_bytes(('# ' + document.stem + '\r\n').encode())
+                    command = [sys.executable, '-m', 'kickstart', 'init',
+                        '--project-root', str(arguments['project_root']),
+                        '--workspace', str(arguments['workspace']),
+                        '--spec-json', json.dumps(_project_spec())]
+                    if compiler:
+                        command.extend(['--compile-commands', str(arguments['compile_commands'])])
+                    else:
+                        command.append('--auto')
+                    for document in documents:
+                        command.extend(['--auxiliary-document', str(document)])
+                    before = {path: path.read_bytes() for path in (*documents, source)}
+                    completed = subprocess.run(command, cwd=ROOT, capture_output=True,
+                                               text=True, encoding='utf-8')
+                    self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                    result = json.loads(completed.stdout)
+                    self.assertTrue(result['verified'])
+                    engine = WorkshopEngine(arguments['workspace'] / '.kairos/workshop.config.json')
+                    self.assertEqual(engine.config.auxiliary_documents, tuple(sorted(p.name for p in documents)))
+                    self.assertTrue(build_corpus_manifest(engine.config)['verified'])
+                    for document in documents:
+                        self.assertEqual((engine.config.blueprint_root / document.name).read_bytes(), before[document])
+                    self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_linked_auxiliary_input_refuses_before_workspace_creation(self):
+        for compiler in (False, True):
+            with self.subTest(compiler=compiler):
+                with tempfile.TemporaryDirectory(prefix='linked-initial-auxiliary-') as temporary:
+                    root = Path(temporary)
+                    _, arguments, initialize = self._project(root, compiler)
+                    target = root / 'target'; target.mkdir()
+                    document = target / 'PROCESS.md'; document.write_bytes(b'# Exact process input\n')
+                    link = root / 'linked'
+                    if os.name == 'nt':
+                        created = subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)],
+                                                 capture_output=True)
+                        if created.returncode:
+                            self.skipTest('host does not permit isolated directory junction creation')
+                    else:
+                        try:
+                            link.symlink_to(target, target_is_directory=True)
+                        except OSError:
+                            self.skipTest('host does not permit isolated directory link creation')
+                    try:
+                        with self.assertRaises(KickstartError) as failure:
+                            initialize(**arguments, auxiliary_documents=(link / document.name,))
+                        self.assertRegex(str(failure.exception).lower(), 'link|reparse')
+                        self.assertFalse(arguments['workspace'].exists())
+                        self.assertEqual(document.read_bytes(), b'# Exact process input\n')
+                    finally:
+                        if link.is_symlink():
+                            link.unlink()
+                        else:
+                            link.rmdir()
+
+    def test_declared_filename_is_literal_data_in_searchable_guidance(self):
+        from kairos.database import KnowledgeDatabase
+        from kairos.search import search_database
+        with tempfile.TemporaryDirectory(prefix='literal-initial-auxiliary-') as temporary:
+            root = Path(temporary)
+            _, arguments, initialize = self._project(root, False)
+            document = root / '[metadata](MISSING.md).md'
+            document.write_bytes(b'# Exact process input\n')
+            result = initialize(**arguments, auxiliary_documents=(document,))
+            self.assertTrue(result['verified'])
+            engine = WorkshopEngine(Path(result['workshop_config']))
+            self.assertEqual(engine.config.auxiliary_documents, (document.name,))
+            found = search_database(KnowledgeDatabase(engine.config.kairos_database),
+                "Which Auxiliary process documents were declared during this project's initial intake?", record_trace=False)
+            self.assertEqual(found['primary']['artifact_id'], 'PROJECT_AUXILIARY_DECLARATION')
+            self.assertTrue(build_corpus_manifest(engine.config)['verified'])
+
+
+class BindingReinitializationTests(unittest.TestCase):
+    _project = InitialAuxiliaryAuthorityTests._project
+
+    def _snapshot(self, root):
+        # Compare the entire fixture, not just the source or selected authority.
+        # Reads may alter access times; modification times must stay unchanged.
+        return {
+            path.relative_to(root).as_posix(): (
+                path.is_dir(), path.stat().st_mtime_ns,
+                None if path.is_dir() else hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in (root, *sorted(root.rglob('*')))
+        }
+
+    def _refuse(self, arguments, compiler, documents, cli):
+        if cli:
+            command = [sys.executable, '-m', 'kickstart', 'init',
+                '--project-root', str(arguments['project_root']),
+                '--workspace', str(arguments['workspace']),
+                '--spec-json', json.dumps(_project_spec())]
+            if compiler:
+                command.extend(['--compile-commands', str(arguments['compile_commands'])])
+            else:
+                command.append('--auto')
+            for document in documents:
+                command.extend(['--auxiliary-document', str(document)])
+            completed = subprocess.run(command, cwd=ROOT, capture_output=True,
+                                       text=True, encoding='utf-8')
+            self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertIn('PROJECT_ALREADY_BOUND', completed.stdout + completed.stderr)
+        else:
+            initialize = initialize_project if compiler else initialize_universal_markdown
+            with self.assertRaises(KickstartError) as failure:
+                initialize(**arguments, auxiliary_documents=documents)
+            self.assertEqual(failure.exception.code, 'PROJECT_ALREADY_BOUND')
+
+    def _bound_matrix(self, cli):
+        for first_compiler in (False, True):
+            for sealed in (False, True):
+                with tempfile.TemporaryDirectory(prefix='bound-intake-no-write-') as temporary:
+                    root = Path(temporary)
+                    # Both entry points observe the same compiler-authoritative fixture.
+                    _, arguments, _ = self._project(root, True)
+                    initialize = initialize_project if first_compiler else initialize_universal_markdown
+                    initialize(**arguments)
+                    if sealed:
+                        WorkshopEngine(arguments['workspace'] / '.kairos/workshop.config.json').seal()
+                    document = root / 'PROCESS.md'
+                    document.write_bytes(b'# Existing process input\n')
+                    for second_compiler in (False, True):
+                        for documents in ((), (document,)):
+                            with self.subTest(first_compiler=first_compiler, sealed=sealed,
+                                              second_compiler=second_compiler, auxiliary=bool(documents), cli=cli):
+                                before = self._snapshot(root)
+                                self._refuse(arguments, second_compiler, documents, cli)
+                                self.assertEqual(self._snapshot(root), before)
+
+    def test_registered_binding_api_matrix_refuses_without_any_fixture_mutation(self):
+        self._bound_matrix(False)
+
+    def test_registered_binding_actual_cli_matrix_refuses_without_any_fixture_mutation(self):
+        self._bound_matrix(True)
+
+    def test_each_partial_registration_refuses_before_input_read_or_workspace_initialization(self):
+        for marker in ('workshop.config.json', 'project-intake.json', 'universal-intake.json'):
+            with tempfile.TemporaryDirectory(prefix='partial-intake-no-write-') as temporary:
+                root = Path(temporary)
+                _, arguments, _ = self._project(root, True)
+                authority = arguments['workspace'] / '.kairos' / marker
+                authority.parent.mkdir(parents=True)
+                authority.write_bytes(b'Incomplete registration must not be parsed or repaired.\n')
+                for compiler in (False, True):
+                    for cli in (False, True):
+                        with self.subTest(marker=marker, compiler=compiler, cli=cli):
+                            before = self._snapshot(root)
+                            # A missing explicit input proves binding refusal precedes input reads.
+                            self._refuse(arguments, compiler, (root / 'MISSING.md',), cli)
+                            self.assertEqual(self._snapshot(root), before)
+
+    def test_legitimate_unbound_workspace_still_initializes_in_both_modes(self):
+        from kairos.workspace import initialize_project_workspace
+        from kairos.loops import validate_project_kickoff_contract
+        for compiler in (False, True):
+            for declared in (False, True):
+                with self.subTest(compiler=compiler, declared=declared):
+                    with tempfile.TemporaryDirectory(prefix='unbound-first-intake-') as temporary:
+                        root = Path(temporary)
+                        source, arguments, initialize = self._project(root, True)
+                        goal, milestone, task, criteria, _ = validate_project_kickoff_contract(_project_spec())
+                        initialize_project_workspace(arguments['workspace'], workspace_id='KAIROS_UNBOUND_TEST',
+                            goal=goal, milestone=milestone, task=task, selected_criteria=criteria)
+                        document = root / 'PROCESS.md'
+                        document.write_bytes(b'# Initial process input\n')
+                        before = source.read_bytes(), document.read_bytes()
+                        initialize = initialize_project if compiler else initialize_universal_markdown
+                        result = initialize(**arguments, auxiliary_documents=(document,) if declared else ())
+                        self.assertTrue(result['verified'])
+                        self.assertEqual((source.read_bytes(), document.read_bytes()), before)
+                        engine = WorkshopEngine(arguments['workspace'] / '.kairos/workshop.config.json')
+                        self.assertEqual(engine.config.auxiliary_documents, (document.name,) if declared else ())
+                        self.assertTrue(build_corpus_manifest(engine.config)['verified'])
 
 
 class UniversalWorkshopRoundtripTests(unittest.TestCase):

@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 import json
+import ast
+import hashlib
+import inspect
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 import unittest
 
 from kairos.cli import build_parser, execute
@@ -64,6 +73,119 @@ evidence_target = "s-evidence"
 
 Graph policy evidence is available at this declared section.
 """
+
+
+class GovernedSearchPolicyOwnerTests(unittest.TestCase):
+    def test_policy_implementation_ast_and_exports_match_historical_provenance(self) -> None:
+        import kairos._search_policy_core_v1 as core
+        import kairos.search_policy as policy
+        archive = Path(core.__file__).parent / 'quarantine/search_policy_v1.py.txt'
+        data = archive.read_bytes()  # Test evidence only; production does not read it.
+        self.assertEqual(hashlib.sha256(data).hexdigest(),
+                         '138cf70f2048ed370ca6e60acb850bf51d81c0ad350138089bbbb437f1b38cd3')
+        historical = ast.parse(data.decode('utf-8'))
+        source = Path(core.__file__).read_text(encoding='utf-8')
+        governed = ast.parse(source)
+        factory = next(n for n in governed.body if isinstance(n, ast.FunctionDef)
+                       and n.name == 'load_search_policy_core')
+        original = [n for n in historical.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
+        lifted = [n for n in factory.body if isinstance(n, (ast.FunctionDef, ast.ClassDef, ast.Assign))
+                  and not (isinstance(n, ast.Assign) and any(
+                      isinstance(t, ast.Name) and t.id in {'caller', 'caller_name', 'caller_file', 'expected_file'}
+                      for t in n.targets))]
+        self.assertEqual([ast.dump(n, include_attributes=False) for n in original],
+                         [ast.dump(n, include_attributes=False) for n in lifted])
+        exports = set()
+        for node in historical.body:
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                exports.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                exports.update(a.asname or a.name.split('.')[0] for a in node.names)
+            elif isinstance(node, ast.Assign):
+                exports.update(target.id for target in node.targets)
+        self.assertEqual(set(vars(policy._legacy)), exports)
+        self.assertNotIn('caller', vars(policy._legacy))
+        self.assertFalse(hasattr(core, 'issue_source_permit'))
+        self.assertEqual(policy.SearchPolicyError.__module__, core.__name__)
+        self.assertEqual(Path(inspect.getsourcefile(policy._legacy.issue_source_permit)).resolve(),
+                         Path(core.__file__).resolve())
+        # Retiring dynamic execution is structural, not inferred from a green import.
+        self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                             and n.func.id in {'exec', 'eval', 'compile'} for n in ast.walk(governed)))
+        # Permit-bound source inspection still reads actual requested source files.
+        # Only bootstrap loading must be independent of archive-file I/O.
+        bootstrap = factory.body[:next(i for i, n in enumerate(factory.body)
+                                       if isinstance(n, ast.ClassDef))]
+        self.assertFalse(any(isinstance(n, ast.Attribute) and n.attr in {'read_text', 'read_bytes'}
+                             for statement in bootstrap for n in ast.walk(statement)))
+        self.assertFalse(hasattr(core, '_SOURCE'))
+        self.assertFalse(any(isinstance(n, ast.Constant) and isinstance(n.value, str)
+                             and 'search_policy_v1.py.txt' in n.value for n in ast.walk(governed)))
+
+    def test_policy_factory_rejects_foreign_requester_name_or_path(self) -> None:
+        import kairos._search_policy_core_v1 as core
+        with self.assertRaisesRegex(RuntimeError, 'only be loaded by kairos.search_policy'):
+            core.load_search_policy_core()
+        owner = Path(core.__file__).parent / 'search_policy.py'
+        for name, path in (('foreign.module', owner), ('kairos.search_policy', owner.with_name('foreign.py'))):
+            namespace = {'__name__': name, '__file__': str(path), 'load': core.load_search_policy_core}
+            with self.subTest(name=name, path=path), self.assertRaisesRegex(RuntimeError, 'only be loaded'):
+                exec('load()', namespace, namespace)
+
+    def test_source_only_and_installed_cli_ignore_absent_or_hostile_archives(self) -> None:
+        import kairos._search_policy_core_v1 as core
+        package = Path(core.__file__).resolve().parent
+        root = package.parents[2]
+        script = (
+            'import json,inspect; import kairos.search_policy as p; '
+            'from kairos.cli import build_parser; '
+            'print(json.dumps({"commands":len(next(a for a in build_parser()._actions '
+            'if hasattr(a,"choices") and isinstance(a.choices,dict)).choices),'
+            '"owner":inspect.getsourcefile(p._legacy.issue_source_permit),'
+            '"limit":p.MAX_SCOPE_PATHS,"purpose":sorted(p.NORMAL_PURPOSES)}))'
+        )
+        for installed in (False, True):
+            with self.subTest(installed=installed), tempfile.TemporaryDirectory(prefix='policy-owner-') as temp:
+                fixture = Path(temp)
+                site = fixture / ('site' if installed else 'source/kairos/kairos_harness')
+                target = site / 'kairos'
+                shutil.copytree(package, target, ignore=shutil.ignore_patterns('__pycache__', 'quarantine'))
+                if not installed:
+                    shutil.copyfile(root / 'kairos_cli.py', fixture / 'source/kairos_cli.py')
+                env = dict(os.environ, PYTHONPATH=str(site), PYTHONDONTWRITEBYTECODE='1')
+                marker = fixture / 'archive_was_executed'
+                for state in ('absent', 'malformed', 'hostile'):
+                    archive = target / 'quarantine/search_policy_v1.py.txt'
+                    if state != 'absent':
+                        archive.parent.mkdir(exist_ok=True)
+                        archive.write_text('not valid python @@@' if state == 'malformed' else
+                                           'from pathlib import Path\nPath(' + repr(str(marker)) + ').write_text("executed")\nraise RuntimeError("archive executed")\n',
+                                           encoding='utf-8')
+                    if state == 'hostile':
+                        compile(archive.read_text(encoding='utf-8'), str(archive), 'exec')
+                    result = subprocess.run([sys.executable, '-c', script], cwd=fixture,
+                                            env=env, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    payload = json.loads(result.stdout)
+                    self.assertEqual(payload['commands'], 37)
+                    self.assertEqual(Path(payload['owner']).resolve(), (target / '_search_policy_core_v1.py').resolve())
+                    self.assertEqual(payload['limit'], 8)
+                    self.assertEqual(payload['purpose'], ['contradiction', 'exact_location', 'implementation_verification', 'negative_proof'])
+                    self.assertFalse(marker.exists())
+                    command = ([sys.executable, '-m', 'kairos', '--help'] if installed else
+                               [sys.executable, str(fixture / 'source/kairos_cli.py'), '--help'])
+                    help_result = subprocess.run(command, cwd=fixture, env=env, capture_output=True,
+                                                 text=True, timeout=30)
+                    self.assertEqual(help_result.returncode, 0, help_result.stderr)
+                    self.assertIn('source-permit', help_result.stdout)
+                # Missing executable owner must fail import, rather than falling back
+                # to even a present archive resource.
+                (target / '_search_policy_core_v1.py').unlink()
+                missing = subprocess.run([sys.executable, '-c', 'import kairos.search_policy'], cwd=fixture,
+                                         env=env, capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(missing.returncode, 0)
+                self.assertIn('_search_policy_core_v1', missing.stderr)
+                self.assertFalse(marker.exists())
 
 
 class SearchOrderPolicyTests(WorkspaceTestCase):

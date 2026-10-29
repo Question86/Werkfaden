@@ -10,12 +10,9 @@ IMPLEMENTATION_ROOTS = (
     ROOT / "kairos" / "kairos_harness" / "kairos",
     ROOT / "workshop" / "src" / "runtime_sync_workshop",
 )
-# These .py.txt sources are compiled and executed by the guarded public
-# loaders. They are executable implementation, not historical documentation.
-ACTIVE_EXECUTED_SOURCES = (
-    ROOT / "workshop" / "src" / "runtime_sync_workshop" / "quarantine" / "engine_metadata_v2.py.txt",
-    ROOT / "workshop" / "src" / "runtime_sync_workshop" / "quarantine" / "cli_metadata_v2.py.txt",
-)
+# All active implementation is regular Python under IMPLEMENTATION_ROOTS.
+# Historical quarantine text is retained as provenance and is not executed.
+ACTIVE_EXECUTED_SOURCES: tuple[Path, ...] = ()
 SEED_NAMES = {
     "project_root",
     "codebase_root",

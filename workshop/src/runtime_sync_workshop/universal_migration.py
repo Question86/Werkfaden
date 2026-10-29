@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import shutil
@@ -16,7 +15,9 @@ from .util import (
     WorkshopError,
     atomic_write_bytes,
     atomic_write_json,
+    capture_rollback_preimage,
     copy_exact,
+    restore_rollback_preimage,
     sqlite_snapshot,
     package_hash,
     read_json,
@@ -256,7 +257,8 @@ class UniversalSourceSetMigration:
         baseline_manifest = build_corpus_manifest(self.config)
         if not baseline_manifest.get("verified"):
             raise WorkshopError("CORPUS_NOT_VERIFIED", "source-set migration requires a verified live corpus", details=baseline_manifest.get("issues"))
-        seal = read_json(self.engine.seal_path)
+        baseline_seal_bytes = self.engine.seal_path.read_bytes()
+        seal = json.loads(baseline_seal_bytes)
         if seal.get("package_sha256") != baseline_manifest["package_sha256"]:
             raise WorkshopError("SEAL_DRIFT", "live corpus differs from the trusted seal")
         created_at = utc_now()
@@ -281,6 +283,7 @@ class UniversalSourceSetMigration:
             "deterministic_updated_at": created_at,
             "purpose": purpose,
             "baseline_package_sha256": baseline_manifest["package_sha256"],
+            "baseline_seal_sha256": sha256_bytes(baseline_seal_bytes),
             "journal": [],
         }
         self.engine._save_transaction(
@@ -386,12 +389,14 @@ class UniversalSourceSetMigration:
                 details={"expected": expected, "actual": current.get("package_sha256")},
             )
         root.mkdir(parents=True, exist_ok=True)
-        recovered = state if isinstance(state, dict) else {
+        recovered: dict[str, Any] = state if isinstance(state, dict) else {
             "schema": "runtime-sync-universal-source-set/v1",
             "transaction_kind": "universal_source_set",
             "transaction_id": transaction_id,
             "created_at": utc_now(),
             "purpose": "Recovered historical orphan created before source-set state materialization",
+            # No checkout witness exists; do not capture the recovery actor as original scope.
+            "original_scope": None,
             "baseline_package_sha256": expected,
             "journal": [],
         }
@@ -417,7 +422,8 @@ class UniversalSourceSetMigration:
             **recovered["orphan_recovery"],
         }
 
-    def _candidate_survey(self, candidate_root: Path, baseline_manifest: dict[str, Any]):
+    def _candidate_survey(self, candidate_root: Path, baseline_manifest: dict[str, Any], *,
+                          excluded_roots: tuple[Path, ...] = ()):
         (
             excluded,
             UniversalSource,
@@ -438,7 +444,7 @@ class UniversalSourceSetMigration:
         markers: dict[str, set[str]] = {}
         marker_specs = {spec.name: spec for spec in suffix_to_spec.values()}
 
-        for path in iter_project_files(candidate_root):
+        for path in iter_project_files(candidate_root, excluded_roots=excluded_roots):
             relative = path.relative_to(candidate_root).as_posix()
             suffix = path.suffix.casefold()
             spec = suffix_to_spec.get(suffix)
@@ -809,13 +815,12 @@ class UniversalSourceSetMigration:
     def _backup(self, root: Path, live: Path, role: str, rows: list[dict[str, Any]]) -> None:
         existed = live.is_file()
         backup = root / "rollback" / role / f"{sha256_bytes(str(live).encode())[:16]}_{live.name}"
-        if existed:
-            copy_exact(live, backup)
+        preimage = capture_rollback_preimage(live, backup, copier=copy_exact) if existed else {"sha256": None, "mtime_ns": None}
         rows.append({
             "live": live.as_posix(),
             "backup": backup.as_posix(),
             "existed": existed,
-            "sha256": sha256_bytes(live.read_bytes()) if existed else None,
+            **preimage,
         })
 
     def _rollback(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -824,8 +829,7 @@ class UniversalSourceSetMigration:
             live = Path(row["live"])
             try:
                 if row["existed"]:
-                    copy_exact(Path(row["backup"]), live)
-                    restored = sha256_bytes(live.read_bytes()) == row["sha256"]
+                    restored = restore_rollback_preimage(Path(row["backup"]), live, row["sha256"], row.get("mtime_ns"), copier=copy_exact)
                 else:
                     if live.is_file():
                         live.unlink()
@@ -855,13 +859,6 @@ class UniversalSourceSetMigration:
             *state.get("authority_documents", []),
         })
         governance, heartbeat = self.engine._import_kairos()
-        permit = governance.issue_external_edit_permit(
-            self.config.kairos_workspace,
-            paths=changed_managed,
-            reason=f"Universal source-set Workshop transaction {transaction_id}: {state['purpose']}",
-            ttl_seconds=1800,
-        )
-
         affected_sources = sorted(set(state["added_sources"]) | set(state["removed_sources"]) | set(state["updated_existing"]))
         rollback_rows: list[dict[str, Any]] = []
         for relative in affected_sources:
@@ -878,6 +875,12 @@ class UniversalSourceSetMigration:
         for relative in self.config.machine_authority_files:
             self._backup(root, self.config.machine_root / relative, "machine", rollback_rows)
         atomic_write_json(root / "rollback" / "targets.json", rollback_rows)
+        permit = governance.issue_external_edit_permit(
+            self.config.kairos_workspace,
+            paths=changed_managed,
+            reason=f"Universal source-set Workshop transaction {transaction_id}: {state['purpose']}",
+            ttl_seconds=1800,
+        )
 
         state["state"] = "APPLYING"
         state["permit"] = permit
@@ -945,8 +948,6 @@ class UniversalSourceSetMigration:
             state["state"] = "POSTCHECK_VERIFIED"
             state["postcheck_package_sha256"] = post["package_sha256"]
             state["heartbeat"] = heartbeat_receipt
-            self.engine._save_transaction(root, state, event="UNIVERSAL_SOURCE_SET_POSTCHECK_VERIFIED", details={"package_sha256": post["package_sha256"]})
-            self.engine._release_lease(transaction_id)
             receipt = {
                 "schema": "runtime-sync-universal-source-set-postcheck/v1",
                 "transaction_id": transaction_id,
@@ -959,8 +960,8 @@ class UniversalSourceSetMigration:
                 "removed_sources": state["removed_sources"],
                 "renames": state["renames"],
             }
-            self.engine._write_receipt("universal-source-set-postcheck", receipt)
-            return receipt
+            state["terminal_receipt_payload"] = receipt
+            self.engine._save_transaction(root, state, event="UNIVERSAL_SOURCE_SET_POSTCHECK_VERIFIED", details={"package_sha256": post["package_sha256"]})
         except Exception as exc:
             if heartbeat_started:
                 state["state"] = "RECOVERY_REQUIRED"
@@ -978,6 +979,171 @@ class UniversalSourceSetMigration:
             state["state"] = "RECOVERY_REQUIRED"
             self.engine._save_transaction(root, state, event="UNIVERSAL_SOURCE_SET_ROLLBACK_INCOMPLETE", details=rollback)
             raise WorkshopError("RECOVERY_REQUIRED", "source-set rollback was incomplete; lease retained", details=rollback) from exc
+
+        return self.engine._finish_transaction_receipt(root, state, kind="universal-source-set-postcheck", payload=receipt)
+
+    def recover(self, transaction_id: str) -> dict[str, Any]:
+        root, state = self.engine._load_transaction(transaction_id)
+        if (state.get("schema") != "runtime-sync-universal-source-set/v1"
+                or state.get("transaction_kind") != "universal_source_set"):
+            raise WorkshopError("TRANSACTION_KIND_INVALID", "source-set recovery requires its exact transaction schema and kind")
+        from .tx_documents import capture_projection_source
+        capture_projection_source(self.engine, state)
+        if state.get("state") == "POSTCHECK_VERIFIED":
+            entry = state.get("terminal_receipt")
+            payload = entry.get("payload") if isinstance(entry, dict) else state.get("terminal_receipt_payload")
+            if not isinstance(payload, dict):
+                raise WorkshopError("TX_TERMINAL_SEED_MISSING", "source-set postcheck has no exact preserved terminal payload")
+            return self.engine._finish_transaction_receipt(root, state, kind="universal-source-set-postcheck", payload=payload)
+        if state.get("state") not in {"APPLYING", "RECOVERY_REQUIRED"}:
+            raise WorkshopError("TX_RECOVERY_ROUTE_UNSUPPORTED", "source-set recovery requires a postcheck result or interrupted Apply")
+        self.engine._require_lease(transaction_id)
+        if not self.engine.seal_path.is_file():
+            raise WorkshopError("SOURCE_SET_RECOVERY_SEAL_MISMATCH", "recovery has no baseline or result seal")
+        seal_bytes = self.engine.seal_path.read_bytes()
+        seal = json.loads(seal_bytes)
+        sealed_result = (seal.get("transaction_id") == transaction_id
+                         and seal.get("universal_source_set_migration") is True)
+        if not sealed_result:
+            baseline_pin = state.get("baseline_seal_sha256")
+            if not baseline_pin:
+                raise WorkshopError("SOURCE_SET_RECOVERY_BASELINE_UNBOUND", "unsealed recovery requires the original checkout seal binding")
+            if (sha256_bytes(seal_bytes) != baseline_pin
+                    or seal.get("package_sha256") != state.get("baseline_package_sha256")):
+                raise WorkshopError("SOURCE_SET_RECOVERY_SEAL_MISMATCH", "current seal is neither this TX result nor its exact pinned baseline")
+            raw = build_corpus_manifest(self.config, verify_database=False)
+            baseline = read_json(root / "baseline" / "manifest.json")
+            baseline_source_hash = package_hash({"authority": baseline["authority"],
+                "records": {name: {key: value for key, value in record.items() if key != "database"}
+                            for name, record in baseline["records"].items()}})
+            if raw.get("verified") and raw["package_sha256"] == baseline_source_hash:
+                survey = self._candidate_survey(self.config.codebase_root, baseline,
+                                                excluded_roots=self._recovery_tool_roots())
+                if {item.relative_path for item in survey.sources} != set(baseline["authority"]["translation_units"]):
+                    raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "baseline recovery found extra or missing static sources")
+                self.engine._verified_package(require_seal=True)
+                governance, _ = self.engine._import_kairos()
+                permit = state.get("permit")
+                revoked = governance.revoke_action_permit(self.config.kairos_workspace,
+                    permit_id=str(permit["permit_id"]),
+                    reason=f"SourceSet {transaction_id} proved its exact original baseline; no candidate source writes will be resumed") if permit else None
+                state["state"] = "ROLLED_BACK"
+                state["permit_revocation"] = revoked
+                state["recovery_verification"] = {"schema": "werkfaden-source-set-baseline-recovery/v1",
+                    "package_sha256": state["baseline_package_sha256"], "baseline_seal_sha256": baseline_pin,
+                    "runtime_write_performed": False}
+                self.engine._save_transaction(root, state, event="UNIVERSAL_SOURCE_SET_RECOVERY_BASELINE_ROLLED_BACK",
+                                              details=state["recovery_verification"])
+                self.engine._release_lease(transaction_id)
+                return {"schema": "runtime-sync-universal-source-set-recovery/v1",
+                        "transaction_id": transaction_id, "state": "ROLLED_BACK",
+                        "package_sha256": state["baseline_package_sha256"], "runtime_write_performed": False}
+        verified = state.get("verified_work_package_sha256")
+        if not verified or self._work_package(root)["package_sha256"] != verified:
+            raise WorkshopError("SOURCE_SET_RECOVERY_WORK_DRIFT", "preserved work no longer equals the verified source-set candidate")
+        self._assert_sealed_recovery_targets(root, state)
+        if sealed_result:
+            current = self.engine._verified_package(require_seal=True)
+            if state.get("postcheck_package_sha256") and state["postcheck_package_sha256"] != current:
+                raise WorkshopError("SOURCE_SET_RECOVERY_SEAL_MISMATCH", "preserved postcheck differs from the sealed source-set result")
+        else:
+            raw = build_corpus_manifest(self.config, verify_database=False)
+            if not raw.get("verified"):
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "unsealed result has no verified complete source/config corpus", details=raw.get("issues"))
+            current = raw["package_sha256"]
+        _, heartbeat = self.engine._import_kairos()
+        changed = [] if sealed_result else sorted({
+            *(f"code/{name}" for name in state.get("prepared_active", {}).values()),
+            *(f"code/{name}" for name in state.get("tombstones", {}).values()),
+            *state.get("authority_documents", []),
+        })
+        observed = heartbeat.run_heartbeat(self.config.kairos_workspace, requested_mode="verify",
+            changed_paths=changed, use_reconciliation=True, trigger=f"source-set-result-recovery:{transaction_id}")
+        if not observed.get("verified"):
+            raise WorkshopError("SOURCE_SET_RECOVERY_STILL_BLOCKED", "fresh native recovery heartbeat is not verified", details=observed)
+        health = importlib.import_module("kairos.health").health_audit(self.config.kairos_workspace, full=True)
+        if health.get("verdict") != "PASS":
+            raise WorkshopError("SOURCE_SET_RECOVERY_STILL_BLOCKED", "fresh native recovery health is not PASS", details=health.get("failures"))
+        observed_source = (self.engine._verified_package(require_seal=True) if sealed_result
+                           else build_corpus_manifest(self.config, verify_database=False)["package_sha256"])
+        if (observed_source != current
+                or self.engine.seal_path.read_bytes() != seal_bytes
+                or self._work_package(root)["package_sha256"] != verified):
+            raise WorkshopError("SOURCE_SET_RECOVERY_STILL_BLOCKED", "result, pinned seal or verified work changed during recovery verification")
+        self._assert_sealed_recovery_targets(root, state)
+        if not sealed_result:
+            post = build_corpus_manifest(self.config)
+            if not post.get("verified"):
+                raise WorkshopError("SOURCE_SET_RECOVERY_STILL_BLOCKED", "post-heartbeat corpus is not verified", details=post.get("issues"))
+            current = post["package_sha256"]
+            mirror = self.engine._mirror(post)
+            if (self.engine._verified_package(require_seal=False) != current
+                    or self.engine.seal_path.read_bytes() != seal_bytes
+                    or self._work_package(root)["package_sha256"] != verified):
+                raise WorkshopError("SOURCE_SET_RECOVERY_STILL_BLOCKED", "verified result changed while creating its recovery mirror")
+            self._assert_sealed_recovery_targets(root, state)
+            atomic_write_json(self.engine.seal_path, {"schema": "runtime-sync-seal/v1",
+                "created_at": utc_now(), "package_sha256": current,
+                "mirror_sha256": mirror["mirror_sha256"],
+                "mirror_manifest": str(self.config.state_directory / "mirrors" / f"{mirror['mirror_sha256']}.json"),
+                "counts": post["counts"], "transaction_id": transaction_id,
+                "universal_source_set_migration": True, "recovered": True,
+                "baseline_seal_sha256": state["baseline_seal_sha256"]})
+        state["recovery_verification"] = {"schema": "werkfaden-source-set-sealed-recovery/v1" if sealed_result else "werkfaden-source-set-unsealed-result-recovery/v1",
+            "seal_created": not sealed_result,
+            "observed_at": utc_now(), "prior_state": state["state"],
+            "verified_work_package_sha256": verified, "postcheck_package_sha256": current,
+            "seal_transaction_id": transaction_id, "heartbeat_id": observed.get("heartbeat_id"),
+            "health": {"verdict": "PASS", "failure_count": 0}}
+        payload = {"schema": "runtime-sync-universal-source-set-recovery/v1",
+            "transaction_id": transaction_id, "state": "POSTCHECK_VERIFIED",
+            "baseline_package_sha256": state["baseline_package_sha256"],
+            "postcheck_package_sha256": current, "heartbeat": observed, "bit_exact": True,
+            "added_sources": state["added_sources"], "removed_sources": state["removed_sources"],
+            "renames": state["renames"], "recovery_verification": state["recovery_verification"]}
+        state["state"] = "POSTCHECK_VERIFIED"
+        state["postcheck_package_sha256"] = current
+        state["heartbeat"] = observed
+        state["terminal_receipt_payload"] = payload
+        self.engine._save_transaction(root, state, event="UNIVERSAL_SOURCE_SET_RECOVERY_POSTCHECK_VERIFIED", details=state["recovery_verification"])
+        return self.engine._finish_transaction_receipt(root, state, kind="universal-source-set-postcheck", payload=payload)
+
+    def _assert_sealed_recovery_targets(self, root: Path, state: dict[str, Any]) -> None:
+        """Read-only exact verified topology/result checks; never copy an Apply target."""
+        baseline = read_json(root / "baseline" / "manifest.json")
+        survey = self._candidate_survey(self.config.codebase_root, baseline,
+                                        excluded_roots=self._recovery_tool_roots())
+        if {item.relative_path for item in survey.sources} != set(state["candidate_sources"]):
+            raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "live supported source membership differs from verified candidate")
+        for relative in state["candidate_sources"]:
+            if (self.config.codebase_root / relative).read_bytes() != (root / "work" / "candidate" / relative).read_bytes():
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", f"live source differs from verified candidate: {relative}")
+        role_roots = {"candidate": self.config.codebase_root, "machine": self.config.machine_root,
+                      "blueprints": self.config.blueprint_root, "external-final": self.config.blueprint_root,
+                      "managed": self.config.managed_blueprint_root, "authority": self.config.kairos_workspace}
+        for row in self._work_package(root)["files"]:
+            if row["role"] not in role_roots:
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "verified work has an unknown recovery role")
+            target = role_roots[row["role"]] / _safe_relative(row["path"])
+            if not target.is_file() or sha256_bytes(target.read_bytes()) != row["sha256"]:
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", f"live target differs from verified {row['role']} work")
+        for _, name in state.get("prepared_active", {}).items():
+            if ((self.config.blueprint_root / name).read_bytes() != (root / "work" / "blueprints" / name).read_bytes()
+                    or (self.config.managed_blueprint_root / name).read_bytes() != (root / "work" / "managed" / name).read_bytes()):
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "live active blueprint differs from verified source-set work")
+        for _, name in state.get("tombstones", {}).items():
+            if ((self.config.blueprint_root / name).exists()
+                    or (self.config.managed_blueprint_root / name).read_bytes() != (root / "work" / "managed" / name).read_bytes()):
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "live source retirement differs from verified source-set work")
+        for relative in state.get("authority_documents", []):
+            if (self.config.kairos_workspace / relative).read_bytes() != (root / "work" / "authority" / relative).read_bytes():
+                raise WorkshopError("SOURCE_SET_RECOVERY_TARGET_DRIFT", "live authority document differs from verified source-set work")
+
+    def _recovery_tool_roots(self) -> tuple[Path, ...]:
+        # Same explicit project-local exclusions as native SourceSet checkout.
+        return (self.config.kairos_workspace, self.config.machine_root,
+                self.config.state_directory, self.config.transaction_directory,
+                self.config.blueprint_root, self.config.managed_blueprint_root)
 
     def abort(self, transaction_id: str) -> dict[str, Any]:
         root, state = self.engine._load_transaction(transaction_id)

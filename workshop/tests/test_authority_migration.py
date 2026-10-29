@@ -96,6 +96,156 @@ def edit_semantic_blueprint(work: Path, needle: str, replacement: str) -> None:
 
 
 class AuthorityMigrationTests(unittest.TestCase):
+    def test_compiler_partial_managed_write_restores_freshness_and_projects(self):
+        from unittest.mock import patch
+        from runtime_sync_workshop import migration as module
+        from runtime_sync_workshop.tx_documents import pending_path
+        original_apply = AuthorityMigration.apply
+        original_copy = module.copy_exact
+        observed = []
+
+        class RollbackObserved(Exception):
+            pass
+
+        def inject(owner, tx):
+            root, state = owner.engine._load_transaction(tx)
+            if owner._work_package(root, state)["package_sha256"] != state["verified_work_package_sha256"]:
+                return original_apply(owner, tx)
+            workspace = owner.engine.config.kairos_workspace
+            paths = list((workspace / "code").glob("*.md")) + [owner.engine.config.dataflow_index]
+            before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in paths if path.is_file()}
+            seal = owner.engine.seal_path.read_bytes()
+            faulted = []
+
+            def fail_after_write(source, target):
+                result = original_copy(source, target)
+                if not faulted and Path(target).parent == owner.engine.config.managed_blueprint_root:
+                    faulted.append(str(target))
+                    raise OSError("isolated compiler fault after managed document write")
+                return result
+
+            with patch.object(module, "copy_exact", side_effect=fail_after_write):
+                with self.assertRaises(WorkshopError) as caught:
+                    original_apply(owner, tx)
+            self.assertEqual(caught.exception.code, "APPLY_ROLLED_BACK", caught.exception.details)
+            self.assertEqual(len(faulted), 1)
+            assert_projected(owner.engine, tx)
+            _, final = owner.engine._load_transaction(tx)
+            self.assertEqual(final["state"], "ROLLED_BACK")
+            for path, signature in before.items():
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), signature, str(path))
+            self.assertEqual(owner.engine.seal_path.read_bytes(), seal)
+            self.assertFalse(pending_path(owner.engine, tx).exists())
+            self.assertFalse(owner.engine.lease_path.exists())
+            observed.append(tx)
+            raise RollbackObserved()
+
+        with patch.object(AuthorityMigration, "apply", new=inject):
+            with self.assertRaises(RollbackObserved):
+                self.test_header_add_remove_and_source_change_migrate_atomically()
+        self.assertEqual(len(observed), 1)
+
+    def _prove_direct_compiler_abort(self, target_state, *, pending=False):
+        from unittest.mock import patch
+        from contextlib import closing
+        import sqlite3
+        from kairos.frontmatter import split_frontmatter
+        from kairos.transaction_document import document_id, document_path
+        from runtime_sync_workshop.tx_documents import pending_path
+        checkout, prepare, verify = AuthorityMigration.checkout, AuthorityMigration.prepare, AuthorityMigration.verify
+        observed = []
+
+        class AbortObserved(Exception):
+            pass
+
+        def stop_with_verified_abort(owner, tx):
+            _, state = owner.engine._load_transaction(tx)
+            self.assertEqual(state["state"], target_state)
+            assert_projected(owner.engine, tx)
+            baseline = state["baseline_package_sha256"]
+            if pending:
+                with patch("runtime_sync_workshop.tx_documents.publish",
+                           side_effect=WorkshopError("INJECTED_PROJECTION_OUTAGE", "Isolated compiler abort publication outage")):
+                    with self.assertRaises(WorkshopError):
+                        owner.engine.annotate_transaction(
+                            tx, kind="observation",
+                            summary="Compiler abort remains available with its projection pending",
+                            evidence="isolated compiler authority abort matrix fixture",
+                        )
+                _, state = owner.engine._load_transaction(tx)
+                marker = json.loads(pending_path(owner.engine, tx).read_text(encoding="utf-8"))
+                self.assertEqual(marker["event_id"], state["tx_event_id"])
+                with self.assertRaises(WorkshopError) as caught:
+                    owner.engine.checkout(["src/main.cpp"], purpose="Reject new compiler work while exact projection is pending")
+                self.assertEqual(caught.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+                self.assertEqual(caught.exception.outcome, "TX_DOCUMENT_PROJECTION_PENDING")
+                self.assertEqual(caught.exception.references["items"][0]["event_id"], marker["event_id"])
+            _, before = owner.engine._load_transaction(tx)
+            result = owner.abort(tx)
+            self.assertEqual(result["state"], "ABORTED")
+            assert_projected(owner.engine, tx)
+            _, after = owner.engine._load_transaction(tx)
+            metadata = split_frontmatter((owner.engine.config.kairos_workspace / document_path(tx)).read_text(encoding="utf-8")).metadata
+            with closing(sqlite3.connect(owner.engine.config.kairos_database)) as connection:
+                row = connection.execute("SELECT metadata_json FROM artifacts WHERE artifact_id=?", (document_id(tx),)).fetchone()
+            sql = json.loads(row[0])
+            self.assertEqual(after["state"], "ABORTED")
+            self.assertEqual(after["tx_event"]["event"], "AUTHORITY_MIGRATION_ABORTED")
+            self.assertEqual(after["tx_event_id"], metadata["tx_event_id"])
+            self.assertEqual(after["tx_event_id"], sql["tx_event_id"])
+            self.assertEqual(sql["workshop_state"], "ABORTED")
+            self.assertGreater(after["tx_event_sequence"], before["tx_event_sequence"])
+            self.assertEqual(after["tx_event"]["previous_event_id"], before["tx_event_id"])
+            self.assertFalse(pending_path(owner.engine, tx).exists())
+            self.assertFalse(owner.engine.lease_path.exists())
+            status = owner.engine.status()
+            self.assertTrue(status["verified"], status)
+            self.assertEqual(status["package_sha256"], baseline)
+            self.assertTrue(status["seal"]["matches_current"])
+            observed.append((target_state, pending))
+            raise AbortObserved()
+
+        def checked(owner, *args, **kwargs):
+            result = checkout(owner, *args, **kwargs)
+            if target_state == "CHECKED_OUT":
+                stop_with_verified_abort(owner, result["transaction_id"])
+            return result
+
+        def prepared(owner, tx):
+            try:
+                result = prepare(owner, tx)
+            except WorkshopError:
+                _, state = owner.engine._load_transaction(tx)
+                if target_state == "AWAITING_METADATA_REVIEW" and state["state"] == target_state:
+                    stop_with_verified_abort(owner, tx)
+                raise
+            if target_state == "PREPARED":
+                stop_with_verified_abort(owner, tx)
+            return result
+
+        def verified(owner, tx):
+            result = verify(owner, tx)
+            if target_state == "SHADOW_VERIFIED":
+                stop_with_verified_abort(owner, tx)
+            return result
+
+        # Reuse the compiler-authoritative fixture and its real public lifecycle.
+        # The sentinel ends that fixture only after the native Abort is proved.
+        with patch.object(AuthorityMigration, "checkout", new=checked), \
+             patch.object(AuthorityMigration, "prepare", new=prepared), \
+             patch.object(AuthorityMigration, "verify", new=verified):
+            with self.assertRaises(AbortObserved):
+                self.test_header_add_remove_and_source_change_migrate_atomically()
+        self.assertEqual(observed, [(target_state, pending)])
+
+    def test_direct_compiler_abort_from_every_supported_preapply_state(self):
+        for state in ("CHECKED_OUT", "AWAITING_METADATA_REVIEW", "PREPARED", "SHADOW_VERIFIED"):
+            with self.subTest(state=state):
+                self._prove_direct_compiler_abort(state)
+
+    def test_direct_compiler_abort_is_available_while_projection_is_pending(self):
+        self._prove_direct_compiler_abort("CHECKED_OUT", pending=True)
+
     def compiler_sealed_interruption(self, *, point, fault=None):
         from unittest.mock import patch
         from runtime_sync_workshop import migration as module
@@ -160,6 +310,140 @@ class AuthorityMigrationTests(unittest.TestCase):
         with patch.object(AuthorityMigration, "apply", interrupted):
             case.test_header_add_remove_and_source_change_migrate_atomically()
         self.assertEqual(len(seen), 1)
+
+    def compiler_unsealed_interruption(self, boundary="mirror", fault=None):
+        from unittest.mock import patch
+        from runtime_sync_workshop import migration as module
+        from runtime_sync_workshop.cli import _parser, execute
+        class Finished(BaseException):
+            pass
+        original, save = AuthorityMigration.apply, WorkshopEngine._save_transaction
+        seen = []
+        def legacy_save(engine, root, state, *, event, details=None):
+            if fault == "missing_pin" and event == "AUTHORITY_CHECKOUT_COMPLETED":
+                state.pop("baseline_seal_sha256", None)
+            return save(engine, root, state, event=event, details=details)
+        def interrupted(owner, tx):
+            root, state = owner.engine._load_transaction(tx)
+            if owner._work_package(root, state)["package_sha256"] != state["verified_work_package_sha256"]:
+                return original(owner, tx)
+            seal = owner.engine.seal_path.read_bytes()
+            _, heartbeat = owner.engine._import_kairos()
+            copy, run = module.copy_exact, heartbeat.run_heartbeat
+            def cut_copy(source, target):
+                if target == owner.config.codebase_root / "src/main.cpp":
+                    raise SystemExit("isolated cut before first compiler target")
+                return copy(source, target)
+            def cut_heartbeat(*args, **kwargs):
+                if kwargs.get("trigger") == f"runtime-sync-authority-migration:{tx}":
+                    raise SystemExit("isolated cut before compiler projection")
+                return run(*args, **kwargs)
+            context = (patch.object(owner.engine, "_mirror", side_effect=OSError("isolated unsealed compiler result"))
+                       if boundary == "mirror" else patch.object(heartbeat, "run_heartbeat", side_effect=cut_heartbeat)
+                       if boundary == "heartbeat" else patch.object(module, "copy_exact", side_effect=cut_copy))
+            with context:
+                if boundary == "mirror":
+                    with self.assertRaises(WorkshopError) as caught:
+                        original(owner, tx)
+                    self.assertEqual(caught.exception.code, "RECOVERY_REQUIRED")
+                else:
+                    with self.assertRaises(SystemExit):
+                        original(owner, tx)
+            assert_projected(owner.engine, tx)
+            before = (root / "state.json").read_bytes()
+            sources = {p.relative_to(owner.config.codebase_root).as_posix():p.read_bytes()
+                       for p in owner.config.codebase_root.rglob("*") if p.suffix in {".cpp", ".hpp"}}
+            if fault == "seal":
+                data=json.loads(seal);data["created_at"]="isolated changed original seal"
+                owner.engine.seal_path.write_text(json.dumps(data), encoding="utf-8")
+            elif fault == "work":
+                path=root / "review/metadata_audit.json"
+                path.write_bytes(path.read_bytes()+b"\n")
+            elif fault == "source":
+                target=owner.config.codebase_root/"src/main.cpp"
+                target.write_bytes(target.read_bytes()+b"\n")
+            elif fault == "retired":
+                (owner.config.codebase_root/"include/a.hpp").write_bytes(b"#pragma once\n")
+            elif fault == "permit":
+                governance,_=owner.engine._import_kairos()
+                governance.revoke_action_permit(owner.config.kairos_workspace,
+                    permit_id=owner.engine._load_transaction(tx)[1]["permit"]["permit_id"], reason="Isolated recovery must not renew revoked authority")
+            elif fault and fault.startswith("role:"):
+                role=fault.split(":",1)[1]
+                row=next(r for r in owner._work_package(root,state)["files"] if r["role"]==role)
+                roots={"candidate":owner.config.codebase_root,"blueprint":owner.config.blueprint_root,
+                       "managed":owner.config.managed_blueprint_root,"authority":owner.config.kairos_workspace,
+                       "machine":owner.config.machine_root,"external-final":owner.config.blueprint_root}
+                relative=row["path"]
+                if role=="machine":
+                    relative={"compile_commands.json":"project-intake/compile_commands.json",
+                              "PROJECT_BUILD_AUTHORITY.cmake":"project-intake/PROJECT_BUILD_AUTHORITY.cmake"}.get(relative,relative)
+                target=roots[role]/relative
+                target.write_bytes(target.read_bytes()+b"\n")
+            observed_seal=owner.engine.seal_path.read_bytes()
+            health=__import__("importlib").import_module("kairos.health")
+            health_context=(patch.object(health,"health_audit",return_value={"verdict":"FAIL","failures":["isolated health refusal"]})
+                            if fault=="health" else patch.object(health,"health_audit",wraps=health.health_audit))
+            with health_context, patch.object(module,"copy_exact",side_effect=AssertionError("Recovery must not repeat target copies")):
+                if fault:
+                    governance,_=owner.engine._import_kairos()
+                    errors=(WorkshopError,governance.GovernanceError) if fault=="permit" else WorkshopError
+                    with self.assertRaises(errors) as caught:
+                        owner.engine.recover(tx)
+                    expected=("AUTHORITY_RECOVERY_TARGET_DRIFT" if fault.startswith("role:") or fault in {"source","retired"} else
+                              {"seal":"AUTHORITY_RECOVERY_SEAL_MISMATCH","work":"AUTHORITY_RECOVERY_WORK_DRIFT",
+                               "missing_pin":"AUTHORITY_RECOVERY_BASELINE_UNBOUND","health":"AUTHORITY_RECOVERY_STILL_BLOCKED","permit":None}[fault])
+                    if fault!="permit":
+                        self.assertEqual(caught.exception.code,expected)
+                    self.assertEqual((root/"state.json").read_bytes(),before)
+                    self.assertEqual(owner.engine.seal_path.read_bytes(),observed_seal)
+                    self.assertTrue(owner.engine.lease_path.exists())
+                else:
+                    args=_parser().parse_args(["--config",str(owner.config.config_path),"recover",tx])
+                    result=execute(args)
+                    _,final=owner.engine._load_transaction(tx)
+                    expected="ROLLED_BACK" if boundary=="before_copy" else "POSTCHECK_VERIFIED"
+                    self.assertEqual(final["state"],expected)
+                    assert_projected(owner.engine,tx)
+                    self.assertFalse(owner.engine.lease_path.exists())
+                    if boundary=="before_copy":
+                        self.assertFalse(result["runtime_write_performed"])
+                        self.assertEqual(owner.engine.seal_path.read_bytes(),seal)
+                    else:
+                        self.assertTrue(final["recovery_verification"]["seal_created"])
+                        self.assertEqual(final["terminal_receipt"]["status"],"COMMITTED")
+                    self.assertEqual({p.relative_to(owner.config.codebase_root).as_posix():p.read_bytes()
+                                      for p in owner.config.codebase_root.rglob("*") if p.suffix in {".cpp",".hpp"}},sources)
+            seen.append(tx)
+            raise Finished()
+        case=AuthorityMigrationTests("test_header_add_remove_and_source_change_migrate_atomically")
+        try:
+            with patch.object(AuthorityMigration,"apply",interrupted), patch.object(WorkshopEngine,"_save_transaction",legacy_save):
+                case.test_header_add_remove_and_source_change_migrate_atomically()
+        except Finished:
+            pass
+        self.assertEqual(len(seen),1)
+
+    def test_unsealed_compiler_result_recovers_before_or_after_heartbeat(self):
+        for boundary in ("mirror","heartbeat"):
+            with self.subTest(boundary=boundary):
+                self.compiler_unsealed_interruption(boundary)
+
+    def test_unsealed_compiler_untouched_baseline_retires_without_apply(self):
+        self.compiler_unsealed_interruption("before_copy")
+
+    def test_unsealed_compiler_recovery_refuses_all_changed_target_roles(self):
+        for role in ("candidate","blueprint","managed","authority","machine","external-final"):
+            with self.subTest(role=role):
+                self.compiler_unsealed_interruption(fault="role:"+role)
+
+    def test_unsealed_compiler_recovery_refuses_unbound_seal_work_or_failed_health(self):
+        for fault in ("missing_pin","seal","work","health","source","retired"):
+            with self.subTest(fault=fault):
+                self.compiler_unsealed_interruption(fault=fault)
+
+    def test_unsealed_compiler_recovery_refuses_revoked_original_permit(self):
+        self.compiler_unsealed_interruption("heartbeat", fault="permit")
 
     def test_sealed_compiler_result_recovers_after_seal_or_source_interruption(self):
         for point in ("seal", "source"):

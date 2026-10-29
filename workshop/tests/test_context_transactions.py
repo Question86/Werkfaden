@@ -70,6 +70,148 @@ def project_spec() -> dict:
 class ContextTransactionTests(unittest.TestCase):
     """Exercise real native heartbeat promotion against isolated Python projects."""
 
+    def authored_code_fixture(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from kairos.cli import main
+
+        original_seal = WorkshopEngine.seal
+
+        def create_authored_map_before_seal(engine, *args, **kwargs):
+            current = json.loads((engine.config.kairos_workspace / 'current.json').read_text(encoding='utf-8'))
+            output = io.StringIO()
+            errors = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                status = main(['new-code', '--workspace', str(engine.config.kairos_workspace),
+                    '--id', 'CODE_AUTHORED_MAP', '--task', current['active_task'],
+                    '--goal', current['active_goal'], '--milestone', current['active_milestone'],
+                    '--title', 'Authored application map', '--purpose', 'legacycodemap describes the application.',
+                    '--components', 'app.py is the exact declared application source.',
+                    '--interfaces', 'The application exposes one value.',
+                    '--invariants', 'This prose map does not own source membership or exact ledgers.',
+                    '--dependencies', 'The native source ledger remains independently governed.',
+                    '--testing', 'Executed results require separate reports.', '--state', 'active', '--mode', 'verify'])
+            self.assertEqual(status, 0, output.getvalue() + errors.getvalue())
+            self.assertTrue(json.loads(output.getvalue())['heartbeat']['verified'])
+            return original_seal(engine, *args, **kwargs)
+
+        fixture = ContextTransactionTests()
+        self.addCleanup(fixture.doCleanups)
+        with patch.object(WorkshopEngine, 'seal', new=create_authored_map_before_seal):
+            fixture.setUp()
+        return fixture, 'code/CODE_AUTHORED_MAP.md'
+
+    def authored_code_checkout(self, fixture, document):
+        checkout = fixture.checkout(documents=(document,))
+        # Context-only maintenance: the existing source bytes do not change.
+        (Path(checkout['work_directory']) / 'app.py').write_bytes(b'value = 1\n')
+        path = Path(checkout['work_directory']) / 'documents' / document
+        path.write_bytes(path.read_bytes().replace(b'legacycodemap', b'freshcodemap'))
+        fixture.review_document(checkout, document, fields=[
+            'capsule', 'answers', 'refs', 'claim_boundary', 'entities', 'facets',
+            'does_not_answer', 'search_contract', 'sections'])
+        return checkout, path
+
+    def test_authored_code_context_native_creation_apply_and_search_update(self):
+        fixture, document = self.authored_code_fixture()
+        source = (fixture.project / 'app.py').read_bytes()
+        generated = {p.name: p.read_bytes() for p in fixture.engine.config.blueprint_root.glob('*.md')}
+        checkout, candidate = self.authored_code_checkout(fixture, document)
+        original = (fixture.workspace / document).read_bytes()
+        fixture.prepare_and_verify(checkout)
+        self.assertEqual((fixture.workspace / document).read_bytes(), original)
+        result = fixture.engine.apply(checkout['transaction_id'])
+        self.assertEqual(result['state'], 'POSTCHECK_VERIFIED')
+        self.assertTrue(result['bit_exact'])
+        self.assertIn('CODE_AUTHORED_MAP', result['heartbeat']['promoted'])
+        self.assertEqual((fixture.workspace / document).read_bytes(), candidate.read_bytes())
+        self.assertEqual((fixture.project / 'app.py').read_bytes(), source)
+        self.assertEqual({p.name: p.read_bytes() for p in fixture.engine.config.blueprint_root.glob('*.md')}, generated)
+        with closing(sqlite3.connect(fixture.database)) as connection:
+            row = connection.execute("SELECT revision,capsule FROM artifacts WHERE artifact_id='CODE_AUTHORED_MAP'").fetchone()
+            self.assertEqual(row[0], 2)
+            self.assertIn('freshcodemap', row[1])
+            self.assertEqual(connection.execute("SELECT count(*) FROM section_fts WHERE section_fts MATCH 'legacycodemap' AND artifact_id='CODE_AUTHORED_MAP'").fetchone()[0], 0)
+            self.assertGreater(connection.execute("SELECT count(*) FROM section_fts WHERE section_fts MATCH 'freshcodemap' AND artifact_id='CODE_AUTHORED_MAP'").fetchone()[0], 0)
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_authored_code_partial_copy_rolls_back_exact_bytes_freshness_and_projection(self):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        fixture, document = self.authored_code_fixture()
+        checkout, candidate = self.authored_code_checkout(fixture, document)
+        fixture.prepare_and_verify(checkout)
+        live = fixture.workspace / document
+        paths = [fixture.project / 'app.py', *(fixture.workspace / 'code').glob('*.md')]
+        original = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in paths}
+        interrupted = False
+
+        def fail_after_copy(source, destination):
+            nonlocal interrupted
+            copy_exact(source, destination)
+            if source == candidate and destination == live and not interrupted:
+                interrupted = True
+                self.assertEqual(live.read_bytes(), candidate.read_bytes())
+                raise OSError('isolated interruption after authored code map copy')
+
+        core_apply = super(type(fixture.engine), fixture.engine).apply
+        with patch.dict(core_apply.__func__.__globals__, {'copy_exact': fail_after_copy}):
+            with self.assertRaises(WorkshopError) as raised:
+                fixture.engine.apply(checkout['transaction_id'])
+        self.assertTrue(interrupted)
+        self.assertEqual(raised.exception.code, 'APPLY_ROLLED_BACK')
+        self.assertEqual(fixture.engine.transaction_status(checkout['transaction_id'])['state'], 'ROLLED_BACK')
+        for path, facts in original.items():
+            self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), facts, str(path))
+        assert_projected(fixture.engine, checkout['transaction_id'])
+        with closing(sqlite3.connect(fixture.database)) as connection:
+            self.assertEqual(connection.execute("SELECT revision FROM artifacts WHERE artifact_id='CODE_AUTHORED_MAP'").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT count(*) FROM action_permits WHERE command_name='external-edit' AND status='ACTIVE'").fetchone()[0], 0)
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_authored_code_context_abort_preserves_original_map_source_and_seal(self):
+        fixture, document = self.authored_code_fixture()
+        original = (fixture.workspace / document).read_bytes()
+        baseline = fixture.engine.status()['package_sha256']
+        checkout, _ = self.authored_code_checkout(fixture, document)
+        fixture.prepare_and_verify(checkout)
+        fixture.engine.abort(checkout['transaction_id'])
+        self.assertEqual((fixture.workspace / document).read_bytes(), original)
+        self.assertEqual((fixture.project / 'app.py').read_bytes(), b'value = 1\n')
+        self.assertEqual(fixture.engine.status()['package_sha256'], baseline)
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_authored_code_candidate_cannot_become_a_source_mapping_or_change_role(self):
+        fixture, document = self.authored_code_fixture()
+        original = (fixture.workspace / document).read_bytes()
+        for reserved in ('s-mapping', 's-source-ledger', 's-header-ledger', 'authority'):
+            with self.subTest(reserved=reserved):
+                checkout, candidate = self.authored_code_checkout(fixture, document)
+                text = candidate.read_text(encoding='utf-8')
+                if reserved == 'authority':
+                    text = text.replace('authority = "implementation_documentation"', 'authority = "architecture_authority"')
+                else:
+                    text += '\n<a id="' + reserved + '"></a>\n## Reserved native authority\n\n> Capsule: This candidate attempts an unmapped source authority.\n\nUnregistered mapping must not be admitted.\n'
+                candidate.write_bytes(text.encode())
+                with self.assertRaises(WorkshopError) as raised:
+                    fixture.engine.prepare(checkout['transaction_id'])
+                self.assertEqual(raised.exception.code, 'CONTEXT_DOCUMENT_INVALID')
+                self.assertEqual((fixture.workspace / document).read_bytes(), original)
+                fixture.engine.abort(checkout['transaction_id'])
+                self.assertFalse(fixture.engine.lease_path.exists())
+
+    def test_authored_code_context_requires_verified_exact_source_ownership(self):
+        from runtime_sync_workshop.context_documents import ContextDocuments
+        fixture, document = self.authored_code_fixture()
+        source = fixture.project / 'app.py'
+        source.write_bytes(b'value = 99\n')
+        with self.assertRaises(WorkshopError) as raised:
+            ContextDocuments(fixture.engine.config).normalize([document])
+        self.assertEqual(raised.exception.code, 'CONTEXT_DOCUMENT_INVALID')
+        self.assertFalse(fixture.engine.lease_path.exists())
+
+    def initial_auxiliary_documents(self):
+        return ()
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="workshop-context-test-")
         self.addCleanup(temporary.cleanup)
@@ -83,6 +225,7 @@ class ContextTransactionTests(unittest.TestCase):
             workspace=self.workspace,
             workspace_id="KAIROS_CONTEXT_TEST",
             project_spec=project_spec(),
+            auxiliary_documents=self.initial_auxiliary_documents(),
         )
         self.assertEqual(intake["state"], "VERIFIED_PENDING_SEAL")
         # Establish authoritative context before sealing, using the same governed
@@ -105,6 +248,438 @@ class ContextTransactionTests(unittest.TestCase):
         self.engine = WorkshopEngine(Path(intake["workshop_config"]))
         self.engine.seal()
         self.database = self.workspace / ".kairos" / "kairos.db"
+
+    def _policy_candidate(self):
+        profile = "mandatory-runtime/v1"
+        plan = self.engine.policy_activation_plan(profile)
+        checkout = self.engine.policy_checkout(profile, expected_plan_sha256=plan["plan_sha256"],
+                                               purpose="Activate the exact mandatory runtime profile in an isolated native fixture")
+        review_path = Path(checkout["review"])
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        review.update(reviewer="native-policy-integration",
+                      reviewed_files=sorted(row["path"] for row in plan["files"]),
+                      reason="Reviewed exact source-bound plan; only mandatory flags and an existing governed intake binding may change.")
+        review_path.write_text(json.dumps(review, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        return checkout, plan
+
+    def _verified_policy(self):
+        checkout, plan = self._policy_candidate()
+        tx = checkout["transaction_id"]
+        self.engine.policy_prepare(tx)
+        self.engine.policy_verify(tx)
+        return checkout, plan
+
+    def test_runtime_policy_writer_native_roundtrip_and_terminal_replay(self):
+        from runtime_sync_workshop.tx_documents import assert_projected
+        before_source = (self.project / "app.py").read_bytes()
+        before_config = dict(self.engine.config.raw)
+        checkout, plan = self._verified_policy()
+        tx = checkout["transaction_id"]
+        self.assertIsNot(self.engine.config.raw.get("tx_retention_required"), True)
+        result = self.engine.policy_apply(tx)
+        self.assertEqual(result["state"], "POSTCHECK_VERIFIED")
+        self.assertTrue(result["heartbeat"]["verified"])
+        self.assertEqual(self.engine.config.raw, {**before_config, "transaction_documents_required": True,
+                                                  "tx_retention_required": True})
+        self.assertEqual((self.project / "app.py").read_bytes(), before_source)
+        self.assertFalse(self.engine.lease_path.exists())
+        assert_projected(self.engine, tx)
+        state = self.engine.transaction_status(tx)
+        original_event = state["tx_event_id"]
+        fresh = WorkshopEngine(self.engine.config.config_path)
+        replay = fresh.policy_recover(tx)
+        self.assertEqual(replay["state"], "POSTCHECK_VERIFIED")
+        self.assertEqual(fresh.transaction_status(tx)["tx_event_id"], original_event)
+        self.assertEqual(sum(row["event"] == "POLICY_APPLY_STARTED" for row in state["journal"]), 1)
+        self.assertTrue(fresh.status(persist=False)["verified"])
+        # Prove activation changes subsequent native admission, not just JSON.
+        ordinary = fresh.checkout(["app.py"], purpose="Prove activated policy forces documentation on the next ordinary checkout")
+        next_tx = ordinary["transaction_id"]
+        self.assertTrue(fresh.transaction_status(next_tx)["document_projection_required"])
+        assert_projected(fresh, next_tx)
+        self.assertTrue(fresh.transaction_pool_status()["enabled"])
+        self.assertEqual(fresh.abort(next_tx)["state"], "ABORTED")
+
+    def test_activated_policy_enforces_nine_real_worktrees_and_session_entry(self):
+        from kairos.heartbeat import status_report
+        from runtime_sync_workshop.tx_documents import assert_projected
+        checkout, _ = self._verified_policy()
+        policy_tx = checkout["transaction_id"]
+        self.engine.policy_apply(policy_tx)
+        fresh = WorkshopEngine(self.engine.config.config_path)
+        before_config = fresh.config.config_path.read_bytes()
+        before_source = (self.project / "app.py").read_bytes()
+        before_seal = fresh.seal_path.read_bytes()
+        actual_ids = {policy_tx}
+        # No fabricated state/work directories or cached flag edits: the policy
+        # transaction plus eight real checkout/abort pairs fill nine slots.
+        for _ in range(8):
+            ordinary = fresh.checkout(["app.py"], purpose="Exercise activated native admission with a real abandoned candidate")
+            tx = ordinary["transaction_id"]
+            actual_ids.add(tx)
+            self.assertTrue(fresh.transaction_status(tx)["document_projection_required"])
+            assert_projected(fresh, tx)
+            self.assertEqual(fresh.abort(tx)["state"], "ABORTED")
+            assert_projected(fresh, tx)
+        pool = fresh.transaction_pool_status()
+        self.assertEqual(pool["materialized_count"], 9)
+        self.assertEqual({row["transaction_id"] for row in pool["rows"]}, actual_ids)
+        self.assertTrue(pool["enabled"])
+        self.assertTrue(pool["required"])
+        observed = status_report(self.workspace)
+        self.assertTrue(observed["tx_recycling_live"]["required"])
+        self.assertEqual(observed["next_required_read"], "_LOOP_GATE.md#s-tx-recycling")
+        before_ids = {path.name for path in fresh.config.transaction_directory.iterdir() if path.is_dir()}
+        with self.assertRaises(WorkshopError) as refusal:
+            fresh.checkout(["app.py"], purpose="Refuse a tenth candidate until native recycling completes")
+        self.assertEqual(refusal.exception.code, "TX_RECYCLING_REQUIRED")
+        self.assertEqual({path.name for path in fresh.config.transaction_directory.iterdir() if path.is_dir()}, before_ids)
+        self.assertFalse(fresh.lease_path.exists())
+        self.assertEqual(fresh.config.config_path.read_bytes(), before_config)
+        self.assertEqual((self.project / "app.py").read_bytes(), before_source)
+        self.assertEqual(fresh.seal_path.read_bytes(), before_seal)
+
+    def test_activated_policy_publication_outage_blocks_fresh_checkout_until_exact_reconcile(self):
+        from runtime_sync_workshop.tx_documents import assert_projected, pending_path
+        checkout, _ = self._verified_policy()
+        self.engine.policy_apply(checkout["transaction_id"])
+        fresh = WorkshopEngine(self.engine.config.config_path)
+        ordinary = fresh.checkout(["app.py"], purpose="Exercise activated mandatory publication across a terminal outage")
+        tx = ordinary["transaction_id"]
+        before_config = fresh.config.config_path.read_bytes()
+        before_source = (self.project / "app.py").read_bytes()
+        with patch("runtime_sync_workshop.tx_documents.publish",
+                   side_effect=WorkshopError("INJECTED_PROJECTION_OUTAGE", "Isolated publication-boundary fault")):
+            with self.assertRaises(WorkshopError) as refusal:
+                fresh.abort(tx)
+        self.assertEqual(refusal.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+        marker = pending_path(fresh, tx)
+        pending = json.loads(marker.read_bytes())
+        terminal = fresh.transaction_status(tx)
+        self.assertEqual(terminal["state"], "ABORTED")
+        self.assertTrue(terminal["document_projection_required"])
+        self.assertEqual(pending["event_id"], terminal["tx_event_id"])
+        restarted = WorkshopEngine(fresh.config.config_path)
+        with self.assertRaises(WorkshopError) as blocked:
+            restarted.checkout(["app.py"], purpose="Refuse progress while the actual terminal event remains unpublished")
+        self.assertEqual(blocked.exception.code, "TX_DOCUMENT_SYNC_PENDING")
+        self.assertEqual(blocked.exception.references["items"][0]["event_id"], terminal["tx_event_id"])
+        with patch.object(restarted, "apply", side_effect=AssertionError("Reconcile must never repeat Apply")):
+            restarted.reconcile_transaction_document(tx)
+        assert_projected(restarted, tx)
+        self.assertEqual(restarted.transaction_status(tx)["tx_event_id"], terminal["tx_event_id"])
+        self.assertFalse(marker.exists())
+        resumed = restarted.checkout(["app.py"], purpose="Resume only after the exact pending event is projected")
+        assert_projected(restarted, resumed["transaction_id"])
+        restarted.abort(resumed["transaction_id"])
+        self.assertEqual(restarted.config.config_path.read_bytes(), before_config)
+        self.assertEqual((self.project / "app.py").read_bytes(), before_source)
+
+
+    def test_runtime_policy_writer_cli_and_generic_dispatch_share_native_owner(self):
+        from runtime_sync_workshop.cli import _parser, execute
+        profile = "mandatory-runtime/v1"
+        plan = self.engine.policy_activation_plan(profile)
+        parser = _parser()
+        prefix = ["--config", str(self.engine.config.config_path)]
+        checkout = execute(parser.parse_args(prefix + ["policy-checkout", "--profile", profile,
+                              "--expected-plan-sha256", plan["plan_sha256"], "--purpose",
+                              "Review and abandon an exact policy candidate through the real public CLI"]))
+        tx = checkout["transaction_id"]
+        state = self.engine.transaction_status(tx)
+        self.assertTrue(state["document_projection_required"])
+        result = execute(parser.parse_args(prefix + ["policy-abort", tx]))
+        self.assertEqual(result["state"], "ABORTED")
+        checkout, _ = self._policy_candidate()
+        tx = checkout["transaction_id"]
+        self.assertEqual(self.engine.prepare(tx)["state"], "PREPARED")
+        self.assertEqual(self.engine.verify(tx)["state"], "SHADOW_VERIFIED")
+        self.assertEqual(self.engine.abort(tx)["state"], "ABORTED")
+        for command in ("policy-prepare", "policy-verify", "policy-apply", "policy-recover"):
+            self.assertEqual(parser.parse_args(prefix + [command, tx]).command, command)
+
+    def test_runtime_policy_writer_failed_health_refuses_before_any_machine_write(self):
+        import kairos.health as health
+        checkout, _ = self._verified_policy()
+        tx = checkout["transaction_id"]
+        before = self.engine.config.config_path.read_bytes()
+        with patch.object(health, "health_audit", return_value={"verdict": "FAIL", "failures": ["injected stale document"]}):
+            with self.assertRaises(WorkshopError) as refusal:
+                self.engine.policy_apply(tx)
+        self.assertEqual(refusal.exception.code, "KAIROS_HEALTH_FAILED")
+        self.assertEqual(self.engine.config.config_path.read_bytes(), before)
+        state = self.engine.transaction_status(tx)
+        self.assertEqual(state["state"], "SHADOW_VERIFIED")
+        self.assertFalse(any(row["event"] == "POLICY_APPLY_STARTED" for row in state["journal"]))
+        self.assertTrue(self.engine.lease_path.exists())
+        self.engine.policy_abort(tx)
+
+    def test_runtime_policy_writer_frozen_manifest_tamper_refuses_before_apply(self):
+        checkout, _ = self._policy_candidate()
+        tx = checkout["transaction_id"]
+        root = Path(checkout["work_directory"]).parent
+        manifest = root / "baseline" / "manifest.json"
+        original = manifest.read_bytes()
+        raw = json.loads(original)
+        raw["counts"]["unexpected"] = 1
+        manifest.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+        before = self.engine.config.config_path.read_bytes()
+        with self.assertRaises(WorkshopError) as refusal:
+            self.engine.policy_prepare(tx)
+        self.assertEqual(refusal.exception.code, "POLICY_BASELINE_CHANGED")
+        self.assertEqual(self.engine.config.config_path.read_bytes(), before)
+        manifest.write_bytes(original)
+        self.engine.policy_abort(tx)
+
+    def test_runtime_policy_writer_stale_plan_and_active_lease_refuse_before_mutation(self):
+        before = self.engine.config.config_path.read_bytes()
+        with self.assertRaises(WorkshopError) as refusal:
+            self.engine.policy_checkout("mandatory-runtime/v1", expected_plan_sha256="0" * 64,
+                                        purpose="Refuse an unreviewed policy plan before acquiring any lease")
+        self.assertEqual(refusal.exception.code, "POLICY_PLAN_CHANGED")
+        self.assertFalse(self.engine.lease_path.exists())
+        checkout, plan = self._policy_candidate()
+        with self.assertRaises(WorkshopError):
+            self.engine.policy_checkout("mandatory-runtime/v1", expected_plan_sha256=plan["plan_sha256"],
+                                        purpose="Do not steal the already owned global Workshop lease")
+        self.assertEqual(self.engine.transaction_status(checkout["transaction_id"])["state"], "CHECKED_OUT")
+        self.assertEqual(self.engine.config.config_path.read_bytes(), before)
+        self.engine.policy_abort(checkout["transaction_id"])
+
+    def test_runtime_policy_writer_refuses_incomplete_review_and_extra_candidate(self):
+        plan = self.engine.policy_activation_plan("mandatory-runtime/v1")
+        checkout = self.engine.policy_checkout("mandatory-runtime/v1", expected_plan_sha256=plan["plan_sha256"],
+                                               purpose="Prove candidate scope and human-readable review are mandatory")
+        tx = checkout["transaction_id"]
+        with self.assertRaises(WorkshopError) as refusal:
+            self.engine.policy_prepare(tx)
+        self.assertEqual(refusal.exception.code, "POLICY_REVIEW_INCOMPLETE")
+        extra = Path(checkout["work_directory"]) / "machine" / "extra.json"
+        extra.write_text("{}\n", encoding="utf-8")
+        with self.assertRaises(WorkshopError) as refusal:
+            self.engine.policy_prepare(tx)
+        self.assertEqual(refusal.exception.code, "POLICY_CANDIDATE_SCOPE_INVALID")
+        extra.unlink()
+        self.engine.policy_abort(tx)
+
+    def test_runtime_policy_writer_review_tamper_after_verify_refuses_apply(self):
+        checkout, _ = self._verified_policy()
+        before = self.engine.config.config_path.read_bytes()
+        review = Path(checkout["review"])
+        record = json.loads(review.read_text(encoding="utf-8"))
+        record["reason"] += " Changed after verification."
+        review.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        with self.assertRaises(WorkshopError) as refusal:
+            self.engine.policy_apply(checkout["transaction_id"])
+        self.assertEqual(refusal.exception.code, "WORK_CHANGED_AFTER_VERIFY")
+        self.assertEqual(self.engine.config.config_path.read_bytes(), before)
+        self.engine.policy_abort(checkout["transaction_id"])
+
+    def test_runtime_policy_writer_write_failure_restores_exact_bytes_and_freshness(self):
+        from runtime_sync_workshop import util
+        checkout, _ = self._verified_policy()
+        path = self.engine.config.config_path
+        before, stamp = path.read_bytes(), path.stat().st_mtime_ns
+        original = util.atomic_write_bytes
+        fired = []
+        def fail_once(destination, data):
+            if Path(destination) == path and not fired:
+                fired.append(True)
+                raise OSError("injected atomic config replacement failure")
+            return original(destination, data)
+        with patch.object(util, "atomic_write_bytes", side_effect=fail_once):
+            with self.assertRaises(OSError):
+                self.engine.policy_apply(checkout["transaction_id"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(path.stat().st_mtime_ns, stamp)
+        self.assertEqual(self.engine.transaction_status(checkout["transaction_id"])["state"], "ROLLED_BACK")
+        self.assertFalse(self.engine.lease_path.exists())
+        self.assertTrue(self.engine.status(persist=False)["verified"])
+
+    def test_runtime_policy_writer_process_interruption_at_baseline_recovers_without_apply(self):
+        from runtime_sync_workshop import util
+        checkout, _ = self._verified_policy()
+        path = self.engine.config.config_path
+        before = path.read_bytes()
+        original = util.atomic_write_bytes
+        class Interrupted(BaseException):
+            pass
+        def interrupt(destination, data):
+            if Path(destination) == path:
+                raise Interrupted()
+            return original(destination, data)
+        with patch.object(util, "atomic_write_bytes", side_effect=interrupt):
+            with self.assertRaises(Interrupted):
+                self.engine.policy_apply(checkout["transaction_id"])
+        self.assertTrue(self.engine.lease_path.exists())
+        fresh = WorkshopEngine(path)
+        with patch.object(fresh, "policy_apply", side_effect=AssertionError("Recovery must never repeat Apply")):
+            result = fresh.recover(checkout["transaction_id"])
+        self.assertEqual(result["state"], "ROLLED_BACK")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse(fresh.lease_path.exists())
+
+    def test_runtime_policy_writer_process_interruption_after_target_finishes_without_apply(self):
+        from runtime_sync_workshop import util
+        checkout, _ = self._verified_policy()
+        path = self.engine.config.config_path
+        original = util.atomic_write_bytes
+        class Interrupted(BaseException):
+            pass
+        def interrupt_after(destination, data):
+            original(destination, data)
+            if Path(destination) == path:
+                raise Interrupted()
+        with patch.object(util, "atomic_write_bytes", side_effect=interrupt_after):
+            with self.assertRaises(Interrupted):
+                self.engine.policy_apply(checkout["transaction_id"])
+        target = path.read_bytes()
+        fresh = WorkshopEngine(path)
+        with patch.object(fresh, "policy_apply", side_effect=AssertionError("Recovery must never repeat Apply")):
+            result = fresh.policy_recover(checkout["transaction_id"])
+        self.assertEqual(result["state"], "POSTCHECK_VERIFIED")
+        self.assertEqual(path.read_bytes(), target)
+        self.assertFalse(fresh.lease_path.exists())
+
+    def test_runtime_policy_writer_heartbeat_failure_requires_fresh_forward_recovery(self):
+        import kairos.heartbeat as heartbeat
+        checkout, _ = self._verified_policy()
+        original = heartbeat.run_heartbeat
+        def interrupted(*args, **kwargs):
+            if kwargs.get("trigger", "").startswith("runtime-policy-result:"):
+                raise OSError("injected policy result heartbeat outage")
+            return original(*args, **kwargs)
+        with patch.object(heartbeat, "run_heartbeat", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                self.engine.policy_apply(checkout["transaction_id"])
+        self.assertTrue(self.engine.lease_path.exists())
+        self.assertEqual(self.engine.transaction_status(checkout["transaction_id"])["state"], "APPLYING")
+        fresh = WorkshopEngine(self.engine.config.config_path)
+        target = fresh.config.config_path.read_bytes()
+        result = fresh.policy_recover(checkout["transaction_id"])
+        self.assertTrue(result["recovered"])
+        self.assertEqual(fresh.config.config_path.read_bytes(), target)
+        self.assertFalse(fresh.lease_path.exists())
+
+    def test_runtime_policy_writer_terminal_receipt_outage_recovers_exact_event(self):
+        import runtime_sync_workshop.engine as owner
+        from runtime_sync_workshop.tx_documents import assert_projected
+        checkout, _ = self._verified_policy()
+        tx = checkout["transaction_id"]
+        original = owner.atomic_write_json
+        def storage_outage(destination, record):
+            if (Path(destination).parent == self.engine.config.state_directory / "receipts"
+                    and record.get("schema") == "werkfaden-runtime-policy-postcheck/v1"):
+                raise OSError("injected immutable policy receipt storage outage")
+            return original(destination, record)
+        with patch.object(owner, "atomic_write_json", side_effect=storage_outage):
+            with self.assertRaises(WorkshopError) as refusal:
+                self.engine.policy_apply(tx)
+        self.assertEqual(refusal.exception.code, "TX_TERMINAL_RECEIPT_PENDING")
+        state = self.engine.transaction_status(tx)
+        self.assertEqual(state["state"], "POSTCHECK_VERIFIED")
+        self.assertEqual(state["terminal_receipt"]["status"], "PENDING")
+        technical_event = state["terminal_receipt"]["postcheck_event_id"]
+        pending_event = state["tx_event_id"]
+        self.assertNotEqual(pending_event, technical_event)
+        fresh = WorkshopEngine(self.engine.config.config_path)
+        with patch.object(fresh, "policy_apply", side_effect=AssertionError("Acknowledgement must never repeat Apply")):
+            result = fresh.policy_recover(tx)
+        immutable = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+        self.assertEqual(immutable["terminal_event_id"], technical_event)
+        self.assertEqual(immutable["terminal_payload_sha256"], state["terminal_receipt"]["payload_sha256"])
+        final = fresh.transaction_status(tx)
+        self.assertIn(pending_event, [event["event_id"] for event in final["tx_event_history"]])
+        self.assertEqual(sum(row["event"] == "POLICY_APPLY_STARTED" for row in final["journal"]), 1)
+        assert_projected(fresh, tx)
+        event = final["tx_event_id"]
+        fresh.policy_recover(tx)
+        self.assertEqual(fresh.transaction_status(tx)["tx_event_id"], event)
+        self.assertFalse(fresh.lease_path.exists())
+
+    def test_runtime_policy_writer_refuses_unsupported_guardian_and_jev_scopes(self):
+        path = self.engine.config.config_path
+        original = dict(self.engine.config.raw)
+        for field, code in (("guardian_required", "POLICY_GUARDIAN_SCOPE_UNSUPPORTED"),
+                            ("jev_apply_required", "JEV_APPLY_ROUTE_UNSUPPORTED")):
+            with self.subTest(policy=field):
+                # Isolated configured refusal injection; never a live migration.
+                path.write_text(json.dumps({**original, field: True}) + "\n", encoding="utf-8")
+                fresh = WorkshopEngine(path)
+                with self.assertRaises(WorkshopError) as refusal:
+                    fresh.policy_checkout("mandatory-runtime/v1", expected_plan_sha256="0" * 64,
+                                          purpose="Refuse a policy migration without its stronger scope authority")
+                self.assertEqual(refusal.exception.code, code)
+                self.assertFalse(fresh.lease_path.exists())
+
+    def test_runtime_policy_plan_is_sealed_read_only_and_publicly_reachable(self):
+        from runtime_sync_workshop.cli import _parser, execute
+        from runtime_sync_workshop.corpus import RUNTIME_POLICY_PROFILE
+        before = {p.relative_to(self.root).as_posix(): p.read_bytes() if p.is_file() else None
+                  for p in self.root.rglob('*')}
+        first = self.engine.policy_activation_plan(RUNTIME_POLICY_PROFILE)
+        second = self.engine.policy_activation_plan(RUNTIME_POLICY_PROFILE)
+        self.assertEqual(first, second)
+        self.assertTrue(first['verified'])
+        self.assertTrue(first['read_only'])
+        self.assertTrue(first['transaction_required'])
+        self.assertFalse(first['mutation_authorized'])
+        self.assertTrue(first['activation_supported'])
+        self.assertEqual(first['baseline_package_sha256'], self.engine.status(persist=False)['package_sha256'])
+        args = _parser().parse_args(['--config', str(self.engine.config.config_path), 'manifest',
+                                    '--policy-profile', RUNTIME_POLICY_PROFILE])
+        self.assertEqual(execute(args), first)
+        after = {p.relative_to(self.root).as_posix(): p.read_bytes() if p.is_file() else None
+                 for p in self.root.rglob('*')}
+        self.assertEqual(before, after)
+        self.assertFalse(self.engine.lease_path.exists())
+        self.assertIsNot(self.engine.config.raw.get('tx_retention_required'), True)
+        self.assertEqual({row['path'] for row in first['files']}, {'workshop.config.json'})
+
+    def test_runtime_policy_plan_refuses_unsealed_or_drifted_source(self):
+        from runtime_sync_workshop.corpus import RUNTIME_POLICY_PROFILE
+        seal = self.engine.seal_path.read_bytes()
+        self.engine.seal_path.unlink()  # Isolated fixture fault injection only.
+        with self.assertRaises(WorkshopError) as caught:
+            self.engine.policy_activation_plan(RUNTIME_POLICY_PROFILE)
+        self.assertEqual(caught.exception.code, 'SEAL_MISSING')
+        self.engine.seal_path.write_bytes(seal)
+        (self.project / 'app.py').write_bytes(b'value = 999\n')
+        with self.assertRaises(WorkshopError) as caught:
+            self.engine.policy_activation_plan(RUNTIME_POLICY_PROFILE)
+        self.assertEqual(caught.exception.code, 'GUARDIAN_BASELINE_UNVERIFIED')
+        self.assertFalse(self.engine.lease_path.exists())
+
+    def test_runtime_policy_plan_detects_seal_change_during_candidate_verification(self):
+        import runtime_sync_workshop.corpus as corpus
+        original = corpus.verify_runtime_policy_candidate
+        def changed(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.engine.seal_path.write_bytes(self.engine.seal_path.read_bytes() + b'\n')
+            return result
+        with patch.object(corpus, 'verify_runtime_policy_candidate', side_effect=changed):
+            with self.assertRaises(WorkshopError) as caught:
+                self.engine.policy_activation_plan(corpus.RUNTIME_POLICY_PROFILE)
+        self.assertEqual(caught.exception.code, 'POLICY_BASELINE_CHANGED')
+        self.assertFalse(self.engine.lease_path.exists())
+
+    def test_runtime_policy_plan_detects_config_change_after_derivation(self):
+        import runtime_sync_workshop.corpus as corpus
+        original = corpus.runtime_policy_candidate
+        once = []
+        def changed(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if not once:
+                once.append(True)
+                path = self.engine.config.config_path
+                raw = json.loads(path.read_bytes()); raw['tx_recycle_trigger'] = 8
+                path.write_text(json.dumps(raw), encoding='utf-8')
+            return result
+        with patch.object(corpus, 'runtime_policy_candidate', side_effect=changed):
+            with self.assertRaises(WorkshopError) as caught:
+                self.engine.policy_activation_plan(corpus.RUNTIME_POLICY_PROFILE)
+        self.assertEqual(caught.exception.code, 'POLICY_BASELINE_CHANGED')
+        self.assertFalse(self.engine.lease_path.exists())
 
     def metadata(self, artifact_id: str, *, capsule: str, boundary: str) -> dict:
         return {
