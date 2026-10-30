@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_HARNESS_ENTRY"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_HARNESS_ENTRY"
-updated_at = "2026-10-30T01:33:38Z"
-capsule = "Harness entry and command reference: source documents, same-heartbeat projection, reviewed project intake and bounded retrieval."
-claim_boundary = "Defines harness usage; current project intent, source authority and verified receipts own project facts and outcomes."
+updated_at = "2026-10-30T08:56:40Z"
+capsule = "Harness entry, native context commands and minimum runtime requirements, including bounded SQLite planner maintenance."
+claim_boundary = "Defines harness usage and minimum prerequisites. Project intent, exact source authority and verified native receipts own live state and outcomes; no universal engine or performance proof."
 entities = ["KAIROS", "KAIROS_HARNESS_ENTRY"]
-facets = ["framework-documentation", "current-authority"]
+facets = ["framework-documentation", "current-authority", "sqlite-runtime-compatibility"]
 criteria = []
 does_not_answer = ["live project state", "unverified current release acceptance"]
 distribution_role = "current_authority"
@@ -23,6 +23,11 @@ intent = "procedure"
 question = "How should a new project enter the KAIROS harness safely?"
 target = "s-requirements"
 
+[[answers]]
+intent = "requirements"
+question = "Which SQLite versions support bounded planner maintenance?"
+target = "s-requirements"
+
 [refs]
 current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|rel:requires|tags:current,authority|src:framework]"
 
@@ -30,6 +35,11 @@ current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|r
 query = "How should a new project enter the KAIROS harness safely?"
 expected = "KAIROS_HARNESS_ENTRY#s-requirements"
 required_top_k = 5
+
+[[search_contract]]
+query = "Which SQLite versions support bounded planner maintenance?"
+expected = "KAIROS_HARNESS_ENTRY#s-requirements"
+required_top_k = 1
 +++
 # KAIROS Context Harness
 
@@ -49,11 +59,17 @@ The core invariant is: a material action is not checkpointed until its source do
 <a id="s-requirements"></a>
 ## Requirements
 
-> Capsule: The harness requires Python3.11 or newer and SQLite FTS5, with no third-party runtime packages.
+> Capsule: The harness requires Python 3.11 or newer and SQLite 3.32 or newer with FTS5; no third-party runtime packages.
 
 - Python 3.11 or newer
-- SQLite with FTS5
+- SQLite 3.32 or newer with FTS5
 - no third-party runtime packages
+
+Planner maintenance remains owned by SQLite. Engines 3.46 and newer use bounded
+PRAGMA optimize; engines 3.32 through 3.45 use ANALYZE with a temporary 1000-entry
+analysis limit, restored before closing. This is approximate planner maintenance,
+not a guarantee of a particular query plan or universal performance. Engines older
+than 3.32 are refused before native initialization opens a database.
 
 <a id="s-quick-start"></a>
 ## Quick start

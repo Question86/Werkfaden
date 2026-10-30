@@ -1,9 +1,9 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "93b001a603c6a477c22171c707861ebbdea45398b0c8d7483181f4630c490d07",
+  "database_content_sha256": "6f5c056680cba06658c54969af452438b3da923136cb736b32aa7f5f27f0585d",
   "database_file": "framework.db",
-  "database_sha256": "42c2e6f76f8ae7e00611986911d421d7c018ca4d37fbe69060a6f8d743f81fb1",
+  "database_sha256": "079931c4dff5d1624cda34b00462d14e622ee45b27de3c3fc77f7db27aa3e60a",
   "derived": true,
   "document_count": 51,
   "documents": [
@@ -115,7 +115,7 @@
     {
       "artifact_id": "KAIROS_HARNESS_ENTRY",
       "path": "kairos/kairos_harness/README.md",
-      "sha256": "dc146f185f0b484ff46c2e214992c7aeb5a922956447e4f62b3a6a00ed5272f9"
+      "sha256": "bded95bfd17bc072d7a42c7663da94255e80ae7440930b511c05f95fd656c448"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
@@ -721,7 +721,7 @@
       "artifact_id": "KAIROS_HARNESS_ENTRY",
       "path": "kairos/kairos_harness/README.md",
       "role": "current_authority",
-      "sha256": "dc146f185f0b484ff46c2e214992c7aeb5a922956447e4f62b3a6a00ed5272f9"
+      "sha256": "bded95bfd17bc072d7a42c7663da94255e80ae7440930b511c05f95fd656c448"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
@@ -928,7 +928,7 @@
       "sha256": "f3616780c63b62a930fece30bc801997fd01f1cb4bbbf53c2338a01c922965e6"
     }
   ],
-  "markdown_coverage_sha256": "5eba3cedab0c03311d8aac5a55764e69dcd1e51f5b434a627d20df20a6c30efb",
+  "markdown_coverage_sha256": "5ba0886ec8cf8da25c391b7757b23699b0a35bf26e3e0002a22b62aa502b5c19",
   "schema": "kairos-framework-index/v2",
   "version": "0.1.0-alpha.6",
   "workspace_id": "KAIROS_FRAMEWORK"

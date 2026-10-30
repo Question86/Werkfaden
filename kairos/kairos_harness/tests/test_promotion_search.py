@@ -122,26 +122,23 @@ class PromotionSearchTests(WorkspaceTestCase):
 
     def test_initializer_refreshes_legacy_small_corpus_statistics_after_growth(self) -> None:
         original_connect = sqlite3.connect
-        class LegacyOptimizeConnection(sqlite3.Connection):
-            def execute(self, sql, *args, **kwargs):
-                # Reproduce the old native initializer's optimizer selection;
-                # all schema, source creation and promotion remain native.
-                if sql == "PRAGMA optimize(0x10012)":
-                    sql = "PRAGMA optimize"
-                return super().execute(sql, *args, **kwargs)
-        def legacy_connect(*args, **kwargs):
-            kwargs["factory"] = LegacyOptimizeConnection
-            return original_connect(*args, **kwargs)
         legacy_workspace = self.workspace / "legacy-growth-fixture"
-        with patch("sqlite3.connect", legacy_connect):
+        # Reproduce retained small-corpus statistics, not a version-dependent
+        # assumption that plain optimize must already have created sqlite_stat1.
+        with patch("kairos.database._maintain_planner_statistics", return_value=None):
             initialize_workspace(legacy_workspace, workspace_id="KAIROS_LEGACY_STATS_TEST")
+            with closing(original_connect(database_path(legacy_workspace))) as seed:
+                seed.execute("ANALYZE")
+                seed.commit()
             config_path = legacy_workspace / ".kairos" / "config.json"
             config = read_json(config_path)
             config["governance_enforcement"] = "audit"
             config["governance_audit_allows_finalization"] = True
             atomic_write_json(config_path, config)
             changed = []
-            for number in range(128):
+            # Sufficient growth above the explicitly seeded corpus to cross the
+            # engine-owned size eligibility threshold; all rows stay below1000.
+            for number in range(512):
                 artifact_id = f"RESEARCH_STATS_{number:04d}_L001_V01"
                 relative = f"research/{artifact_id}.md"
                 atomic_write_text(legacy_workspace / relative, research_document(
@@ -175,6 +172,50 @@ class PromotionSearchTests(WorkspaceTestCase):
             self.assertEqual(int(after[0].split()[0]), count)
             self.assertEqual(connection.execute("SELECT count(*) FROM artifacts").fetchone()[0], count)
 
+
+
+    def test_statistics_maintenance_creates_missing_statistics_through_sqlite(self) -> None:
+        from kairos.database import _maintain_planner_statistics
+        database = KnowledgeDatabase(self.workspace / "fresh-statistics.sqlite")
+        with closing(database.connect()) as connection:
+            connection.execute("CREATE TABLE statistics_fixture(key TEXT PRIMARY KEY, value TEXT)")
+            connection.executemany("INSERT INTO statistics_fixture VALUES(?,?)",
+                                   [(str(number), "fixture") for number in range(10)])
+            self.assertIsNone(connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='sqlite_stat1'").fetchone())
+            _maintain_planner_statistics(connection)
+            row = connection.execute(
+                "SELECT stat FROM sqlite_stat1 WHERE idx='sqlite_autoindex_statistics_fixture_1'"
+            ).fetchone()
+            self.assertIsNotNone(row)
+            self.assertEqual(int(row[0].split()[0]), 10)
+            connection.rollback()
+
+    def test_legacy_statistics_maintenance_is_bounded_and_restores_connection_limit(self) -> None:
+        from kairos.database import _maintain_planner_statistics
+        database = KnowledgeDatabase(database_path(self.workspace))
+        with closing(database.connect()) as connection:
+            connection.execute("PRAGMA analysis_limit=321")
+            statements = []
+            connection.set_trace_callback(statements.append)
+            with patch("kairos.database.sqlite3.sqlite_version_info", (3, 45, 3)):
+                _maintain_planner_statistics(connection)
+            self.assertIn("PRAGMA analysis_limit=1000", statements)
+            self.assertIn("ANALYZE", statements)
+            self.assertEqual(connection.execute("PRAGMA analysis_limit").fetchone()[0], 321)
+            connection.rollback()
+
+    def test_unsupported_statistics_engine_is_refused_before_database_open(self) -> None:
+        from kairos.database import DatabaseError
+        target = self.workspace / "unsupported-statistics.sqlite"
+        database = KnowledgeDatabase(target)
+        with patch("kairos.database.sqlite3.sqlite_version_info", (3, 31, 1)):
+            with patch.object(database, "connect") as connect:
+                with self.assertRaisesRegex(DatabaseError, "SQLite 3.32 or newer"):
+                    database.initialize()
+                connect.assert_not_called()
+        self.assertFalse(target.exists())
+
     def test_failed_optimizer_does_not_commit_version_marker_and_closes_connection(self) -> None:
         with closing(self.database.connect(read_only=True)) as connection:
             before = tuple(connection.execute(
@@ -184,7 +225,7 @@ class PromotionSearchTests(WorkspaceTestCase):
         original_connect = sqlite3.connect
         class FailedOptimizeConnection(sqlite3.Connection):
             def execute(self, sql, *args, **kwargs):
-                if sql.startswith("PRAGMA optimize"):
+                if sql.startswith("PRAGMA optimize") or sql == "ANALYZE":
                     raise sqlite3.OperationalError("isolated optimizer failure")
                 return super().execute(sql, *args, **kwargs)
         def failing_connect(*args, **kwargs):

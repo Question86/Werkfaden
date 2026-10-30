@@ -589,6 +589,24 @@ CREATE TABLE IF NOT EXISTS search_policy_violations (
 """
 
 
+def _maintain_planner_statistics(connection: sqlite3.Connection) -> None:
+    """Let SQLite maintain statistics with bounded work on supported engines."""
+    if sqlite3.sqlite_version_info >= (3, 46, 0):
+        connection.execute("PRAGMA optimize(0x10012)")
+        return
+    # The all-table optimize bit and automatic temporary limit arrived in 3.46.
+    # Earlier supported engines expose analysis_limit but need explicit ANALYZE.
+    previous = connection.execute("PRAGMA analysis_limit").fetchone()
+    if previous is None:
+        raise DatabaseError("bounded planner maintenance requires SQLite 3.32 or newer")
+    previous_limit = int(previous[0])
+    connection.execute("PRAGMA analysis_limit=1000")
+    try:
+        connection.execute("ANALYZE")
+    finally:
+        connection.execute(f"PRAGMA analysis_limit={previous_limit}")
+
+
 class KnowledgeDatabase:
     def __init__(self, path: Path):
         self.path = path
@@ -617,6 +635,8 @@ class KnowledgeDatabase:
         return connection
 
     def initialize(self) -> None:
+        if sqlite3.sqlite_version_info < (3, 32, 0):
+            raise DatabaseError("bounded planner maintenance requires SQLite 3.32 or newer")
         connection = self.connect()
         try:
             connection.executescript(SCHEMA_SQL)
@@ -633,12 +653,10 @@ class KnowledgeDatabase:
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version',?)",
                 (DATABASE_SCHEMA_VERSION,),
             )
-            # This short-lived initializer has not queried the corpus tables.
-            # Include all tables and bound SQLite's own analysis work; otherwise
-            # statistics from an early one-document corpus can survive growth.
-            # Keep maintenance before commit so a failure cannot report a
-            # failed initialization after its schema-version write committed.
-            connection.execute("PRAGMA optimize(0x10012)")
+            # This short-lived connection needs version-appropriate all-table
+            # maintenance. Keep it before commit so a maintenance failure cannot
+            # leave its pending schema-version replacement committed.
+            _maintain_planner_statistics(connection)
             connection.commit()
         finally:
             connection.close()
