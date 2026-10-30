@@ -425,6 +425,15 @@ def _score_row(
     if row["document_type"] in preferred_types:
         score += 14.0
         reasons.append(f"type={row['document_type']} +14")
+    # For an explicit procedure question, a lexically retrieved router with its own
+    # section-level procedure handle selects a method; it gains no execution authority.
+    # Balance the operating-contract statement bonus so weaker statement matches cannot
+    # systematically hide the best tool-selection match. Other intents are unchanged.
+    if ordinal is not None and row["document_type"] == "router" and "procedure" in intent_hits:
+        balance = max(0.0, AUTHORITY_BOOSTS.get("operating_contract", 0.0) - authority_boost)
+        if balance:
+            score += balance
+            reasons.append(f"procedure_route_balance +{balance:.0f}")
     relation_predicates = predicates.get((artifact_id, section_id), set()) | predicates.get((artifact_id, None), set())
     relation_hits = relation_predicates & set(frame.preferred_relations)
     if relation_hits:

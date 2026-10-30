@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_RETRIEVAL_METHOD"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_RETRIEVAL_METHOD"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Decision procedure for choosing metadata search, graph, exact source search, hop depth, source escalation and confidence boundaries."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_RETRIEVAL_METHOD"]
 facets = ["retrieval", "search", "graph", "source-escalation"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "retrieval"
@@ -34,23 +35,25 @@ target = "s-2-never-send-a-counting-question-to-search"
 query = "When should I use depth, breadth, breathe, work or verify search modes?"
 expected = "KAIROS_RETRIEVAL_METHOD#s-1-decision-table"
 required_top_k = 1
+
+[refs]
 +++
 # Retrieval method — how to find context without wasting it
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — **Read this before your first retrieval call in a session.** It is a decision procedure,
-- [`s-1-decision-table`](#s-1-decision-table) — Classify the question, then run the row. Do not start with search by default.
-- [`s-2-never-send-a-counting-question-to-search`](#s-2-never-send-a-counting-question-to-search) — search returns ranked sections. It has no aggregate. It cannot answer "how many".
-- [`s-3-name-an-identifier-only-when-it-is-rare`](#s-3-name-an-identifier-only-when-it-is-rare) — This is the least obvious rule and the one that costs the most when violated.
-- [`s-4-an-exact-string-in-files-is-rg-s-question`](#s-4-an-exact-string-in-files-is-rg-s-question) — Locating the single document that defines a rare qualified symbol:
-- [`s-5-one-hop-is-cheap-anywhere-two-hops-only-in-the-graph`](#s-5-one-hop-is-cheap-anywhere-two-hops-only-in-the-graph) — Neighbourhood of one header file:
-- [`s-6-the-source-escalation-is-a-fixed-three-step-chain`](#s-6-the-source-escalation-is-a-fixed-three-step-chain) — Three things that will cost you a retry:
-- [`s-7-inspection-root-is-a-wall-not-a-preference`](#s-7-inspection-root-is-a-wall-not-a-preference) — KAIROS reads only what is promoted, and source-permit reaches only inside
-- [`s-8-reading-an-empty-result`](#s-8-reading-an-empty-result) — An empty result is **not** automatically a finding. --node, --asset and --predicate
-- [`s-9-anti-patterns`](#s-9-anti-patterns) — | Do not | Because | Instead |
-- [`s-10-confidence-of-each-claim`](#s-10-confidence-of-each-claim) — | Claim | Basis |
-- [`s-related`](#s-related) — SEARCH_INDEX.md — what every surface returns, flag by flag
+- [Overview](#s-overview)
+- [1. Decision table](#s-1-decision-table)
+- [2. Never send a counting question to search](#s-2-never-send-a-counting-question-to-search)
+- [3. Name an identifier only when it is rare](#s-3-name-an-identifier-only-when-it-is-rare)
+- [4. An exact string in files is rg's question](#s-4-an-exact-string-in-files-is-rg-s-question)
+- [5. One hop is cheap anywhere; two hops only in the graph](#s-5-one-hop-is-cheap-anywhere-two-hops-only-in-the-graph)
+- [6. The source escalation is a fixed three-step chain](#s-6-the-source-escalation-is-a-fixed-three-step-chain)
+- [7. inspection_root is a wall, not a preference](#s-7-inspection-root-is-a-wall-not-a-preference)
+- [8. Reading an empty result](#s-8-reading-an-empty-result)
+- [9. Anti-patterns](#s-9-anti-patterns)
+- [10. Confidence of each claim](#s-10-confidence-of-each-claim)
+- [Related](#s-related)
 
 <a id="s-overview"></a>
 ## Overview

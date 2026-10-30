@@ -2,30 +2,39 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_QUARANTINED_SYNC_CORES"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_QUARANTINED_SYNC_CORES"
-updated_at = "2026-10-23T23:52:16Z"
-capsule = "Restricted Guardian loaders select metadata-aware cores while retaining historical v1 sources."
-claim_boundary = "This describes code placement and supported loaders, not immunity to arbitrary Python code execution."
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Supported synchronization is reached through guarded entrypoints; retained historical text is not an independent execution grant."
+claim_boundary = "Describes supported entrypoint and retained-source boundaries. Current source-bound maps/tests own exact loaded implementation and execution facts."
 entities = ["KAIROS", "WERKFADEN_QUARANTINED_SYNC_CORES"]
 facets = ["guardian", "metadata", "quarantine"]
 criteria = []
 does_not_answer = ["AI approval", "live project state"]
+distribution_role = "quarantine_notice"
+
 [[answers]]
 intent = "implementation_location"
 question = "Which synchronization core does the guarded Workshop engine load?"
 target = "s-overview"
+
+[[search_contract]]
+query = "Which synchronization core does the guarded Workshop engine load?"
+expected = "WERKFADEN_QUARANTINED_SYNC_CORES#s-overview"
+required_top_k = 5
+
+[refs]
 +++
+# Quarantined Guardian v1 implementation
 
 ## CONTEXT INDEX
-
-- `s-overview` — Historical files and selected metadata-aware synchronization cores.
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
-# Quarantined Guardian v1 implementation
+## Overview
 
 These files preserve the pre-v2 implementation byte-for-byte for audit, regression archaeology, and recovery analysis.
 
@@ -37,4 +46,4 @@ The supported implementation is Guardian v2 in the parent package. The private `
 
 Do not repair v2 by re-enabling these files as public modules. If a regression reveals a useful v1 mechanism, move that mechanism behind the current owning v2 boundary and retain the quarantine as historical evidence.
 
-The metadata branch integration adds `engine_metadata_v2.py.txt` and `cli_metadata_v2.py.txt`. These are the current synchronization cores behind the same restricted Guardian loaders. The original v1 files above remain historical; they are no longer the selected core.
+The metadata branch formerly introduced engine_metadata_v2.py.txt and cli_metadata_v2.py.txt behind restricted loaders. These historical text artifacts do not by themselves establish the current loaded method owners. The supported surface remains the guarded public WorkshopEngine; current source-bound implementation maps and tests own exact wrapper/composition identity. Do not execute quarantined text directly.

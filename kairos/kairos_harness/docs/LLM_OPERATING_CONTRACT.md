@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_LLM_OPERATING_CONTRACT"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_LLM_OPERATING_CONTRACT"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Binding behavioral contract for an LLM using KAIROS: retrieval-first orientation, authority discipline, source escalation and bounded context."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_LLM_OPERATING_CONTRACT"]
 facets = ["llm", "operating-contract", "retrieval", "authority"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "llm_rules"
@@ -34,16 +35,18 @@ target = "s-context-policy"
 query = "What are the mandatory rules for an LLM using KAIROS?"
 expected = "KAIROS_LLM_OPERATING_CONTRACT#s-mandatory-rules"
 required_top_k = 1
+
+[refs]
 +++
 # LLM Operating Contract
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — This contract is materialized as AGENTS.md in each KAIROS workspace.
-- [`s-mandatory-rules`](#s-mandatory-rules) — 1. Write source, metadata, queries, receipts, tests, and generated artifacts in English.
-- [`s-authority-policy`](#s-authority-policy) — Authority depends on the question. AGENTS.md owns procedure; current.json owns live identifiers; the loop gate owns allowed transitions; goal and task contracts own required work; promoted evidence owns factual outcome claims within its bou
-- [`s-context-policy`](#s-context-policy) — Use depth for one causal, dependency, provenance, implementation, or evidence path.
-- [`s-scaling-and-safety`](#s-scaling-and-safety) — Respect the enforced managed-document, goal, header, section, reference, query, candidate, result, hop, router, generated-file, and trace bounds. Follow omitted-count database routes instead of expanding dynamic pointer files. Never resolve
+- [Overview](#s-overview)
+- [Mandatory rules](#s-mandatory-rules)
+- [Authority policy](#s-authority-policy)
+- [Context policy](#s-context-policy)
+- [Scaling and safety](#s-scaling-and-safety)
 
 <a id="s-overview"></a>
 ## Overview

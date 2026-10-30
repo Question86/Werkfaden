@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_JEV_PORT_COMPARISON"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_JEV_PORT_COMPARISON"
-updated_at = "2026-10-25T18:19:07Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Project-neutral boundaries between standalone review tools, deterministic Workshop gates and optional candidate-bound Apply admission."
 claim_boundary = "This document states framework review boundaries; it does not disclose consumer installations or establish provider approval, deployment or product release."
 entities = ["KAIROS", "WERKFADEN_JEV_PORT_COMPARISON"]
 facets = ["jev", "ai-review", "limitations", "source-binding"]
 criteria = []
 does_not_answer = ["consumer project architecture", "live project approval", "runtime correctness"]
+distribution_role = "reference"
 
 [[answers]]
 intent = "ai_review"
@@ -24,13 +25,20 @@ target = "s-overview"
 intent = "source_binding"
 question = "What binds review evidence to a candidate?"
 target = "s-fresh-publication"
+
+[[search_contract]]
+query = "Which boundaries distinguish standalone review from Workshop Apply admission?"
+expected = "WERKFADEN_JEV_PORT_COMPARISON#s-overview"
+required_top_k = 5
+
+[refs]
 +++
 # Review integration boundaries
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Standalone tools and deterministic transaction gates have distinct authority.
-- [`s-fresh-publication`](#s-fresh-publication) — Candidate identity, declared scope and fresh verification bound review evidence.
+- [Overview](#s-overview)
+- [Candidate and evidence binding](#s-fresh-publication)
 
 <a id="s-overview"></a>
 ## Overview

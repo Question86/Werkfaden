@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_SEARCH_INDEX"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_SEARCH_INDEX"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Index of KAIROS retrieval surfaces and the question shapes appropriate for section search, graph search and bounded source inspection."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_SEARCH_INDEX"]
 facets = ["search", "graph", "source-search", "routing"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "search"
@@ -34,18 +35,20 @@ target = "s-reaching-actual-source"
 query = "How do I ask KAIROS for context?"
 expected = "KAIROS_SEARCH_INDEX#s-choosing-a-door"
 required_top_k = 1
+
+[refs]
 +++
 # Retrieval index — every way to ask KAIROS something
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — One table per surface: the command, what it returns, and the question it is the right
-- [`s-choosing-a-door`](#s-choosing-a-door) — Index of KAIROS retrieval surfaces and the question shapes appropriate for section search, graph search and bounded source inspection.
-- [`s-kairos-search-query`](#s-kairos-search-query) — Full-text over promoted sections, plus a graph route when the query names identities the
-- [`s-kairos-graph`](#s-kairos-graph) — Exact lookups against the four graph tables. All identity matching is exact — see
-- [`s-reaching-actual-source`](#s-reaching-actual-source) — Three steps, and the order is enforced.
-- [`s-picking-the-right-surface-for-a-counting-question`](#s-picking-the-right-surface-for-a-counting-question) — Search cannot count; it returns sections. These are the four that can:
-- [`s-related`](#s-related) — OPERATIONS.md — the surrounding session flow: entry, freshness, heartbeat, closure
+- [Overview](#s-overview)
+- [Choosing a door](#s-choosing-a-door)
+- [kairos search <query>](#s-kairos-search-query)
+- [kairos graph](#s-kairos-graph)
+- [Reaching actual source](#s-reaching-actual-source)
+- [Picking the right surface for a counting question](#s-picking-the-right-surface-for-a-counting-question)
+- [Related](#s-related)
 
 <a id="s-overview"></a>
 ## Overview

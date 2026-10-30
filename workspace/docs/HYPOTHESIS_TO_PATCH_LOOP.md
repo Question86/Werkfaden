@@ -2,18 +2,21 @@
 schema = "kairos-context/v1"
 id = "KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
-workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
-route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
-updated_at = "2026-09-16T20:00:00Z"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Binding investigation loop with Memory preflight before every state and a multi-transaction patch session after causal proof."
 claim_boundary = "This contract owns investigation and mutation ordering; it does not prove a hypothesis, current source bytes, Runtime outcome, test result, or completion claim."
 entities = ["KAIROS", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "Werkfaden Investigation Guardian", "patch-session", "falsification"]
 facets = ["investigation", "falsification", "memory-verification", "patch-session", "retrieval", "source-inspection"]
 criteria = []
 does_not_answer = ["current project state", "whether a hypothesis is true", "current source bytes", "whether a patch passed"]
+distribution_role = "current_authority"
+origin_route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_HYPOTHESIS_TO_PATCH_LOOP"
+origin_workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 
 [[answers]]
 intent = "operating_rules"
@@ -34,21 +37,29 @@ target = "s-prove"
 intent = "mutation"
 question = "Can one proven patch use multiple Workshop transactions?"
 target = "s-patch-session"
+
+[[search_contract]]
+query = "What exact loop must an agent follow from a Human problem through a fresh run?"
+expected = "KAIROS_HYPOTHESIS_TO_PATCH_LOOP#s-loop"
+required_top_k = 5
+
+[refs]
 +++
 # Hypothesis-to-Patch Loop
 
 ## CONTEXT INDEX
 
-- [`s-loop`](#s-loop) — Human problem through fresh run is one fixed evidence-first loop.
-- [`s-preflight`](#s-preflight) — Every state starts with `guard-enter`, which returns the relevant canonical Memory passages before the state action occurs.
-- [`s-hypothesis`](#s-hypothesis) — One explicit falsifiable hypothesis is formed from verified prerequisites.
-- [`s-falsifiers`](#s-falsifiers) — Semantic authority and structural graph evidence independently attack the hypothesis.
-- [`s-map`](#s-map) — Context narrows from architecture/evidence/graph to implementation docs and only then source.
-- [`s-counterprobe`](#s-counterprobe) — A negative completeness probe attacks the proposed causal surface.
-- [`s-source`](#s-source) — Exact source is predicted and inspected through the state-bound source policy.
-- [`s-prove`](#s-prove) — Observation, violated invariant, causal owner and exact mutation scope gate patching.
-- [`s-patch-session`](#s-patch-session) — One proof may authorize TX1..TXn without allowing scope growth or source reopening.
-- [`s-close`](#s-close) — Real Workshop postchecks/heartbeat and a content-bound fresh run close the investigation.
+- [CLOSED LOOP](#s-loop)
+- [MEMORY PREFLIGHT BEFORE ACTION](#s-preflight)
+- [HYPOTHESIS](#s-hypothesis)
+- [TWO INDEPENDENT FALSIFIERS](#s-falsifiers)
+- [MAP](#s-map)
+- [COUNTERPROBE](#s-counterprobe)
+- [EXACT SOURCE](#s-source)
+- [PROVE](#s-prove)
+- [PATCH SESSION — TX1..TXn](#s-patch-session)
+- [PATCH CLOSE, HEARTBEAT, FRESH RUN](#s-close)
+- [CONTEXT DISCIPLINE](#s-context-discipline)
 
 <a id="s-loop"></a>
 ## CLOSED LOOP
@@ -197,6 +208,7 @@ Then `guard-enter FRESH_RUN` occurs **before** the real Runtime execution. `guar
 
 Fresh-run outcome may be `FIXED`, `STILL_PRESENT` or `INCONCLUSIVE`. In every case the old investigative frontier closes and the next investigation starts from fresh evidence at the top.
 
+<a id="s-context-discipline"></a>
 ## CONTEXT DISCIPLINE
 
 Graph resolves structure. Search resolves governed questions. Source-search resolves exact bytes. Whole-file reads and broad grep are not uncertainty-management strategies. Once PROVE closes causal scope, stop searching; either patch that proof or reframe it.

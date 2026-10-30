@@ -15,6 +15,7 @@ from kairos.cli import build_parser, execute
 from kairos.framework import (
     FRAMEWORK_DATABASE_NAME,
     FRAMEWORK_DOCUMENT_PATHS,
+    load_framework_manifest,
     framework_database_path,
     framework_database_content_sha256,
     framework_manifest_path,
@@ -64,14 +65,61 @@ class FrameworkBootstrapTests(unittest.TestCase):
     def test_framework_bundle_is_hash_verified_and_source_bound(self) -> None:
         result = verify_framework_bundle()
         self.assertTrue(result['verified'])
-        self.assertEqual(result['document_count'], len(FRAMEWORK_DOCUMENT_PATHS) + 2)
-        self.assertEqual(result['source_documents_verified'], len(FRAMEWORK_DOCUMENT_PATHS))
+        self.assertEqual(result['document_count'], len(load_framework_manifest()['documents']) + 2)
+        self.assertEqual(result['source_documents_verified'], len(load_framework_manifest()['documents']))
         self.assertEqual(result['generated_source_files_verified'], len(WORKSHOP_MODULE_ROLES) + 4)
         manifest = json.loads(framework_manifest_path().read_text(encoding='utf-8'))
         self.assertEqual(
             hashlib.sha256(framework_database_path().read_bytes()).hexdigest(),
             manifest['database_sha256'],
         )
+
+
+    def test_distributed_markdown_has_complete_source_or_template_coverage(self) -> None:
+        from kairos.framework import (
+            FRAMEWORK_RENDER_TEMPLATES, framework_markdown_inventory,
+            load_framework_manifest, source_distribution_root,
+        )
+        coverage = framework_markdown_inventory(source_distribution_root())
+        manifest = load_framework_manifest()
+        self.assertEqual(coverage, manifest["markdown_coverage"])
+        sources = [row for row in coverage if row["role"] != "render_template"]
+        templates = [row for row in coverage if row["role"] == "render_template"]
+        self.assertEqual({row["path"] for row in templates}, set(FRAMEWORK_RENDER_TEMPLATES))
+        self.assertEqual(
+            [{k: row[k] for k in ("path", "artifact_id", "sha256")} for row in sources],
+            manifest["documents"],
+        )
+        for required in ("workshop/RECYCLING.md", "docs/growth/START_HERE.md",
+                         "docs/ARCHIVED_RELEASE_HISTORY.md"):
+            self.assertIn(required, {row["path"] for row in sources})
+
+    def test_complete_coverage_rejects_self_consistent_omission_and_template_relabel(self) -> None:
+        from kairos.framework import (
+            load_framework_manifest, verify_framework_bundle,
+            framework_markdown_coverage_sha256,
+        )
+        import copy
+        original = load_framework_manifest()
+        for kind in ("omit", "relabel"):
+            with self.subTest(kind=kind):
+                forged = copy.deepcopy(original)
+                row = next(x for x in forged["markdown_coverage"]
+                           if x["path"] == "workshop/RECYCLING.md")
+                if kind == "omit":
+                    forged["markdown_coverage"].remove(row)
+                    forged["documents"] = [x for x in forged["documents"]
+                                           if x["path"] != row["path"]]
+                    forged["document_count"] -= 1
+                else:
+                    row["role"] = "render_template"
+                    row.pop("artifact_id")
+                    row["catalog"] = "KAIROS_CANONICAL_DOCUMENTS#s-render-templates"
+                forged["markdown_coverage_sha256"] = framework_markdown_coverage_sha256(
+                    forged["markdown_coverage"])
+                with mock.patch("kairos.framework.load_framework_manifest", return_value=forged):
+                    with self.assertRaises(RuntimeError):
+                        verify_framework_bundle(verify_sources=False)
 
     def test_tool_router_covers_actual_public_parser_and_package(self) -> None:
         workshop_source = ROOT / 'workshop' / 'src'
@@ -140,10 +188,18 @@ class FrameworkBootstrapTests(unittest.TestCase):
                      document_type='documentation')
         # Generic relevance rank0 and a declared procedure answer must not be
         # hidden by the statement-authority bonus of a weaker rank1 rules match.
-        handle = {('DEPLOYMENT_GUIDE', 's-migration'): {'procedure'}}
+        handle = {('DEPLOYMENT_GUIDE', 's-migration'): {'procedure'},
+                  ('DEPLOYMENT_RULES', 's-migration'): {'procedure'}}
         route_score, _ = _score_row(router, frame, 0, handle, {}, set())
         rule_score, _ = _score_row(rules, frame, 1, handle, {}, set())
         self.assertGreater(route_score, rule_score)
+        _, reasons = _score_row(router, frame, 0, handle, {}, set())
+        self.assertTrue(any(reason.startswith("procedure_route_balance") for reason in reasons))
+        for question in ("Did deployment A happen before deployment B?",
+                         "What authority approves deletion?"):
+            nonprocedure = compile_query(question)
+            _, reasons = _score_row(router, nonprocedure, 0, handle, {}, set())
+            self.assertFalse(any(reason.startswith("procedure_route_balance") for reason in reasons))
         # Neither document identity nor authority constants are spoofed; without
         # the relevant declared answer, the same router does not win this test.
         unbound_score, _ = _score_row(router, frame, 0, {}, {}, set())
@@ -300,7 +356,7 @@ class FrameworkBootstrapTests(unittest.TestCase):
         self.assertEqual(payload['corpus'], 'framework')
         self.assertEqual(payload['primary']['artifact_id'], 'KAIROS_WORKSHOP')
         self.assertEqual(payload['primary']['section_id'], 's-authority-migration')
-        self.assertEqual(payload['framework']['source_documents_verified'], len(FRAMEWORK_DOCUMENT_PATHS))
+        self.assertEqual(payload['framework']['source_documents_verified'], len(load_framework_manifest()['documents']))
 
     def test_framework_index_rebuild_is_content_equivalent_across_sqlite_builds(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

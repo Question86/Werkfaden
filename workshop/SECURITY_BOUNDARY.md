@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_SECURITY_BOUNDARY"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_SECURITY_BOUNDARY"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Defines the Workshop security boundary, logical lease guarantees, and the limits of application-level controls versus filesystem ACLs."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_SECURITY_BOUNDARY"]
 facets = ["security", "lease", "acl", "workshop"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "security"
@@ -29,12 +30,14 @@ target = "s-overview"
 query = "What security boundary does the KAIROS Workshop enforce?"
 expected = "KAIROS_SECURITY_BOUNDARY#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # Security boundary
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The package seal detects drift; it is not an operating-system access control list. To make
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
 ## Overview

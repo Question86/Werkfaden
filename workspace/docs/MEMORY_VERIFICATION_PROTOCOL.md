@@ -2,18 +2,21 @@
 schema = "kairos-context/v1"
 id = "KAIROS_MEMORY_VERIFICATION_PROTOCOL"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
-workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
-route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_MEMORY_VERIFICATION_PROTOCOL"
-updated_at = "2026-10-25T18:19:07Z"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_MEMORY_VERIFICATION_PROTOCOL"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Memory-first verification protocol: intercept every project-specific guess or inference, convert it into an explicit question, verify the relevant canonical Memory passage, and escalate to live authority when Memory cannot prove the claim."
 claim_boundary = "This protocol governs how the agent converts uncertainty into verified context. It does not make Memory live-state authority and does not prove implementation, runtime, test, or completion claims."
 entities = ["KAIROS_MEMORY_VERIFICATION_PROTOCOL", "canonical-memory", "zero-guess", "verification", "project-neutral"]
 facets = ["memory", "verification", "no-guessing", "context-budget", "routing"]
 criteria = []
 does_not_answer = ["current source bytes", "current Runtime state", "whether a hypothesis is true", "whether a patch passed"]
+distribution_role = "current_authority"
+origin_route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_MEMORY_VERIFICATION_PROTOCOL"
+origin_workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 
 [[answers]]
 intent = "operating_rules"
@@ -39,17 +42,19 @@ target = "s-state-routing"
 query = "What must the agent do before making a project-specific guess or inference?"
 expected = "KAIROS_MEMORY_VERIFICATION_PROTOCOL#s-zero-guess"
 required_top_k = 3
+
+[refs]
 +++
 # Memory Verification Protocol
 
 ## CONTEXT INDEX
 
-- [`s-zero-guess`](#s-zero-guess) — Every project-specific guess or inference is intercepted and converted into a verification question before it may influence action.
-- [`s-memory-query`](#s-memory-query) — Query only the smallest relevant canonical Memory passage; never dump the whole Memory as routine context.
-- [`s-evidence-status`](#s-evidence-status) — Distinguish verified fact, explicit hypothesis, unresolved question, and live-state claim.
-- [`s-escalation`](#s-escalation) — Memory or current conversation may orient, but current-state and implementation claims require the live owning authority.
-- [`s-state-routing`](#s-state-routing) — Each investigation state has a minimum Memory verification set and may add only problem-specific sections.
-- [`s-stop-rules`](#s-stop-rules) — Missing verification blocks execution; uncertainty is resolved by another precise query, not by inference or a larger raw read.
+- [ZERO-GUESS / ZERO-INFERENCE RULE](#s-zero-guess)
+- [QUERY THE MEMORY, DO NOT READ THE MEMORY](#s-memory-query)
+- [EVIDENCE STATUS](#s-evidence-status)
+- [MEMORY -> LIVE AUTHORITY ESCALATION](#s-escalation)
+- [MEMORY ROUTING BY INVESTIGATION STATE](#s-state-routing)
+- [STOP RULES](#s-stop-rules)
 
 <a id="s-zero-guess"></a>
 ## ZERO-GUESS / ZERO-INFERENCE RULE

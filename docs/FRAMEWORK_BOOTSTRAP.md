@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_BOOTSTRAP"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_BOOTSTRAP"
-updated_at = "2026-09-09T08:45:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Defines the pre-project bootstrap search: an agent can query hash-verified KAIROS rules before any project workspace or project database exists."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_BOOTSTRAP"]
 facets = ["bootstrap", "framework-search", "retrieval", "onboarding"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "framework_search"
@@ -36,10 +37,10 @@ question = "Where does framework bootstrap hand off to universal project onboard
 target = "s-handoff-into-a-project"
 
 [refs]
-rules = "[ref:AGENTS.md#s-mandatory-context-loop|id:KAIROS_FRAMEWORK_RULES|v:1|rel:requires|tags:rules,bootstrap|src:framework]"
-search = "[ref:kairos/kairos_harness/docs/SEARCH_INDEX.md#s-kairos-search-query|id:KAIROS_SEARCH_INDEX|v:1|rel:requires|tags:search,retrieval|src:framework]"
-kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-universal-auto-intake|id:KAIROS_PROJECT_KICKSTART|v:2|rel:next|tags:kickstart,auto|src:framework]"
-onboarding = "[ref:docs/UNIVERSAL_ONBOARDING.md#s-cold-onboarding|id:KAIROS_UNIVERSAL_ONBOARDING|v:1|rel:next|tags:onboarding,universal|src:framework]"
+rules = "[ref:AGENTS.md#s-mandatory-context-loop|id:KAIROS_FRAMEWORK_RULES|v:6|rel:requires|tags:rules,bootstrap|src:framework]"
+search = "[ref:kairos/kairos_harness/docs/SEARCH_INDEX.md#s-kairos-search-query|id:KAIROS_SEARCH_INDEX|v:2|rel:requires|tags:search,retrieval|src:framework]"
+kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-universal-auto-intake|id:KAIROS_PROJECT_KICKSTART|v:3|rel:next|tags:kickstart,auto|src:framework]"
+onboarding = "[ref:docs/UNIVERSAL_ONBOARDING.md#s-cold-onboarding|id:KAIROS_UNIVERSAL_ONBOARDING|v:2|rel:next|tags:onboarding,universal|src:framework]"
 
 [[search_contract]]
 query = "How do I query KAIROS rules before a project workspace exists?"
@@ -50,12 +51,12 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — KAIROS carries an immutable, hash-verified framework knowledge projection so an agent can ask how the framework must be used before any project workspace, goal, task, runtime state, or project database exists. The framework Markdown remains
-- [`s-before-project-intake`](#s-before-project-intake) — Install the harness from kairos/kairos_harness, then use the ordinary kairos search command without --workspace to query framework rules. This path creates no project state and writes no retrieval trace.
-- [`s-framework-search-versus-project-search`](#s-framework-search-versus-project-search) — A search without --workspace uses only the immutable framework corpus. A search with --workspace <path> uses the mutable project corpus and its normal freshness/governance boundary. Keeping the two projections separate prevents framework ru
-- [`s-bootstrap-query-set`](#s-bootstrap-query-set) — Use question-shaped queries rather than asking the model to reconstruct rules from directory layout. Useful first questions include how project intent is established, what the compiler owns, how source inspection is permitted, how the Works
-- [`s-authority-boundary`](#s-authority-boundary) — Framework search routes inspection; it does not create truth. Each result retains the owning Markdown document, section, authority, claim boundary, and content hash. The framework database is verified against a manifest of admitted source d
-- [`s-handoff-into-a-project`](#s-handoff-into-a-project) — After the Human goal is converted into a reviewed kairos-project-kickoff/v1 contract, project intake may create a fresh project workspace and project database from compiler evidence. From that point, project questions use kairos search --wo
+- [Overview](#s-overview)
+- [Before project intake](#s-before-project-intake)
+- [Framework search versus project search](#s-framework-search-versus-project-search)
+- [Bootstrap query set](#s-bootstrap-query-set)
+- [Authority boundary](#s-authority-boundary)
+- [Handoff into a project](#s-handoff-into-a-project)
 
 <a id="s-overview"></a>
 ## Overview

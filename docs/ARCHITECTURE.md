@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_ARCHITECTURE"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_ARCHITECTURE"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Stable architecture separating Human intent, compiler evidence, Markdown authority, derived retrieval, Workshop synchronization, and build-system boundaries."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_ARCHITECTURE"]
 facets = ["architecture", "compiler-authority", "workshop", "build-system"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "architecture"
@@ -39,13 +40,15 @@ target = "s-overview"
 query = "How is KAIROS architecturally organized?"
 expected = "KAIROS_ARCHITECTURE#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS architecture
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — KAIROS separates Human intent, implementation evidence and derived retrieval while keeping
-- [`s-build-system-boundary`](#s-build-system-boundary) — Compiler databases are observed authority, not permission to rewrite a project's build language.
+- [Overview](#s-overview)
+- [Build-system boundary](#s-build-system-boundary)
 
 <a id="s-overview"></a>
 ## Overview

@@ -1,136 +1,256 @@
 {
   "authority_note": "Framework Markdown owns claims; this database is a hash-verified read-only retrieval projection.",
   "build_epoch": "2000-01-01T00:00:00Z",
-  "database_content_sha256": "178e733cded8435e26e31f0c215836829b643af912f03eb6741fa8e7aaea3a28",
+  "database_content_sha256": "93b001a603c6a477c22171c707861ebbdea45398b0c8d7483181f4630c490d07",
   "database_file": "framework.db",
-  "database_sha256": "2f1735171a2f3e88e60c51620ce6ea5c4d2faf21e0a4395f91f29e1ebb26cc92",
+  "database_sha256": "42c2e6f76f8ae7e00611986911d421d7c018ca4d37fbe69060a6f8d743f81fb1",
   "derived": true,
-  "document_count": 27,
+  "document_count": 51,
   "documents": [
+    {
+      "artifact_id": "KAIROS_PUBLIC_LANDING",
+      "path": ".github/README.md",
+      "sha256": "b20f216e6f32edccd261cb64d7cc4f6ef6ad741b49e86ff8f4e9f9e4d29f0afb"
+    },
     {
       "artifact_id": "KAIROS_FRAMEWORK_RULES",
       "path": "AGENTS.md",
-      "sha256": "3ca2c80dbd8341ed430c9d2c067f1ce56962c35234befe1c93529cd855566d0c"
-    },
-    {
-      "artifact_id": "WERKFADEN_EVIDENCE_BASED_AI_REVIEW",
-      "path": "workspace/docs/EVIDENCE_BASED_AI_REVIEW.md",
-      "sha256": "6e06ae4fca1281ad0ac6ba29a64366a61099a397b2b60c4fba54ad4178adc6b7"
+      "sha256": "8def61d7daf4b3128eca8582d5ad7a9b24a01b5b591e7b80f8fb7dff47de8f69"
     },
     {
       "artifact_id": "KAIROS_README",
       "path": "README.md",
-      "sha256": "8f2df87a01d7cb2c6325c67c25a066a7e900f2c81fa0540c7fc06c9ed177e25b"
+      "sha256": "70abe2783c0f4c758a8fb34c89ef008c6392f530e436c0c3098786ec4490829f"
     },
     {
       "artifact_id": "KAIROS_ARCHITECTURE",
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "8d4516d70fb8a054ce7e92f0a2cd9e3ba98fafba20da6a226c3fca6f7b5dacd2"
+      "sha256": "03b155b0bc5c100961c90510e5c2512942e69323f4838ccf0cb8a340e773b03a"
+    },
+    {
+      "artifact_id": "KAIROS_ARCHIVED_RELEASE_HISTORY",
+      "path": "docs/ARCHIVED_RELEASE_HISTORY.md",
+      "sha256": "e0aa32987b96071f79f3ff91512a52062a34337bd6c4ba8dae494050b5e798eb"
     },
     {
       "artifact_id": "KAIROS_CANONICAL_DOCUMENTS",
       "path": "docs/CANONICAL_DOCUMENTS.md",
-      "sha256": "d1d6c966278f890c70487e1d57c1d62a0c94ba9ac03ddc0e49a9b127cf44d566"
+      "sha256": "5aa2a69e47d23ed714e9befabd1badf98ba149187227406e96b788be97b972c7"
     },
     {
       "artifact_id": "KAIROS_DATABASE_DYNAMICS",
       "path": "docs/DATABASE_AND_DYNAMICS.md",
-      "sha256": "0b5f8a73d2963d705ed6e017fa0fe474ac446c430e94c1f8aa0a4a016edf6d0f"
+      "sha256": "8e03c18e6d1aea6dcc5a2c7c2f4fcfb8cc74c1e934ee3d7de3ccebeb17df721f"
     },
     {
       "artifact_id": "KAIROS_EXTERNAL_AUDIT_SCOPE",
       "path": "docs/EXTERNAL_AUDIT_SCOPE.md",
-      "sha256": "97b5f339b196f11da7fdc22809d089dc739827ce0de42ddabe4bb195c1d38ea5"
+      "sha256": "de60c0e24cf661cd53c0a9313f0f278f2b67b6370580b865d910b14b786ff9b4"
     },
     {
       "artifact_id": "KAIROS_FRAMEWORK_BOOTSTRAP",
       "path": "docs/FRAMEWORK_BOOTSTRAP.md",
-      "sha256": "06593ad53e4e6e5d3d9530c21e26fb911603711988d793971e2f4c4ba5690fda"
+      "sha256": "74108f99014cbb449f5d2f9a7ef8dafc02a78b9626b85c66cd83997c812e39d7"
     },
     {
       "artifact_id": "KAIROS_KNOWN_LIMITATIONS",
       "path": "docs/KNOWN_LIMITATIONS.md",
-      "sha256": "0d0f306251af40ab11daa196c402590b7b7273205f7c29197717cec53a35e9a6"
+      "sha256": "fb9e21b25e548b27f52ed63d8bd98ae5726f097ae5dfd4da276ce630c9f994fa"
     },
     {
       "artifact_id": "KAIROS_LOOP_PROCEDURE",
       "path": "docs/LOOP_PROCEDURE.md",
-      "sha256": "92860c72e887f75d17c5604eeb7b461c9f078cce27951b63a8195c3e475a6ab9"
+      "sha256": "f517a48cbfcd0122ddbeabe1524e7fbbb94062f28c103b3d3827eb067e221c0b"
     },
     {
       "artifact_id": "KAIROS_OPERATING_MODEL",
       "path": "docs/OPERATING_MODEL.md",
-      "sha256": "9de6f865d74cca5c05229e858fe2559131f72eacf9f8bfc1d2507feb8f5bc7e7"
+      "sha256": "04ff73df8980d63816053e159414828aeca55bed46cc613335f8facb4afe46d1"
     },
     {
       "artifact_id": "KAIROS_PORTABILITY_SCOPE",
       "path": "docs/PORTABILITY_SCOPE.md",
-      "sha256": "b9d8523671de330a7190997a0ceb908a5369551585023b6720d1bb1a932392f7"
+      "sha256": "95b2b113b07976f6ca6ae0361deab51672864ebeaa37fc8feea8d22cef2d4cec"
     },
     {
       "artifact_id": "KAIROS_PROJECT_KICKSTART",
       "path": "docs/PROJECT_KICKSTART.md",
-      "sha256": "29e8524c579343fdeba2214ec503a2681f86e1c6e12dd6c63d50617b7af3ee04"
+      "sha256": "2fed47a42e4b75ff557a420f95daca75faedd5cca5f8303d96d7725d389e04c2"
     },
     {
       "artifact_id": "KAIROS_UNIVERSAL_ONBOARDING",
       "path": "docs/UNIVERSAL_ONBOARDING.md",
-      "sha256": "ca20881ce6b4b9dc435925a014e6cb4d58578d58015d4ec5cabc7b25e2c5da55"
+      "sha256": "53b9af93d58a15516f81bb1d6bae1df0550f78facf9ad9726afd2ec70824ac69"
     },
     {
       "artifact_id": "KAIROS_WORKSHOP",
       "path": "docs/WORKSHOP.md",
-      "sha256": "c0a74cbbff3998d28d76850c06ddea22655074645dfdc810b8cef27824fdd2a0"
+      "sha256": "9a5a46c7e2001224b524ac1b355e8509d1eade67d583cd260b01712f9e185991"
+    },
+    {
+      "artifact_id": "KAIROS_BRAND_IDENTITY",
+      "path": "docs/growth/BRAND.md",
+      "sha256": "5a1a335eb5cb1d70c26328d4c23f7e1f5335b06ffb98db25e5399de3d0ac038b"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_EVIDENCE_BASELINE",
+      "path": "docs/growth/EVIDENCE.md",
+      "sha256": "a1cde3cb6eb167cfaa0644c917212a1a631801c7c4d228b41bcb9563b74dca25"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_ROLLOUT_HISTORY",
+      "path": "docs/growth/ROLLOUT.md",
+      "sha256": "892130c74f39a58c20509ed52703ec5d92b38a0b135faca4b430dd1d1ea7947b"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_SOCIAL_DRAFTS",
+      "path": "docs/growth/SOCIAL.md",
+      "sha256": "700a357d1f4b34c6afff6b2b5e2be5fbca9dcc69431524826dcd49bbd8395c93"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_START_HERE",
+      "path": "docs/growth/START_HERE.md",
+      "sha256": "1b65e78956ae1ea5ac077067cef5a011114b53ca545f8e1e5da2ffd3901b12b8"
+    },
+    {
+      "artifact_id": "KAIROS_HARNESS_ENTRY",
+      "path": "kairos/kairos_harness/README.md",
+      "sha256": "dc146f185f0b484ff46c2e214992c7aeb5a922956447e4f62b3a6a00ed5272f9"
     },
     {
       "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
       "path": "kairos/kairos_harness/docs/CONTEXT_HEADER_SPEC.md",
-      "sha256": "b420cdd2cb9b7588a16fb3cc763f79489becbfadbb00cf2a4326054c325acfb9"
+      "sha256": "6cfa60091f9b9cc4a30a69077f6ef220a070774ca3ae7c91a311c5b7aa722d36"
     },
     {
       "artifact_id": "KAIROS_INGESTED_DOCUMENT_SPEC",
       "path": "kairos/kairos_harness/docs/INGESTED_DOCUMENT_SPEC.md",
-      "sha256": "86fc6d07e81272b11ca5675a0ab632bdeab1f0c8242991ec7f926b2e4cf098ba"
+      "sha256": "5c855e008c357820801327fbd8b036f806e195fa5201025476f727958b877fa0"
     },
     {
       "artifact_id": "KAIROS_LLM_OPERATING_CONTRACT",
       "path": "kairos/kairos_harness/docs/LLM_OPERATING_CONTRACT.md",
-      "sha256": "b86a1d7fa85836af044af67d44728dcd2153cccb57db1b6ee2ac52da4c5f62d8"
+      "sha256": "33b8001dcd658d665feab77b51d71afcd6a7cd5e8d4c3c183d8e0cd8f37cb463"
     },
     {
       "artifact_id": "KAIROS_OPERATIONS",
       "path": "kairos/kairos_harness/docs/OPERATIONS.md",
-      "sha256": "4093f16edc4e4ece3b79ea9c926ef7568f24b5885daaa5f4a9f86f92fa49f6aa"
+      "sha256": "65ae91956501f17181a547cc39cb5b894b14bfb00a02d30433e1383988043b02"
     },
     {
       "artifact_id": "KAIROS_RETRIEVAL_METHOD",
       "path": "kairos/kairos_harness/docs/RETRIEVAL_METHOD.md",
-      "sha256": "fd9a3cc771c45aa6720f3a306a811bb1253a6550549fdad29ebc099438727250"
+      "sha256": "53835c29fa3b9069ec060b1ccdaaeec5138d9f2aa74bca8469cd1413f2ccb56c"
     },
     {
       "artifact_id": "KAIROS_SEARCH_INDEX",
       "path": "kairos/kairos_harness/docs/SEARCH_INDEX.md",
-      "sha256": "c6b6ac40f5a30f4a5928cb435f10230143654ace1675dffda0979fb82b832d1b"
+      "sha256": "eb19e53dd97658a91c431529a8ab9b4b2a4a59fe402eb3d751f96133f9313340"
     },
     {
       "artifact_id": "KAIROS_SYSTEM_SYNTHESIS",
       "path": "kairos/kairos_harness/docs/SYSTEM_SYNTHESIS.md",
-      "sha256": "1f3e8cfcb77ecce14957fbfccbff6accbcb1d7d2f3e8bd8c423231842359f121"
+      "sha256": "77791edddbd9704d341c9f10b9b5c5fab1c512b4d685667a8c8d27dafc7d7dce"
     },
     {
-      "artifact_id": "KAIROS_WORKSHOP_README",
-      "path": "workshop/README.md",
-      "sha256": "e1b3b9fafb0d1e8996e1083236d93a73e3e633d78f43988a92ff8aef1977f474"
+      "artifact_id": "KAIROS_HARNESS_QUARANTINE_NOTICE",
+      "path": "kairos/kairos_harness/kairos/quarantine/README.md",
+      "sha256": "ff2b52c5a9a812965e15ae3cf70a2c658a67d16d567d6ee68d218adc1bd51d70"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_TOMOGRAPHY",
+      "path": "review/ADAPTIVE_PATCH_TOMOGRAPHY.md",
+      "sha256": "9ab69fe27dc2c6dd6182c81d2544177ba5ae3a1a08a4087c3e5f74b866b4aacc"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_PORT_COMPARISON",
+      "path": "review/COMPARISON.md",
+      "sha256": "691c13699d6bc011aa0ab1d2cbe8e6add259547617e816548f3649d080d34b78"
+    },
+    {
+      "artifact_id": "KAIROS_REVIEW_METHOD_ENTRY",
+      "path": "review/HOW_TO_ASK_JEV.md",
+      "sha256": "396281f0d4899bf172f55bf8ca271e233113c19a05358b165d26a89c6c4f8177"
+    },
+    {
+      "artifact_id": "KAIROS_JEV_APPLY_POLICY",
+      "path": "review/JEV_APPLY_POLICY.md",
+      "sha256": "c58f5a5edfc58dc7eb57513e97061a2a47c3df04a65b76fcd557aef1e8d72bb0"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_REVIEW",
+      "path": "review/README.md",
+      "sha256": "24df4956d41c82b06f15fd1d20800d5ebcd2361130c8dba6327e16ed619d3437"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_PORT_VALIDATION",
+      "path": "review/VALIDATION.md",
+      "sha256": "37765f5399bbc6b035e044bd9c04160aa9ac0961f1a40ebcfd50d9e224b3adab"
+    },
+    {
+      "artifact_id": "KAIROS_INVESTIGATION_GUARDIAN",
+      "path": "workshop/GUARDIAN.md",
+      "sha256": "4d73306cc927411f132f074485f2f58772dbc7200522634b016f4b995d225cb3"
+    },
+    {
+      "artifact_id": "KAIROS_GUARDIAN_AUDIT_HISTORY",
+      "path": "workshop/GUARDIAN_AUDIT_REMEDIATION.md",
+      "sha256": "a3deec6900af2026147bea1ab9469ffeb3537736fdb7e2f76a05b06cb1c5baf8"
     },
     {
       "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
       "path": "workshop/OPERATIONS.md",
-      "sha256": "2acd2236cc7a45ab0ce46a13621fe04cdb504ef73afc796c2ad4672ea3ef4b6a"
+      "sha256": "40554b4d0de89fd6ae1adb23707007ec6bcffb17d4cb961f6ddf4c727f0cad1c"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_README",
+      "path": "workshop/README.md",
+      "sha256": "b6a8e14e6ea1d570126353ae95c133714d534d8799bb902e237e173ab3ec7899"
+    },
+    {
+      "artifact_id": "KAIROS_TX_RECYCLING",
+      "path": "workshop/RECYCLING.md",
+      "sha256": "65724fea9be54650d430f0e17b05d057061d505a51730f3fdd43844637eb7a30"
     },
     {
       "artifact_id": "KAIROS_SECURITY_BOUNDARY",
       "path": "workshop/SECURITY_BOUNDARY.md",
-      "sha256": "9a6defc711691dbe485fb68807382eaf40876b67fcec724836ede7c5e390171e"
+      "sha256": "dc97cf69f5e20af812d5626b34287e6b6620b0777ed55e340efb5c086b9ac523"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_QUARANTINE_NOTICE",
+      "path": "workshop/quarantine/README.md",
+      "sha256": "e7f4304812bfca799a408ceda12e6e536f2db973da2e30e1d7fce0bb7c3f650c"
+    },
+    {
+      "artifact_id": "WERKFADEN_QUARANTINED_SYNC_CORES",
+      "path": "workshop/src/runtime_sync_workshop/quarantine/README.md",
+      "sha256": "5ab65b58c0c5874555420ee84c971a974dd6552f82e1e09b9dbbafe270d8b594"
+    },
+    {
+      "artifact_id": "WERKFADEN_EVIDENCE_BASED_AI_REVIEW",
+      "path": "workspace/docs/EVIDENCE_BASED_AI_REVIEW.md",
+      "sha256": "9f6f3cbe55bed9fa31605eda5eb5d888fef3c5322c366281620699d96e12ab0f"
+    },
+    {
+      "artifact_id": "KAIROS_HYPOTHESIS_TO_PATCH_LOOP",
+      "path": "workspace/docs/HYPOTHESIS_TO_PATCH_LOOP.md",
+      "sha256": "54d4791ecd5253b0c63cdfdef068db639968ba9e87700a8019a45d9f10e21aff"
+    },
+    {
+      "artifact_id": "KAIROS_STARTER_ARCHITECTURE",
+      "path": "workspace/docs/KAIROS_STARTER_ARCHITECTURE.md",
+      "sha256": "d5905f14f9753b7e97ae468f398dc614993139092cb01984177d3502bb8e401b"
+    },
+    {
+      "artifact_id": "KAIROS_MEMORY_VERIFICATION_PROTOCOL",
+      "path": "workspace/docs/MEMORY_VERIFICATION_PROTOCOL.md",
+      "sha256": "90c3a476126ca3abff7276ade3f1437c8ed961126ffb79cd7fc679cfd7fa85b9"
+    },
+    {
+      "artifact_id": "KAIROS_AGENT_ENTRYPOINT",
+      "path": "workspace/docs/START_HERE_AGENT.md",
+      "sha256": "f3616780c63b62a930fece30bc801997fd01f1cb4bbbf53c2338a01c922965e6"
     }
   ],
   "generated_documents": [
@@ -142,7 +262,7 @@
       "source_bindings": [
         {
           "path": "kairos/kairos_harness/kairos/framework.py",
-          "sha256": "7ead48b2f887d59ab9be0884cbfc022a41a627c6d1ee382d320e7e4baa4b0283"
+          "sha256": "5993bb8de6212fc0e3948953693c25471e9b84480a1d3b26e79c357c979b7287"
         },
         {
           "path": "kairos/kairos_harness/kairos/query.py",
@@ -150,7 +270,7 @@
         },
         {
           "path": "kairos/kairos_harness/kairos/search.py",
-          "sha256": "17bb3d1f8981f9d7e11adafbe7aa7a672aff15203bf8f93317727f09e5167cea"
+          "sha256": "c09d3ba75f9d5c8b28f6e1b29faf716298bcfdefacb20b70b7926fc66217fa12"
         },
         {
           "path": "workshop/src/runtime_sync_workshop/__init__.py",
@@ -174,7 +294,7 @@
         },
         {
           "path": "workshop/src/runtime_sync_workshop/_core_checkout.py",
-          "sha256": "5c1ce547076c95ca98158a0f506d95338d7034873890f4086cfbdcceedb98e8a"
+          "sha256": "f5932dfb8f032534102b124965147235c3b39627ee29db60c7531c77aa101b17"
         },
         {
           "path": "workshop/src/runtime_sync_workshop/_core_contract.py",
@@ -330,7 +450,7 @@
       "source_bindings": [
         {
           "path": "kairos/kairos_harness/kairos/framework.py",
-          "sha256": "7ead48b2f887d59ab9be0884cbfc022a41a627c6d1ee382d320e7e4baa4b0283"
+          "sha256": "5993bb8de6212fc0e3948953693c25471e9b84480a1d3b26e79c357c979b7287"
         },
         {
           "path": "kairos/kairos_harness/kairos/query.py",
@@ -338,7 +458,7 @@
         },
         {
           "path": "kairos/kairos_harness/kairos/search.py",
-          "sha256": "17bb3d1f8981f9d7e11adafbe7aa7a672aff15203bf8f93317727f09e5167cea"
+          "sha256": "c09d3ba75f9d5c8b28f6e1b29faf716298bcfdefacb20b70b7926fc66217fa12"
         },
         {
           "path": "kairos/kairos_harness/kairos/cli.py",
@@ -470,7 +590,346 @@
       "required_top_k": 1
     }
   ],
-  "schema": "kairos-framework-index/v1",
+  "markdown_coverage": [
+    {
+      "artifact_id": "KAIROS_PUBLIC_LANDING",
+      "path": ".github/README.md",
+      "role": "publication_view",
+      "sha256": "b20f216e6f32edccd261cb64d7cc4f6ef6ad741b49e86ff8f4e9f9e4d29f0afb"
+    },
+    {
+      "artifact_id": "KAIROS_FRAMEWORK_RULES",
+      "path": "AGENTS.md",
+      "role": "current_authority",
+      "sha256": "8def61d7daf4b3128eca8582d5ad7a9b24a01b5b591e7b80f8fb7dff47de8f69"
+    },
+    {
+      "artifact_id": "KAIROS_README",
+      "path": "README.md",
+      "role": "current_authority",
+      "sha256": "70abe2783c0f4c758a8fb34c89ef008c6392f530e436c0c3098786ec4490829f"
+    },
+    {
+      "artifact_id": "KAIROS_ARCHITECTURE",
+      "path": "docs/ARCHITECTURE.md",
+      "role": "current_authority",
+      "sha256": "03b155b0bc5c100961c90510e5c2512942e69323f4838ccf0cb8a340e773b03a"
+    },
+    {
+      "artifact_id": "KAIROS_ARCHIVED_RELEASE_HISTORY",
+      "path": "docs/ARCHIVED_RELEASE_HISTORY.md",
+      "role": "historical_evidence",
+      "sha256": "e0aa32987b96071f79f3ff91512a52062a34337bd6c4ba8dae494050b5e798eb"
+    },
+    {
+      "artifact_id": "KAIROS_CANONICAL_DOCUMENTS",
+      "path": "docs/CANONICAL_DOCUMENTS.md",
+      "role": "current_authority",
+      "sha256": "5aa2a69e47d23ed714e9befabd1badf98ba149187227406e96b788be97b972c7"
+    },
+    {
+      "artifact_id": "KAIROS_DATABASE_DYNAMICS",
+      "path": "docs/DATABASE_AND_DYNAMICS.md",
+      "role": "current_authority",
+      "sha256": "8e03c18e6d1aea6dcc5a2c7c2f4fcfb8cc74c1e934ee3d7de3ccebeb17df721f"
+    },
+    {
+      "artifact_id": "KAIROS_EXTERNAL_AUDIT_SCOPE",
+      "path": "docs/EXTERNAL_AUDIT_SCOPE.md",
+      "role": "current_authority",
+      "sha256": "de60c0e24cf661cd53c0a9313f0f278f2b67b6370580b865d910b14b786ff9b4"
+    },
+    {
+      "artifact_id": "KAIROS_FRAMEWORK_BOOTSTRAP",
+      "path": "docs/FRAMEWORK_BOOTSTRAP.md",
+      "role": "current_authority",
+      "sha256": "74108f99014cbb449f5d2f9a7ef8dafc02a78b9626b85c66cd83997c812e39d7"
+    },
+    {
+      "artifact_id": "KAIROS_KNOWN_LIMITATIONS",
+      "path": "docs/KNOWN_LIMITATIONS.md",
+      "role": "current_authority",
+      "sha256": "fb9e21b25e548b27f52ed63d8bd98ae5726f097ae5dfd4da276ce630c9f994fa"
+    },
+    {
+      "artifact_id": "KAIROS_LOOP_PROCEDURE",
+      "path": "docs/LOOP_PROCEDURE.md",
+      "role": "current_authority",
+      "sha256": "f517a48cbfcd0122ddbeabe1524e7fbbb94062f28c103b3d3827eb067e221c0b"
+    },
+    {
+      "artifact_id": "KAIROS_OPERATING_MODEL",
+      "path": "docs/OPERATING_MODEL.md",
+      "role": "current_authority",
+      "sha256": "04ff73df8980d63816053e159414828aeca55bed46cc613335f8facb4afe46d1"
+    },
+    {
+      "artifact_id": "KAIROS_PORTABILITY_SCOPE",
+      "path": "docs/PORTABILITY_SCOPE.md",
+      "role": "current_authority",
+      "sha256": "95b2b113b07976f6ca6ae0361deab51672864ebeaa37fc8feea8d22cef2d4cec"
+    },
+    {
+      "artifact_id": "KAIROS_PROJECT_KICKSTART",
+      "path": "docs/PROJECT_KICKSTART.md",
+      "role": "current_authority",
+      "sha256": "2fed47a42e4b75ff557a420f95daca75faedd5cca5f8303d96d7725d389e04c2"
+    },
+    {
+      "artifact_id": "KAIROS_UNIVERSAL_ONBOARDING",
+      "path": "docs/UNIVERSAL_ONBOARDING.md",
+      "role": "current_authority",
+      "sha256": "53b9af93d58a15516f81bb1d6bae1df0550f78facf9ad9726afd2ec70824ac69"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP",
+      "path": "docs/WORKSHOP.md",
+      "role": "current_authority",
+      "sha256": "9a5a46c7e2001224b524ac1b355e8509d1eade67d583cd260b01712f9e185991"
+    },
+    {
+      "artifact_id": "KAIROS_BRAND_IDENTITY",
+      "path": "docs/growth/BRAND.md",
+      "role": "reference",
+      "sha256": "5a1a335eb5cb1d70c26328d4c23f7e1f5335b06ffb98db25e5399de3d0ac038b"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_EVIDENCE_BASELINE",
+      "path": "docs/growth/EVIDENCE.md",
+      "role": "historical_evidence",
+      "sha256": "a1cde3cb6eb167cfaa0644c917212a1a631801c7c4d228b41bcb9563b74dca25"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_ROLLOUT_HISTORY",
+      "path": "docs/growth/ROLLOUT.md",
+      "role": "historical_evidence",
+      "sha256": "892130c74f39a58c20509ed52703ec5d92b38a0b135faca4b430dd1d1ea7947b"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_SOCIAL_DRAFTS",
+      "path": "docs/growth/SOCIAL.md",
+      "role": "historical_evidence",
+      "sha256": "700a357d1f4b34c6afff6b2b5e2be5fbca9dcc69431524826dcd49bbd8395c93"
+    },
+    {
+      "artifact_id": "KAIROS_PUBLIC_START_HERE",
+      "path": "docs/growth/START_HERE.md",
+      "role": "navigation",
+      "sha256": "1b65e78956ae1ea5ac077067cef5a011114b53ca545f8e1e5da2ffd3901b12b8"
+    },
+    {
+      "artifact_id": "KAIROS_HARNESS_ENTRY",
+      "path": "kairos/kairos_harness/README.md",
+      "role": "current_authority",
+      "sha256": "dc146f185f0b484ff46c2e214992c7aeb5a922956447e4f62b3a6a00ed5272f9"
+    },
+    {
+      "artifact_id": "KAIROS_CONTEXT_HEADER_SPEC",
+      "path": "kairos/kairos_harness/docs/CONTEXT_HEADER_SPEC.md",
+      "role": "current_authority",
+      "sha256": "6cfa60091f9b9cc4a30a69077f6ef220a070774ca3ae7c91a311c5b7aa722d36"
+    },
+    {
+      "artifact_id": "KAIROS_INGESTED_DOCUMENT_SPEC",
+      "path": "kairos/kairos_harness/docs/INGESTED_DOCUMENT_SPEC.md",
+      "role": "current_authority",
+      "sha256": "5c855e008c357820801327fbd8b036f806e195fa5201025476f727958b877fa0"
+    },
+    {
+      "artifact_id": "KAIROS_LLM_OPERATING_CONTRACT",
+      "path": "kairos/kairos_harness/docs/LLM_OPERATING_CONTRACT.md",
+      "role": "current_authority",
+      "sha256": "33b8001dcd658d665feab77b51d71afcd6a7cd5e8d4c3c183d8e0cd8f37cb463"
+    },
+    {
+      "artifact_id": "KAIROS_OPERATIONS",
+      "path": "kairos/kairos_harness/docs/OPERATIONS.md",
+      "role": "current_authority",
+      "sha256": "65ae91956501f17181a547cc39cb5b894b14bfb00a02d30433e1383988043b02"
+    },
+    {
+      "artifact_id": "KAIROS_RETRIEVAL_METHOD",
+      "path": "kairos/kairos_harness/docs/RETRIEVAL_METHOD.md",
+      "role": "current_authority",
+      "sha256": "53835c29fa3b9069ec060b1ccdaaeec5138d9f2aa74bca8469cd1413f2ccb56c"
+    },
+    {
+      "artifact_id": "KAIROS_SEARCH_INDEX",
+      "path": "kairos/kairos_harness/docs/SEARCH_INDEX.md",
+      "role": "current_authority",
+      "sha256": "eb19e53dd97658a91c431529a8ab9b4b2a4a59fe402eb3d751f96133f9313340"
+    },
+    {
+      "artifact_id": "KAIROS_SYSTEM_SYNTHESIS",
+      "path": "kairos/kairos_harness/docs/SYSTEM_SYNTHESIS.md",
+      "role": "current_authority",
+      "sha256": "77791edddbd9704d341c9f10b9b5c5fab1c512b4d685667a8c8d27dafc7d7dce"
+    },
+    {
+      "artifact_id": "KAIROS_HARNESS_QUARANTINE_NOTICE",
+      "path": "kairos/kairos_harness/kairos/quarantine/README.md",
+      "role": "quarantine_notice",
+      "sha256": "ff2b52c5a9a812965e15ae3cf70a2c658a67d16d567d6ee68d218adc1bd51d70"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/BUG_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "0c41921222d5b7cdfa8b6a797196bdb18a3a14944ff214f44e827b733a8747e3"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/CODE_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "369c3c803b686e820ceca0ecc5b714840cd59bb3182efad784a2ec3a33b0e50c"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/DECISION_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "feabd442c7670f8705775affb05b72c23f10435f504bb0d77e88883c1456a7b6"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/REPORT_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "65ba715479a3be3f87716d7d22a962c9e82ca0a466fa5c8e07c35058fb32d1e9"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/RESEARCH_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "be8967ff0291345c9ad7b5f4a8f0e126366b107a469f3bfff916cfbd3194c00a"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/ROUTER_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "ee69ffcc636e87d3d6676c6582208936610d42882abcc3b02cfc39c8a351e39b"
+    },
+    {
+      "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates",
+      "path": "kairos/kairos_harness/templates/TASK_TEMPLATE.md",
+      "role": "render_template",
+      "sha256": "15b622dde2bb9683afd7de63f9b6ffa35748c4a88c9276ff059948d317b21ce8"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_TOMOGRAPHY",
+      "path": "review/ADAPTIVE_PATCH_TOMOGRAPHY.md",
+      "role": "current_authority",
+      "sha256": "9ab69fe27dc2c6dd6182c81d2544177ba5ae3a1a08a4087c3e5f74b866b4aacc"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_PORT_COMPARISON",
+      "path": "review/COMPARISON.md",
+      "role": "reference",
+      "sha256": "691c13699d6bc011aa0ab1d2cbe8e6add259547617e816548f3649d080d34b78"
+    },
+    {
+      "artifact_id": "KAIROS_REVIEW_METHOD_ENTRY",
+      "path": "review/HOW_TO_ASK_JEV.md",
+      "role": "navigation",
+      "sha256": "396281f0d4899bf172f55bf8ca271e233113c19a05358b165d26a89c6c4f8177"
+    },
+    {
+      "artifact_id": "KAIROS_JEV_APPLY_POLICY",
+      "path": "review/JEV_APPLY_POLICY.md",
+      "role": "current_authority",
+      "sha256": "c58f5a5edfc58dc7eb57513e97061a2a47c3df04a65b76fcd557aef1e8d72bb0"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_REVIEW",
+      "path": "review/README.md",
+      "role": "current_authority",
+      "sha256": "24df4956d41c82b06f15fd1d20800d5ebcd2361130c8dba6327e16ed619d3437"
+    },
+    {
+      "artifact_id": "WERKFADEN_JEV_PORT_VALIDATION",
+      "path": "review/VALIDATION.md",
+      "role": "historical_evidence",
+      "sha256": "37765f5399bbc6b035e044bd9c04160aa9ac0961f1a40ebcfd50d9e224b3adab"
+    },
+    {
+      "artifact_id": "KAIROS_INVESTIGATION_GUARDIAN",
+      "path": "workshop/GUARDIAN.md",
+      "role": "current_authority",
+      "sha256": "4d73306cc927411f132f074485f2f58772dbc7200522634b016f4b995d225cb3"
+    },
+    {
+      "artifact_id": "KAIROS_GUARDIAN_AUDIT_HISTORY",
+      "path": "workshop/GUARDIAN_AUDIT_REMEDIATION.md",
+      "role": "historical_evidence",
+      "sha256": "a3deec6900af2026147bea1ab9469ffeb3537736fdb7e2f76a05b06cb1c5baf8"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_OPERATIONS",
+      "path": "workshop/OPERATIONS.md",
+      "role": "current_authority",
+      "sha256": "40554b4d0de89fd6ae1adb23707007ec6bcffb17d4cb961f6ddf4c727f0cad1c"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_README",
+      "path": "workshop/README.md",
+      "role": "current_authority",
+      "sha256": "b6a8e14e6ea1d570126353ae95c133714d534d8799bb902e237e173ab3ec7899"
+    },
+    {
+      "artifact_id": "KAIROS_TX_RECYCLING",
+      "path": "workshop/RECYCLING.md",
+      "role": "current_authority",
+      "sha256": "65724fea9be54650d430f0e17b05d057061d505a51730f3fdd43844637eb7a30"
+    },
+    {
+      "artifact_id": "KAIROS_SECURITY_BOUNDARY",
+      "path": "workshop/SECURITY_BOUNDARY.md",
+      "role": "current_authority",
+      "sha256": "dc97cf69f5e20af812d5626b34287e6b6620b0777ed55e340efb5c086b9ac523"
+    },
+    {
+      "artifact_id": "KAIROS_WORKSHOP_QUARANTINE_NOTICE",
+      "path": "workshop/quarantine/README.md",
+      "role": "quarantine_notice",
+      "sha256": "e7f4304812bfca799a408ceda12e6e536f2db973da2e30e1d7fce0bb7c3f650c"
+    },
+    {
+      "artifact_id": "WERKFADEN_QUARANTINED_SYNC_CORES",
+      "path": "workshop/src/runtime_sync_workshop/quarantine/README.md",
+      "role": "quarantine_notice",
+      "sha256": "5ab65b58c0c5874555420ee84c971a974dd6552f82e1e09b9dbbafe270d8b594"
+    },
+    {
+      "artifact_id": "WERKFADEN_EVIDENCE_BASED_AI_REVIEW",
+      "path": "workspace/docs/EVIDENCE_BASED_AI_REVIEW.md",
+      "role": "current_authority",
+      "sha256": "9f6f3cbe55bed9fa31605eda5eb5d888fef3c5322c366281620699d96e12ab0f"
+    },
+    {
+      "artifact_id": "KAIROS_HYPOTHESIS_TO_PATCH_LOOP",
+      "path": "workspace/docs/HYPOTHESIS_TO_PATCH_LOOP.md",
+      "role": "current_authority",
+      "sha256": "54d4791ecd5253b0c63cdfdef068db639968ba9e87700a8019a45d9f10e21aff"
+    },
+    {
+      "artifact_id": "KAIROS_STARTER_ARCHITECTURE",
+      "path": "workspace/docs/KAIROS_STARTER_ARCHITECTURE.md",
+      "role": "current_authority",
+      "sha256": "d5905f14f9753b7e97ae468f398dc614993139092cb01984177d3502bb8e401b"
+    },
+    {
+      "artifact_id": "KAIROS_MEMORY_VERIFICATION_PROTOCOL",
+      "path": "workspace/docs/MEMORY_VERIFICATION_PROTOCOL.md",
+      "role": "current_authority",
+      "sha256": "90c3a476126ca3abff7276ade3f1437c8ed961126ffb79cd7fc679cfd7fa85b9"
+    },
+    {
+      "artifact_id": "KAIROS_AGENT_ENTRYPOINT",
+      "path": "workspace/docs/START_HERE_AGENT.md",
+      "role": "navigation",
+      "sha256": "f3616780c63b62a930fece30bc801997fd01f1cb4bbbf53c2338a01c922965e6"
+    }
+  ],
+  "markdown_coverage_sha256": "5eba3cedab0c03311d8aac5a55764e69dcd1e51f5b434a627d20df20a6c30efb",
+  "schema": "kairos-framework-index/v2",
   "version": "0.1.0-alpha.6",
   "workspace_id": "KAIROS_FRAMEWORK"
 }

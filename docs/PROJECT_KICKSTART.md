@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_PROJECT_KICKSTART"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_PROJECT_KICKSTART"
-updated_at = "2026-09-09T08:45:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Authoritative project-initiation procedure: framework search and Human intent first, universal detect/auto intake second, compiler-backed C-family authority where required, then exact Markdown/database baseline and Workshop handoff."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_PROJECT_KICKSTART"]
 facets = ["kickstart", "intent", "universal-intake", "compiler", "ground-truth"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "project_kickoff"
@@ -44,18 +45,21 @@ target = "s-universal-auto-intake"
 query = "How do I initialize an existing C++ project with KAIROS?"
 expected = "KAIROS_PROJECT_KICKSTART#s-1-project-intent-precedes-code-discovery"
 required_top_k = 1
+
+[refs]
 +++
 # Project kickstart and ground-truth binding
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The canonical framework is intentionally unbound. A real project is created in two ordered
-- [`s-1-project-intent-precedes-code-discovery`](#s-1-project-intent-precedes-code-discovery) — Generate the LLM prompt from the Human project outcome:
-- [`s-2-compiler-backed-implementation-binding`](#s-2-compiler-backed-implementation-binding) — The command never edits the project source tree. It writes only the selected KAIROS
-- [`s-ground-truth-contract`](#s-ground-truth-contract) — compile_commands.json is the primary translation-unit membership authority because it is
-- [`s-materialized-evidence`](#s-materialized-evidence) — goals/<GOAL>.json and tasks/task_<TASK>.md: the reviewed Human project intent and active work scope, created before source discovery.
-- [`s-handoff-to-synchronized-development`](#s-handoff-to-synchronized-development) — A verified intake may enter the separate Workshop lifecycle:
-- [`s-continuing-after-the-first-baseline`](#s-continuing-after-the-first-baseline) — Ordinary code/header edits that keep compiler membership and the governed header set stable use
+- [Overview](#s-overview)
+- [1. Project intent precedes code discovery](#s-1-project-intent-precedes-code-discovery)
+- [3. C-family compiler-backed implementation binding](#s-2-compiler-backed-implementation-binding)
+- [Ground-truth contract](#s-ground-truth-contract)
+- [Materialized evidence](#s-materialized-evidence)
+- [Handoff to synchronized development](#s-handoff-to-synchronized-development)
+- [Continuing after the first baseline](#s-continuing-after-the-first-baseline)
+- [2. Universal detect and auto intake](#s-universal-auto-intake)
 
 <a id="s-overview"></a>
 ## Overview

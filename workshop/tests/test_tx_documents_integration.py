@@ -23,7 +23,34 @@ from kairos.frontmatter import split_frontmatter
 from kairos.transaction_document import document_id, document_path
 
 
+def _replay_ast_sha256(node):
+    """Pin full replay structure without version-dependent empty list fields."""
+    def structural(value):
+        if isinstance(value, ast.AST):
+            return [type(value).__name__,
+                    [[name, structural(field)] for name, field in ast.iter_fields(value)
+                     if field != []]]
+        if isinstance(value, list):
+            return [structural(item) for item in value]
+        return value
+
+    encoded = json.dumps(structural(node), ensure_ascii=True, separators=(",", ":"),
+                         allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class TransactionDocumentIntegrationTests(unittest.TestCase):
+    def test_replay_ast_fingerprint_keeps_semantic_changes_and_ignores_locations(self):
+        source = "def read(value):\n    if value:\n        return 1\n    return 0\n"
+        original = ast.parse(source).body[0]
+        fingerprint = _replay_ast_sha256(original)
+        self.assertEqual(fingerprint, _replay_ast_sha256(ast.parse("\n# location only\n" + source).body[0]))
+        for changed in (source.replace("if value:", "if not value:"),
+                        source.replace("return 1", "return 2"),
+                        source.replace("return 0", "raise RuntimeError()")):
+            with self.subTest(changed=changed):
+                self.assertNotEqual(fingerprint, _replay_ast_sha256(ast.parse(changed).body[0]))
+
     def test_five_native_kinds_project_every_material_save_and_endreceipt(self):
         from types import SimpleNamespace
         from runtime_sync_workshop.engine import WorkshopEngine
@@ -4487,8 +4514,8 @@ with patch.object(owner._CoreWorkshopEngine, '_save_transaction', side_effect=la
                         self.assertEqual(len(call.args), 2, "Review replay state write must have two positional arguments")
                         self.assertIsInstance(call.args[1], ast.Name)
                         self.assertEqual(call.args[1].id, "target")
-                        replay_ast = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
-                        self.assertEqual(replay_ast, "8584a1eb0dd4bbc3bc35030731dbb8a746ad263daf2e919dc4aedbc93f4e3400",
+                        replay_ast = _replay_ast_sha256(node)
+                        self.assertEqual(replay_ast, "11c65ce6a3a0c7aca11393f59a80132fcd47d953ae2798e29b87d607bc2705c5",
                                          "Review replay writer changed; inspect all intent, event, marker and evidence guards")
                         rows.append((relative, node.name, "direct-state:TX_RECYCLE_REVIEWED_REPLAY"))
                         continue
@@ -4498,8 +4525,8 @@ with patch.object(owner._CoreWorkshopEngine, '_save_transaction', side_effect=la
                         self.assertEqual(len(call.args), 2)
                         self.assertIsInstance(call.args[1], ast.Name)
                         self.assertEqual(call.args[1].id, "target")
-                        replay_ast = hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
-                        self.assertEqual(replay_ast, "723acbf8843178cb8a468941914e3298c53d7e01b114851ce1637d682ee6712e",
+                        replay_ast = _replay_ast_sha256(node)
+                        self.assertEqual(replay_ast, "1b76258af9dd70bf41fa58bf38a2fdf8b4a30765d98c0eed1ef5ea43afc14e0d",
                                          "Generic replay writer changed; inspect all endpoint and owner guards")
                         rows.append((relative, node.name, "direct-state:NATIVE_EVENT_INTENT_REPLAY"))
                         continue

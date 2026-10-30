@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_OPERATIONS"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_OPERATIONS"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Detailed command-level operations for session entry, search, permits, heartbeat, recovery, health, backup, closure and loop transitions."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_OPERATIONS"]
 facets = ["operations", "cli", "heartbeat", "recovery"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "operations"
@@ -34,22 +35,24 @@ target = "s-material-heartbeat"
 query = "How do I enter and operate a KAIROS session?"
 expected = "KAIROS_OPERATIONS#s-session-entry"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS Operations
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Run examples from kairos_harness/ with ..\kairos_workspace as the prepared workspace.
-- [`s-session-entry`](#s-session-entry) — Read, in order:
-- [`s-search-and-freshness`](#s-search-and-freshness) — SEARCH_INDEX.md lists every retrieval surface side by side — which command answers
-- [`s-ingested-documents-and-the-graph-layer`](#s-ingested-documents-and-the-graph-layer) — A document authored in another workspace is transferred unchanged. Its origin must be
-- [`s-withdrawing-an-action-permit`](#s-withdrawing-an-action-permit) — An action permit is retired automatically once its edit has landed and reconciled. A permit
-- [`s-material-heartbeat`](#s-material-heartbeat) — A successful receipt includes the trigger, mode and rationale, candidates, promoted artifacts and receipts, missing sources, pending and failed counts, lifecycle transition, and verified: true.
-- [`s-reconciliation-and-failure-recovery`](#s-reconciliation-and-failure-recovery) — Reconciliation is a stat comparison over configured sources with hard ceilings of 10,000 documents and 256 MiB; goal JSON is limited to 1,024 files and 64 MiB total. Content hashing occurs only for promotion candidates. If a managed source
-- [`s-health-backup-and-restore`](#s-health-backup-and-restore) — Backup retention prunes only older verified KAIROS packages after the newest package passes reopen verification. Verification compares every promoted Markdown hash with the packaged source, rejects duplicate or unsafe members, and checks SQ
-- [`s-task-closure-and-finalization`](#s-task-closure-and-finalization) — Task closure requires a promoted success report for every criterion and at least one linked artifact of every type declared by required_artifact_types. It then marks the task's evidenced criteria complete in the authoritative goal JSON and
-- [`s-numbered-loop-transition`](#s-numbered-loop-transition) — BREATHE checkpoints prompt context and never increments the semantic loop. Only finalize can seal loop N. A sealed loop retains its mandatory archive and verified backup even when no task or criterion remains active.
-- [`s-verification`](#s-verification) — Detailed command-level operations for session entry, search, permits, heartbeat, recovery, health, backup, closure and loop transitions.
+- [Overview](#s-overview)
+- [Session entry](#s-session-entry)
+- [Search and freshness](#s-search-and-freshness)
+- [Ingested documents and the graph layer](#s-ingested-documents-and-the-graph-layer)
+- [Withdrawing an action permit](#s-withdrawing-an-action-permit)
+- [Material heartbeat](#s-material-heartbeat)
+- [Reconciliation and failure recovery](#s-reconciliation-and-failure-recovery)
+- [Health, backup, and restore](#s-health-backup-and-restore)
+- [Task closure and finalization](#s-task-closure-and-finalization)
+- [Numbered loop transition](#s-numbered-loop-transition)
+- [Verification](#s-verification)
 
 <a id="s-overview"></a>
 ## Overview

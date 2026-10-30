@@ -1,29 +1,85 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_HARNESS_ENTRY"
+type = "documentation"
+revision = 1
+state = "active"
+authority = "operating_contract"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_HARNESS_ENTRY"
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Harness entry and command reference: source documents, same-heartbeat projection, reviewed project intake and bounded retrieval."
+claim_boundary = "Defines harness usage; current project intent, source authority and verified receipts own project facts and outcomes."
+entities = ["KAIROS", "KAIROS_HARNESS_ENTRY"]
+facets = ["framework-documentation", "current-authority"]
+criteria = []
+does_not_answer = ["live project state", "unverified current release acceptance"]
+distribution_role = "current_authority"
+origin_commit = "6d8d498c62c411ecad9c49e1ab41e2a72b724e56"
+origin_source_sha256 = "9c224e255b8b14f777a4d4a2da4e5e18aaf716fdf3d43fe1aede479c83be65ee"
+
+[[answers]]
+intent = "procedure"
+question = "How should a new project enter the KAIROS harness safely?"
+target = "s-requirements"
+
+[refs]
+current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|rel:requires|tags:current,authority|src:framework]"
+
+[[search_contract]]
+query = "How should a new project enter the KAIROS harness safely?"
+expected = "KAIROS_HARNESS_ENTRY#s-requirements"
+required_top_k = 5
++++
 # KAIROS Context Harness
+
+## CONTEXT INDEX
+
+- [Requirements](#s-requirements)
+- [Quick start](#s-quick-start)
+- [Command surface](#s-command-surface)
+- [Context modes](#s-context-modes)
+- [Safety model](#s-safety-model)
+
 
 KAIROS combines goal decomposition, structured evidence documents, deterministic promotion, section-level retrieval, typed context chasing, and bounded dynamic routing in one control plane.
 
 The core invariant is: a material action is not checkpointed until its source document, section metadata, relations, goal coverage, and verification receipt are searchable in the same heartbeat.
 
+<a id="s-requirements"></a>
 ## Requirements
+
+> Capsule: The harness requires Python3.11 or newer and SQLite FTS5, with no third-party runtime packages.
 
 - Python 3.11 or newer
 - SQLite with FTS5
 - no third-party runtime packages
 
+<a id="s-quick-start"></a>
 ## Quick start
 
-```powershell
-python -m kairos init --workspace ..\my_kairos_workspace --workspace-id MY_PROJECT
-python -m kairos validate --workspace ..\my_kairos_workspace --all
-python -m kairos heartbeat --workspace ..\my_kairos_workspace --mode auto
-python -m kairos search --workspace ..\my_kairos_workspace "What evidence is still missing for the active goal?"
-python -m kairos source-permit --workspace ..\my_kairos_workspace --routing-receipt SRR_... --purpose exact_location --path docs/KAIROS_ARCHITECTURE_ATLAS.md --pattern "authority|retrieval" --reason "Read the exact routed architecture section."
-python -m kairos source-search --workspace ..\my_kairos_workspace --permit SIP_...
+> Capsule: Start a real project with immutable framework retrieval, reviewed human intent, read-only detection and authorized intake.
+
+For a real project, begin at the framework checkout root. Ask the immutable framework corpus and render a bounded intent prompt:
+
+```text
+python kairos_cli.py search "How do I onboard an arbitrary existing codebase into KAIROS?"
+python -m kickstart prompt --idea "Describe the intended project outcome"
 ```
 
-Initialization requires an empty target. KAIROS never silently adopts or overwrites an existing workspace.
+The prompt renderer does not call an LLM. Review the resulting kairos-project-kickoff/v1 goal/milestone/task contract and save it separately before source discovery. Then use read-only detect and explicitly authorized intake with a fresh workspace:
 
+```text
+python -m kickstart detect <project>
+python -m kickstart init --auto --project-root <project> --workspace <fresh-workspace> --spec-file <reviewed-contract.json>
+```
+
+C-family and mixed intake need compiler authority as specified in the canonical project kickstart contract. Standalone harness init creates a prepared context workspace; it is not a replacement for project intent review or source binding. Query project knowledge with its explicit workspace. Install the harness only if you need its console entrypoint.
+
+<a id="s-command-surface"></a>
 ## Command surface
+
+> Capsule: Maps native harness commands to their bounded context, projection and recovery purposes.
 
 | Command | Purpose |
 |---|---|
@@ -55,7 +111,10 @@ Initialization requires an empty target. KAIROS never silently adopts or overwri
 | `project-kickoff` | Validate one bounded Human contract, create fresh goal and first-task sources, and activate the numbered successor exactly once. |
 | `export-golden` | Build a sealed, sanitized, source-only starter in an empty target and bind it to a source commit. |
 
+<a id="s-context-modes"></a>
 ## Context modes
+
+> Capsule: Defines work, depth, breadth, breathe and verification scopes; a mode change does not close a semantic loop.
 
 - `work` — one bounded implementation or documentation action.
 - `depth` — one prioritized causal, dependency, provenance, or validation chain.
@@ -64,7 +123,10 @@ Initialization requires an empty target. KAIROS never silently adopts or overwri
 - `verify` — reopen evidence before a claim transition.
 - `auto` — select a mode from the current evidence and context state.
 
+<a id="s-safety-model"></a>
 ## Safety model
+
+> Capsule: Source documents and goal contracts own claims; confined paths and verified projections preserve the authority boundary.
 
 Source documents and goal contracts own their scoped claims. SQLite is a verified derived projection and is never edited directly. Workspace paths are canonicalized and confined; workspace, goal, milestone, parent-task, and criterion ownership are checked before promotion; write commands are serialized across processes; generated routers are regenerated rather than accepted as source. Managed documents are capped at 10,000 and 256 MiB, goal sources at 1,024 and 64 MiB, and backup source expansion at 352 MiB; input, retrieval expansion, generated files, and traces have separate bounds. Audit ledgers remain durable in SQLite and therefore require capacity monitoring rather than silent deletion.
 

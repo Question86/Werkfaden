@@ -768,7 +768,7 @@ def build_golden_template(
 FRAMEWORK_DISTRIBUTION_MANIFEST = "FRAMEWORK_DISTRIBUTION_MANIFEST.json"
 _FRAMEWORK_ROOT_FILES = (
     "AGENTS.md", "README.md", "LICENSE", "CITATION.cff", "kairos_cli.py",
-    ".gitattributes", ".gitignore",
+    ".gitattributes", ".gitignore", ".github/README.md",
 )
 _FRAMEWORK_ROOT_DIRS = (
     "docs", "kairos/kairos_harness", "workshop", "kickstart", "review",
@@ -848,6 +848,11 @@ def verify_framework_distribution(root: Path) -> dict[str, Any]:
     if manifest.get("schema") != "kairos-framework-distribution/v1":
         raise GoldenTemplateError("invalid framework distribution schema")
     expected = _framework_source_entries(root)
+    from .framework import verify_framework_bundle
+    try:
+        verify_framework_bundle(source_root=root)
+    except (RuntimeError, ValueError) as exc:
+        raise GoldenTemplateError(f"framework document admission failed: {exc}") from exc
     if manifest.get("files") != expected:
         raise GoldenTemplateError("framework distribution content mismatch")
     actual: set[str] = set()
@@ -883,6 +888,11 @@ def build_framework_distribution(*, source_root: Path, target_root: Path,
     if not source_commit.strip() or len(source_commit) > 256:
         raise GoldenTemplateError("nonempty bounded source identity is required")
     entries = _framework_source_entries(source_root)
+    from .framework import verify_framework_bundle
+    try:
+        verify_framework_bundle(source_root=source_root)
+    except (RuntimeError, ValueError) as exc:
+        raise GoldenTemplateError(f"framework document admission failed: {exc}") from exc
     # Fully preflight before creating any target. No source tree is ever modified.
     target_root.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(

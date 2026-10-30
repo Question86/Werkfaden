@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_SYSTEM_SYNTHESIS"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_SYSTEM_SYNTHESIS"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Current system synthesis for KAIROS source/derived layers, freshness, retrieval, question-scoped authority, long-term bounds, backup and completion."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_SYSTEM_SYNTHESIS"]
 facets = ["architecture", "retrieval", "freshness", "completion"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "architecture"
@@ -39,20 +40,22 @@ target = "s-completion-boundary"
 query = "What is the current KAIROS system architecture?"
 expected = "KAIROS_SYSTEM_SYNTHESIS#s-purpose"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS Current Architecture
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Current system synthesis for KAIROS source/derived layers, freshness, retrieval, question-scoped authority, long-term bounds, backup and completion.
-- [`s-purpose`](#s-purpose) — KAIROS is one control plane for goal-directed work, durable knowledge, incremental metadata promotion, and question-first retrieval. Its source of truth is a governed set of English documents and goal contracts. SQLite is a fast, verified p
-- [`s-source-and-derived-layers`](#s-source-and-derived-layers) — Authoritative Markdown starts with a bounded TOML context header, a context index, stable section anchors, answer handles, claim boundaries, and typed workspace-relative pointers. A promoted revision produces:
-- [`s-heartbeat-and-implicit-freshness`](#s-heartbeat-and-implicit-freshness) — A normal heartbeat atomically synchronizes bounded goal contracts, removes stale milestone and criterion rows, reconciles configured document and goal manifests using size and nanosecond mtime, validates changed candidates, promotes them, r
-- [`s-retrieval`](#s-retrieval) — Questions compile into normalized tokens, exact identifiers, intents, and preferred relation types. Search retrieves sections, not whole files. Ranking uses lexical position, exact identifiers, exact declared questions, question-scoped auth
-- [`s-question-scoped-authority`](#s-question-scoped-authority) — There is no universal “latest file wins” order:
-- [`s-bounded-long-term-behavior`](#s-bounded-long-term-behavior) — ACTIVE.md, CLOSED.md, NEURAL_CORTEX.md, _LOOP_GATE.md, and _SESSION.md expose capped samples plus total counts and database-query fallbacks. Their projection queries use SQL counts and limits rather than loading complete task history. Seman
-- [`s-database-and-backup-safety`](#s-database-and-backup-safety) — SQLite uses foreign keys, a busy timeout, WAL, NORMAL synchronization, bounded automatic checkpointing, a journal-size limit, and an untrusted schema. Writes are enclosed by a cross-process workspace lock and immediate transactions.
-- [`s-completion-boundary`](#s-completion-boundary) — Finalization requires:
+- [Overview](#s-overview)
+- [Purpose](#s-purpose)
+- [Source and derived layers](#s-source-and-derived-layers)
+- [Heartbeat and implicit freshness](#s-heartbeat-and-implicit-freshness)
+- [Retrieval](#s-retrieval)
+- [Question-scoped authority](#s-question-scoped-authority)
+- [Bounded long-term behavior](#s-bounded-long-term-behavior)
+- [Database and backup safety](#s-database-and-backup-safety)
+- [Completion boundary](#s-completion-boundary)
 
 <a id="s-overview"></a>
 ## Overview

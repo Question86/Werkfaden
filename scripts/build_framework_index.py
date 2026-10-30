@@ -17,7 +17,8 @@ if str(HARNESS) not in sys.path:
 from kairos.database import KnowledgeDatabase  # noqa: E402
 from kairos.framework import (  # noqa: E402
     FRAMEWORK_DATABASE_NAME,
-    FRAMEWORK_DOCUMENT_PATHS,
+    framework_markdown_inventory,
+    framework_markdown_coverage_sha256,
     FRAMEWORK_INDEX_WORKSPACE_ID,
     FRAMEWORK_MANIFEST_NAME,
     FRAMEWORK_VERSION,
@@ -137,15 +138,20 @@ def write_config(workspace: Path) -> None:
         (workspace / ".kairos" / directory).mkdir(parents=True, exist_ok=True)
 
 
-def materialize_sources(workspace: Path) -> list[Path]:
+def materialize_sources(workspace: Path, coverage: list[dict] | None = None) -> list[Path]:
     paths: list[Path] = []
-    for relative in FRAMEWORK_DOCUMENT_PATHS:
+    for row in coverage if coverage is not None else framework_markdown_inventory(ROOT):
+        if row["role"] == "render_template":
+            continue
+        relative = row["path"]
         source = ROOT / relative
         if not source.is_file():
             raise SystemExit(f"framework source missing: {relative}")
         target = workspace / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+        if sha256(source) != row["sha256"] or sha256(target) != row["sha256"]:
+            raise SystemExit(f"framework source changed during materialization: {relative}")
         paths.append(target)
     # Introspect the public parser without constructing an engine or executing
     # operations. Refuse any command/module that has no reviewed routing entry.
@@ -188,10 +194,11 @@ def canonicalize_database(path: Path) -> None:
 
 
 def build_once(output: Path) -> dict:
+    coverage = framework_markdown_inventory(ROOT)
     with tempfile.TemporaryDirectory(prefix="kairos-framework-index-") as temp:
         workspace = Path(temp)
         write_config(workspace)
-        documents = materialize_sources(workspace)
+        documents = materialize_sources(workspace, coverage)
         database_path = workspace / ".kairos" / "framework.db"
         database = KnowledgeDatabase(database_path)
 
@@ -223,29 +230,13 @@ def build_once(output: Path) -> dict:
         output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(database_path, output)
 
-    documents_manifest = []
-    for relative in FRAMEWORK_DOCUMENT_PATHS:
-        source = ROOT / relative
-        # Header id is deliberately read with a tiny local parser avoidance: full validation already
-        # occurred during promotion, and this keeps the generated manifest free of parser duplication.
-        text = source.read_text(encoding="utf-8")
-        marker = '\nid = "'
-        start = text.find(marker)
-        if start < 0:
-            if text.startswith('id = "'):
-                start = -1
-            else:
-                raise SystemExit(f"framework document lacks id header: {relative}")
-        if start == -1:
-            value_start = len('id = "')
-        else:
-            value_start = start + len(marker)
-        value_end = text.find('"', value_start)
-        artifact_id = text[value_start:value_end]
-        documents_manifest.append({"path": relative, "artifact_id": artifact_id, "sha256": sha256(source)})
+    if framework_markdown_inventory(ROOT) != coverage:
+        raise SystemExit("framework Markdown membership or bytes changed during build")
+    documents_manifest = [{k: row[k] for k in ("path", "artifact_id", "sha256")}
+                          for row in coverage if row["role"] != "render_template"]
 
     return {
-        "schema": "kairos-framework-index/v1",
+        "schema": "kairos-framework-index/v2",
         "version": FRAMEWORK_VERSION,
         "workspace_id": FRAMEWORK_WORKSPACE_ID,
         "database_file": FRAMEWORK_DATABASE_NAME,
@@ -253,6 +244,8 @@ def build_once(output: Path) -> dict:
         "database_content_sha256": framework_database_content_sha256(output),
         "document_count": len(documents_manifest) + len(tool_catalog_definitions()),
         "documents": documents_manifest,
+        "markdown_coverage": coverage,
+        "markdown_coverage_sha256": framework_markdown_coverage_sha256(coverage),
         "generated_documents": [{
             "path": relative,
             "artifact_id": artifact_id,

@@ -2,41 +2,49 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_JEV_PORT_VALIDATION"
 type = "documentation"
-revision = 2
-state = "active"
-authority = "execution_evidence"
+revision = 3
+state = "ready"
+authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_JEV_PORT_VALIDATION"
-updated_at = "2026-10-24T15:36:25Z"
-capsule = "Fresh 262-test regression, canonical framework-source repair, deterministic index rebuild and isolated wheel verification."
-claim_boundary = "Mocks verify plumbing only; no real AI review, production Apply or mandatory AI gate was executed."
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Historical 2026-10-24 JEV publication-port validation record for its named source version and environment."
+claim_boundary = "Preserves the recorded source-epoch validation statements and limits; it does not establish current suite counts, current AI review, production Apply or release readiness."
 entities = ["KAIROS", "WERKFADEN_JEV_PORT_VALIDATION"]
 facets = ["tests", "jev", "guardian", "metadata", "source-binding", "packaging"]
 criteria = []
 does_not_answer = ["AI semantic accuracy", "production readiness"]
+distribution_role = "historical_evidence"
+
 [[answers]]
 intent = "validation"
-question = "Which tests validate the JEV publication port and its limits?"
+question = "What validation was recorded for the historical JEV publication port on 2026-10-24?"
 target = "s-overview"
 
 [[answers]]
 intent = "source_binding"
 question = "How was the framework manifest repaired and checked against committed source bytes?"
 target = "s-source-binding"
-+++
 
-# Executed validation
+[[search_contract]]
+query = "What validation was recorded for the historical JEV publication port on 2026-10-24?"
+expected = "WERKFADEN_JEV_PORT_VALIDATION#s-overview"
+required_top_k = 5
+
+[refs]
++++
+# Historical JEV port validation
 
 ## CONTEXT INDEX
 
-- `s-overview` — Fresh isolated suites, packaging checks and exact execution boundaries.
-- `s-source-binding` — Reproduce the original CRLF/LF defect and rebuild the source-bound manifest.
-- `s-ai-limits` — Simulated API tests and remaining AI enforcement gaps.
+- [Overview](#s-overview)
+- [Source binding repair](#s-source-binding)
+- [AI coverage and remaining limits](#s-ai-limits)
 
 <a id="s-overview"></a>
 ## Overview
 
-> Capsule: All four final suites pass in a fresh isolated checkout; provider and credential access are mocked.
+> Capsule: Recorded 2026-10-24 validation claims with mocked provider/credential access; no current execution is asserted.
 
 Validation date: 2026-10-24. Windows, Python 3.13.5. The publication is based on `8a933430438f7478bf3a9aa34dc99d3864554452`, retains its existing review code and Guardian/metadata integration, and repairs the framework manifest's canonical source bindings.
 

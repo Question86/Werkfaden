@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 6
+revision = 7
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP"
-updated_at = "2026-10-25T16:00:00Z"
-capsule = "Authoritative Workshop lifecycle for jointly updated code and Markdown, with required semantic header changes, evidence-backed metadata afterchecks, hash-bound apply clearance and heartbeat projection."
-claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Source and Markdown stay together through semantic afterchecks, shadow verification, Apply, heartbeat and postcheck."
+claim_boundary = "Procedure only; source, receipts and project evidence own state and outcomes."
 entities = ["KAIROS", "KAIROS_WORKSHOP"]
 facets = ["ai-review", "guardian", "workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "workshop"
@@ -24,11 +25,6 @@ target = "s-overview"
 intent = "topology"
 question = "How does the Workshop handle include-owner topology changes?"
 target = "s-header-and-topology-behavior"
-
-[[answers]]
-intent = "migration"
-question = "When is KAIROS authority migration required?"
-target = "s-authority-migration"
 
 [[answers]]
 intent = "migration"
@@ -50,6 +46,11 @@ intent = "metadata_aftercheck"
 question = "How must I check metadata before applying a source patch?"
 target = "s-metadata-aftercheck"
 
+[[answers]]
+intent = "ai_review"
+question = "Does Workshop enforce JEV AI approval before Apply?"
+target = "s-standalone-ai-review"
+
 [[search_contract]]
 query = "How do I modify governed code through the KAIROS Workshop?"
 expected = "KAIROS_WORKSHOP#s-overview"
@@ -64,11 +65,8 @@ required_top_k = 1
 query = "How must I check metadata before applying a source patch?"
 expected = "KAIROS_WORKSHOP#s-metadata-aftercheck"
 required_top_k = 1
-[[answers]]
-intent = "ai_review"
-question = "Does Workshop enforce JEV AI approval before Apply?"
-target = "s-standalone-ai-review"
 
+[refs]
 +++
 # Workshop module
 
@@ -82,6 +80,13 @@ target = "s-standalone-ai-review"
 - [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) â€” Header-only project records are valid Workshop checkout targets and can be changed through
 - [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) â€” Create, delete and rename of static-ecosystem source files use a separate candidate migration.
 - [`s-authority-migration`](#s-authority-migration) â€” authority-checkout requires an isolated candidate project tree plus its compile_commands.json
+- [Overview](#s-overview)
+- [Semantic context transactions](#s-semantic-context-transactions)
+- [Mandatory metadata aftercheck](#s-metadata-aftercheck)
+- [Header and topology behavior](#s-header-and-topology-behavior)
+- [Universal static source-set mutation](#s-universal-source-set-mutation)
+- [Authority migration](#s-authority-migration)
+- [Standalone AI review and combined branch](#s-standalone-ai-review)
 
 <a id="s-overview"></a>
 ## Overview

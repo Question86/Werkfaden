@@ -2,18 +2,21 @@
 schema = "kairos-context/v1"
 id = "KAIROS_AGENT_ENTRYPOINT"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
-workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
-route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_AGENT_ENTRYPOINT"
-updated_at = "2026-09-16T20:00:00Z"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_AGENT_ENTRYPOINT"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Fresh-agent entrypoint: bind canonical Memory, start Guardian, perform state Memory preflight before every action, and remain inside the evidence-to-patch-session loop."
 claim_boundary = "This entrypoint starts the operating method; it does not prove live project state, architecture, implementation, Runtime behavior, or completion."
 entities = ["KAIROS_AGENT_ENTRYPOINT", "KAIROS_HYPOTHESIS_TO_PATCH_LOOP", "KAIROS_MEMORY_VERIFICATION_PROTOCOL", "Werkfaden Investigation Guardian"]
 facets = ["entrypoint", "bootstrap", "memory-verification", "guardian", "patch-session"]
 criteria = []
 does_not_answer = ["current project state", "current source bytes", "whether a hypothesis is true"]
+distribution_role = "navigation"
+origin_route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_AGENT_ENTRYPOINT"
+origin_workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 
 [[answers]]
 intent = "orientation"
@@ -24,15 +27,22 @@ target = "s-start"
 intent = "operating_rules"
 question = "What mechanically gates every investigation state and coding transaction?"
 target = "s-guardian"
+
+[[search_contract]]
+query = "How must a fresh agent start work in this workspace?"
+expected = "KAIROS_AGENT_ENTRYPOINT#s-start"
+required_top_k = 5
+
+[refs]
 +++
 # START HERE — FRESH AGENT ENTRYPOINT
 
 ## CONTEXT INDEX
 
-- [`s-start`](#s-start) — Bind exact workspace and canonical Memory authority, then start one Guardian session for the Human problem.
-- [`s-zero-guess`](#s-zero-guess) — Would-be project guesses become Memory/live-authority questions.
-- [`s-guardian`](#s-guardian) — Every state starts with `guard-enter`; every patch transaction belongs to the same proven patch session.
-- [`s-loop`](#s-loop) — Human problem through fresh run remains one closed sequence.
+- [START CONTRACT](#s-start)
+- [ZERO-GUESS ENTRY RULE](#s-zero-guess)
+- [DETERMINISTIC GUARDIAN](#s-guardian)
+- [MANDATORY LOOP](#s-loop)
 
 <a id="s-start"></a>
 ## START CONTRACT

@@ -1,14 +1,62 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_GUARDIAN_AUDIT_HISTORY"
+type = "documentation"
+revision = 1
+state = "ready"
+authority = "architecture_authority"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_GUARDIAN_AUDIT_HISTORY"
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Historical Guardian v1 audit/remediation classification with explicit security and verification non-claims."
+claim_boundary = "Retains the recorded audit design map; it does not establish a current passed regression matrix or current completion of every remedy."
+entities = ["KAIROS", "KAIROS_GUARDIAN_AUDIT_HISTORY"]
+facets = ["framework-documentation", "historical-evidence"]
+criteria = []
+does_not_answer = ["live project state", "unverified current release acceptance"]
+distribution_role = "historical_evidence"
+origin_commit = "6d8d498c62c411ecad9c49e1ab41e2a72b724e56"
+origin_source_sha256 = "f9cf58c13e957ff194b897d60071c539bb52dd436f9ebf3474cfe2241253664e"
+
+[[answers]]
+intent = "historical_evidence"
+question = "How was the historical Guardian v1 audit classified and remediated?"
+target = "s-remediation-rule"
+
+[refs]
+current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|rel:requires|tags:current,authority|src:framework]"
+
+[[search_contract]]
+query = "How was the historical Guardian v1 audit classified and remediated?"
+expected = "KAIROS_GUARDIAN_AUDIT_HISTORY#s-remediation-rule"
+required_top_k = 5
++++
 # Guardian v1 audit remediation map
+
+## CONTEXT INDEX
+
+- [Remediation rule](#s-remediation-rule)
+- [Disposition by audit group](#s-disposition-by-audit-group)
+- [Explicit non-claims](#s-explicit-non-claims)
+
+
+Historical source material captured from commit `6d8d498c62c411ecad9c49e1ab41e2a72b724e56`. Statements about release, rollout, branch or tests below belong to that source epoch. Current operating contracts and verified current receipts own current behavior. This material does not authorize publication or future execution.
 
 This document records how the 100-check Guardian audit was classified and remediated. It is not a score and does not claim that the repository-wide regression matrix has already passed.
 
+<a id="s-remediation-rule"></a>
 ## Remediation rule
+
+> Capsule: Historical remediation distinguishes bounded hardening from replacement at the owning architectural boundary.
 
 - **Principally right → minimal hardening at the existing owner.**
 - **Structurally wrong → replace at the owning architectural boundary.** The displaced v1 source is disabled as a supported surface and retained byte-for-byte under `quarantine/`.
 - **Hostile-process boundary → do not fake an application fix.** Filesystem ACL/service identity and a later native-tool hook remain the owner.
 
+<a id="s-disposition-by-audit-group"></a>
 ## Disposition by audit group
+
+> Capsule: Records audit-group diagnoses and their architectural dispositions for that remediation epoch.
 
 | Audit IDs | Diagnosis | Architectural disposition |
 |---|---|---|
@@ -46,7 +94,10 @@ This document records how the 100-check Guardian audit was classified and remedi
 | 097 | Already correct. | POSTCHECK remains synchronization proof only. |
 | 100 | Structurally missing adversarial matrix. | Focused v2 tests cover state preflight, multi-TX rolling scope, abort/no-consumption, direct engine/control-plane bypass, and KAIROS source-policy gate behavior. These are **not** a substitute for the complete 100-transition adversarial matrix or repository-wide regression suite; release test census must be updated only from an actual full CI run. |
 
+<a id="s-explicit-non-claims"></a>
 ## Explicit non-claims
+
+> Capsule: The recorded Guardian repair does not establish OS isolation or unrestricted-process resistance.
 
 Guardian v2 closes the supported application mutation/source-escalation paths. It does not make an unrestricted same-identity process unable to edit source, SQLite, seals, leases, configuration or Guardian JSON. That stronger authority is filesystem ACL/service identity plus a later native-tool hook.
 

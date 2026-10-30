@@ -2,29 +2,37 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_JEV_REVIEW"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_JEV_REVIEW"
-updated_at = "2026-10-23T23:47:06Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Operate the standalone JEV submission workflow and understand its authority limits."
 claim_boundary = "These instructions do not establish a mandatory AI gate or project approval."
 entities = ["KAIROS", "WERKFADEN_JEV_REVIEW"]
 facets = ["jev", "ai-review", "limitations"]
 criteria = []
 does_not_answer = ["live project approval", "runtime correctness"]
+distribution_role = "current_authority"
+
 [[answers]]
 intent = "ai_review"
 question = "Operate the standalone JEV submission workflow and understand its authority limits."
 target = "s-overview"
-+++
 
+[[search_contract]]
+query = "Operate the standalone JEV submission workflow and understand its authority limits."
+expected = "WERKFADEN_JEV_REVIEW#s-overview"
+required_top_k = 5
+
+[refs]
++++
 # JEV review tools
 
 ## CONTEXT INDEX
 
-- `s-overview` — Run the ported local TypeSafe review tooling and understand its boundaries.
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
 ## Overview

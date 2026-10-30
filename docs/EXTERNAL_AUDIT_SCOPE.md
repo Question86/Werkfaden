@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_EXTERNAL_AUDIT_SCOPE"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_EXTERNAL_AUDIT_SCOPE"
-updated_at = "2026-10-25T18:32:39Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Defines external audit, publication exclusions, reproducible package checks and external-project validation procedure."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_EXTERNAL_AUDIT_SCOPE"]
 facets = ["audit", "release", "reproducibility"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "audit"
@@ -29,16 +30,18 @@ target = "s-explicit-publication-exclusions"
 query = "How should a KAIROS release be externally audited?"
 expected = "KAIROS_EXTERNAL_AUDIT_SCOPE#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # External audit and release-validation scope
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Review the framework from an isolated copy. Do not create audit tasks, reports, databases or
-- [`s-included-surfaces`](#s-included-surfaces) — | Area | Paths |
-- [`s-explicit-publication-exclusions`](#s-explicit-publication-exclusions) — Customer/project source trees, binaries, datasets, result artifacts or domain rules.
-- [`s-reproducible-package-checks`](#s-reproducible-package-checks) — From the package root:
-- [`s-reproducible-external-project-check`](#s-reproducible-external-project-check) — 1. Create a temporary C/C++ project and compiler database.
+- [Overview](#s-overview)
+- [Included surfaces](#s-included-surfaces)
+- [Explicit publication exclusions](#s-explicit-publication-exclusions)
+- [Reproducible package checks](#s-reproducible-package-checks)
+- [Reproducible external-project check](#s-reproducible-external-project-check)
 
 <a id="s-overview"></a>
 ## Overview
@@ -133,4 +136,4 @@ py -B -m kickstart init --project-root <project> --workspace <fresh-workspace> -
 Acceptance is fail-closed. Compiler membership, exact source/header ledgers, include
 selection/ownership, external/managed byte parity, KAIROS database projection and Workshop
 postcheck must agree. Publication additionally requires the cold-distribution exercise recorded
-in `docs/RELEASE_NOTES_0.1.0_ALPHA.md` and an explicit repository-owner release decision.
+in `docs/ARCHIVED_RELEASE_HISTORY.md#s-release-claims` and an explicit repository-owner release decision.

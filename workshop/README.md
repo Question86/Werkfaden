@@ -2,33 +2,36 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP_README"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP_README"
-updated_at = "2026-10-23T23:52:16Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Runtime Sync Workshop entry surface for synchronized code and Markdown changes with mandatory metadata aftercheck before ordinary patch application."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP_README"]
 facets = ["ai-review", "guardian", "workshop", "entry"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "workshop"
 question = "What is the Runtime Sync Workshop?"
 target = "s-overview"
 
-[[search_contract]]
-query = "What is the Runtime Sync Workshop?"
-expected = "KAIROS_WORKSHOP_README#s-overview"
-required_top_k = 1
 [[answers]]
 intent = "ai_review"
 question = "Does Workshop enforce JEV AI approval before Apply?"
 target = "s-standalone-ai-review"
 
+[[search_contract]]
+query = "What is the Runtime Sync Workshop?"
+expected = "KAIROS_WORKSHOP_README#s-overview"
+required_top_k = 1
+
+[refs]
 +++
 # Runtime Sync Workshop
 
@@ -37,6 +40,8 @@ target = "s-standalone-ai-review"
 - `s-standalone-ai-review` â€” Standalone JEV submission, combined Guardian/metadata checks and missing AI enforcement.
 
 - [`s-overview`](#s-overview) â€” This package is a project-neutral, fail-closed synchronizer for a configured source tree,
+- [Overview](#s-overview)
+- [Standalone AI review and combined branch](#s-standalone-ai-review)
 
 <a id="s-overview"></a>
 ## Overview

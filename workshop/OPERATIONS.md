@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP_OPERATIONS"
 type = "documentation"
-revision = 5
+revision = 6
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP_OPERATIONS"
-updated_at = "2026-10-25T16:00:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Operational sequence for ordinary Workshop patches: update source and semantic headers, complete deterministic metadata spot checks, obtain bound clearance, verify and apply before heartbeat postcheck."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_WORKSHOP_OPERATIONS"]
 facets = ["ai-review", "guardian", "workshop", "operations", "transaction", "semantic-context", "metadata-aftercheck", "scratch-retention"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "workshop"
@@ -30,15 +31,17 @@ intent = "scratch_retention"
 question = "Which Workshop scratch artifacts must be retained?"
 target = "s-scratch-retention"
 
-[[search_contract]]
-query = "What is the operational sequence for a Workshop transaction?"
-expected = "KAIROS_WORKSHOP_OPERATIONS#s-overview"
-required_top_k = 1
 [[answers]]
 intent = "ai_review"
 question = "Does Workshop enforce JEV AI approval before Apply?"
 target = "s-standalone-ai-review"
 
+[[search_contract]]
+query = "What is the operational sequence for a Workshop transaction?"
+expected = "KAIROS_WORKSHOP_OPERATIONS#s-overview"
+required_top_k = 1
+
+[refs]
 +++
 # Workshop operations
 
@@ -49,6 +52,10 @@ target = "s-standalone-ai-review"
 - [`s-overview`](#s-overview) â€” Update source and semantic metadata, complete the aftercheck, then verify and apply the bound package.
 - [`s-context-review`](#s-context-review) â€” Review semantic headers and sections before preparing the complete source and document package.
 - [`s-scratch-retention`](#s-scratch-retention) â€” Keep active transactions and recovery evidence; bound disposable experiments without deleting governed knowledge.
+- [Overview](#s-overview)
+- [Context review](#s-context-review)
+- [Scratch retention](#s-scratch-retention)
+- [Standalone AI review and combined branch](#s-standalone-ai-review)
 
 <a id="s-overview"></a>
 ## Overview

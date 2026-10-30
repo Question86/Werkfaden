@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_KNOWN_LIMITATIONS"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_KNOWN_LIMITATIONS"
-updated_at = "2026-10-29T23:00:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Current developer-preview support and refusal boundaries for project intake, structural migration, verification, model integration and licensing."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_KNOWN_LIMITATIONS"]
 facets = ["limitations", "support-boundary", "fail-closed"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "limitations"
@@ -39,17 +40,19 @@ target = "s-verification-boundary"
 query = "What are the current limitations of KAIROS?"
 expected = "KAIROS_KNOWN_LIMITATIONS#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # Known limitations — current developer preview
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The 2026-10-30 technical snapshot is a developer preview. The framework is intended for technically
-- [`s-project-intake-scope`](#s-project-intake-scope) — Bounded static intake covers multiple ecosystems; C-family membership remains compiler-authoritative.
-- [`s-structural-migration-scope`](#s-structural-migration-scope) — Ordinary source/header edits and include-owner changes use the normal Workshop transaction.
-- [`s-verification-boundary`](#s-verification-boundary) — KAIROS verifies synchronization among admitted source/header bytes, Markdown authority,
-- [`s-product-and-model-integration-scope`](#s-product-and-model-integration-scope) — kickstart prompt renders the bounded prompt for an LLM to create the initial
-- [`s-release-and-license-scope`](#s-release-and-license-scope) — This is an alpha/developer-preview release, not 1.0, stable, enterprise-ready, or a safety-
+- [Overview](#s-overview)
+- [Project intake scope](#s-project-intake-scope)
+- [Structural migration scope](#s-structural-migration-scope)
+- [Verification boundary](#s-verification-boundary)
+- [Product and model integration scope](#s-product-and-model-integration-scope)
+- [Release and license scope](#s-release-and-license-scope)
 
 <a id="s-overview"></a>
 ## Overview

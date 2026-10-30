@@ -2,32 +2,57 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_JEV_TOMOGRAPHY"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_JEV_TOMOGRAPHY"
-updated_at = "2026-10-23T23:47:06Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Evidence discipline for atomic JEV propositions and separate sufficiency questions."
 claim_boundary = "This method defines review discipline, not implemented gate coverage or measured probabilities."
 entities = ["KAIROS", "WERKFADEN_JEV_TOMOGRAPHY"]
 facets = ["jev", "ai-review", "limitations"]
 criteria = []
 does_not_answer = ["live project approval", "runtime correctness"]
+distribution_role = "current_authority"
+
 [[answers]]
 intent = "ai_review"
-question = "Evidence discipline for atomic JEV propositions and separate sufficiency questions."
+question = "How does adaptive patch tomography separate atomic propositions and evidence sufficiency?"
 target = "s-overview"
+
+[[search_contract]]
+query = "How does adaptive patch tomography separate atomic propositions and evidence sufficiency?"
+expected = "WERKFADEN_JEV_TOMOGRAPHY#s-overview"
+required_top_k = 5
+
+[refs]
 +++
-
-## CONTEXT INDEX
-
-- `s-overview` — Review method and limits.
-
-<a id="s-overview"></a>
 # Jev Adaptive Patch Tomography
 
-## Purpose
+## CONTEXT INDEX
+- [Overview](#s-overview)
+- [1\. Non-negotiable roles](#s-1-non-negotiable-roles)
+- [2\. Score semantics](#s-2-score-semantics)
+- [3\. Level 0 — the universal patch matrix](#s-3-level-0-the-universal-patch-matrix)
+- [4\. Core expansion loop](#s-4-core-expansion-loop)
+- [5\. KAIROS query generated from a failed Jev proposition](#s-5-kairos-query-generated-from-a-failed-jev-proposition)
+- [6\. Evidence-candidate filtering](#s-6-evidence-candidate-filtering)
+- [7\. Deterministic child generation](#s-7-deterministic-child-generation)
+- [8\. Patch localization children](#s-8-patch-localization-children)
+- [9\. Four-way diagnostic refinement for a failed atomic obligation](#s-9-four-way-diagnostic-refinement-for-a-failed-atomic-obligatio)
+- [10\. Owner localization](#s-10-owner-localization)
+- [11\. Optional optimization for large candidate sets: binary group fan-out](#s-11-optional-optimization-for-large-candidate-sets-binary-group)
+- [12\. Tree node schema](#s-12-tree-node-schema)
+- [13\. Loop / duplication protection](#s-13-loop-duplication-protection)
+- [14\. Stop rules](#s-14-stop-rules)
+- [15\. Output for the main coding LLM](#s-15-output-for-the-main-coding-llm)
+- [16\. The essential feedback loop](#s-16-the-essential-feedback-loop)
+- [17\. Hard prohibitions](#s-17-hard-prohibitions)
+- [18\. Core principle](#s-18-core-principle)
+
+<a id="s-overview"></a>
+## Overview
 
 This contract defines a reusable method for extracting high-resolution patch guidance from Jev even though Jev returns only typed yes/no probabilities and does not generate explanations.
 
@@ -47,9 +72,10 @@ The output is a **diagnostic tree of supported and unsupported propositions** th
 
 \---
 
-# 1\. Non-negotiable roles
+<a id="s-1-non-negotiable-roles"></a>
+## 1\. Non-negotiable roles
 
-## Main coding LLM / Codex
+### Main coding LLM / Codex
 
 The main LLM remains the active investigator and code author.
 
@@ -64,7 +90,7 @@ It:
 
 It does **not** get to treat its own selected evidence as sufficient merely because it selected it.
 
-## KAIROS / Werkfaden
+### KAIROS / Werkfaden
 
 KAIROS/Werkfaden is the passive, queryable project archive and evidence/index layer.
 
@@ -81,7 +107,7 @@ It supplies:
 
 Search/graph/SQLite locate evidence. They do not replace the source that owns a claim.
 
-## Workshop
+### Workshop
 
 Workshop supplies the real candidate mutation boundary.
 
@@ -94,7 +120,7 @@ transactions/TXN\\\_<id>/work/...   = CANDIDATE AFTER
 
 The candidate patch is therefore measured from real bytes, not from an agent-authored patch description.
 
-## Jev
+### Jev
 
 Jev answers only narrow propositions about supplied state.
 
@@ -109,7 +135,8 @@ Jev does not:
 
 \---
 
-# 2\. Score semantics
+<a id="s-2-score-semantics"></a>
+## 2\. Score semantics
 
 Every tomography question MUST be phrased so that **YES is the desired/satisfied state**.
 
@@ -163,7 +190,8 @@ If three things must be checked, ask three questions.
 
 \---
 
-# 3\. Level 0 — the universal patch matrix
+<a id="s-3-level-0-the-universal-patch-matrix"></a>
+## 3\. Level 0 — the universal patch matrix
 
 Every patch attempt begins with the same high-level question matrix.
 
@@ -239,7 +267,8 @@ Every root whose proposition OR evidence-sufficiency gate is below threshold ent
 
 \---
 
-# 4\. Core expansion loop
+<a id="s-4-core-expansion-loop"></a>
+## 4\. Core expansion loop
 
 For every failed/open node `N`:
 
@@ -283,7 +312,8 @@ same question + materially new evidence   = valid re-check
 
 \---
 
-# 5\. KAIROS query generated from a failed Jev proposition
+<a id="s-5-kairos-query-generated-from-a-failed-jev-proposition"></a>
+## 5\. KAIROS query generated from a failed Jev proposition
 
 The failed proposition itself becomes the next retrieval question.
 
@@ -324,7 +354,8 @@ Never treat search rank as evidence strength.
 
 \---
 
-# 6\. Evidence-candidate filtering
+<a id="s-6-evidence-candidate-filtering"></a>
+## 6\. Evidence-candidate filtering
 
 A KAIROS search may return up to dozens of sections/relations/contracts.
 
@@ -348,13 +379,14 @@ The script controls the recursion.
 
 \---
 
-# 7\. Deterministic child generation
+<a id="s-7-deterministic-child-generation"></a>
+## 7\. Deterministic child generation
 
 The script MUST NOT ask a generative LLM to invent the next Jev questions.
 
 Child questions are generated from the **type of retrieved evidence** with fixed templates.
 
-## Contract row
+### Contract row
 
 Given:
 
@@ -370,7 +402,7 @@ Generate:
 Does the candidate satisfy this current project contract for X: S?
 ```
 
-## Relation row
+### Relation row
 
 Given:
 
@@ -385,7 +417,7 @@ Is the candidate consistent with the required current relation
 A --predicate--> B?
 ```
 
-## Artifact row
+### Artifact row
 
 Given:
 
@@ -402,7 +434,7 @@ Does the candidate preserve or correctly implement X's required OP relationship
 with artifact A?
 ```
 
-## Unresolved drift row
+### Unresolved drift row
 
 Generate:
 
@@ -411,7 +443,7 @@ Does the candidate avoid preserving or reintroducing this unresolved drift:
 <summary>?
 ```
 
-## Evidence clause / section
+### Evidence clause / section
 
 When no normalized graph row exists but KAIROS returned a bounded evidence section,
 extract bounded clauses deterministically and ask:
@@ -425,7 +457,8 @@ Do not synthesize a new architectural claim from prose.
 
 \---
 
-# 8\. Patch localization children
+<a id="s-8-patch-localization-children"></a>
+## 8\. Patch localization children
 
 Architecture obligations tell the agent **what** is wrong.
 
@@ -449,7 +482,8 @@ The line/region set must come from the real sealed-live vs Workshop-work compari
 
 \---
 
-# 9\. Four-way diagnostic refinement for a failed atomic obligation
+<a id="s-9-four-way-diagnostic-refinement-for-a-failed-atomic-obligatio"></a>
+## 9\. Four-way diagnostic refinement for a failed atomic obligation
 
 When an atomic architecture/contract obligation remains below threshold, refine it with four separate propositions.
 
@@ -491,7 +525,8 @@ The script may summarize this pattern for the coding LLM, but must preserve all 
 
 \---
 
-# 10\. Owner localization
+<a id="s-10-owner-localization"></a>
+## 10\. Owner localization
 
 If an obligation remains open and KAIROS supplies several possible owners, ask one proposition per owner:
 
@@ -513,7 +548,8 @@ The main LLM must still follow normal KAIROS source-authority and Workshop rules
 
 \---
 
-# 11\. Optional optimization for large candidate sets: binary group fan-out
+<a id="s-11-optional-optimization-for-large-candidate-sets-binary-group"></a>
+## 11\. Optional optimization for large candidate sets: binary group fan-out
 
 When one branch has too many candidate owners/evidence rows to ask individually within the configured resource budget, it MAY group them deterministically. The reference script currently prefers direct batching up to its configured child/node limits; group fan-out is an optional later optimization.
 
@@ -542,7 +578,8 @@ Important:
 
 \---
 
-# 12\. Tree node schema
+<a id="s-12-tree-node-schema"></a>
+## 12\. Tree node schema
 
 Every question becomes a persistent diagnostic node.
 
@@ -573,7 +610,8 @@ Averages destroy the diagnostic information.
 
 \---
 
-# 13\. Loop / duplication protection
+<a id="s-13-loop-duplication-protection"></a>
+## 13\. Loop / duplication protection
 
 The recursive system MUST prevent confidence fishing.
 
@@ -597,11 +635,12 @@ Also deduplicate generated child propositions globally.
 
 \---
 
-# 14\. Stop rules
+<a id="s-14-stop-rules"></a>
+## 14\. Stop rules
 
 A branch stops when any of these becomes true:
 
-## PASS
+### PASS
 
 ```text
 proposition\\\_yes >= threshold
@@ -609,7 +648,7 @@ AND
 evidence\\\_sufficient\\\_for\\\_this\\\_proposition >= threshold
 ```
 
-## No new evidence
+### No new evidence
 
 KAIROS returns no materially new evidence and the same evidence digest would be reused.
 
@@ -621,7 +660,7 @@ STALLED / NOT\\\_DERIVABLE\\\_FROM\\\_CURRENT\\\_EVIDENCE
 
 Do not guess.
 
-## Atomic code leaf reached
+### Atomic code leaf reached
 
 The branch is already bound to:
 
@@ -635,7 +674,7 @@ and additional retrieval yields nothing new.
 
 This is a useful unresolved leaf for Codex.
 
-## Resource guard
+### Resource guard
 
 Stop on configured:
 
@@ -651,7 +690,8 @@ The result must say `LIMIT\\\_REACHED`, never `PASS`.
 
 \---
 
-# 15\. Output for the main coding LLM
+<a id="s-15-output-for-the-main-coding-llm"></a>
+## 15\. Output for the main coding LLM
 
 The primary output is not a wall of probabilities.
 
@@ -703,7 +743,8 @@ Codex/Sol then reasons over this tree and creates the next candidate.
 
 \---
 
-# 16\. The essential feedback loop
+<a id="s-16-the-essential-feedback-loop"></a>
+## 16\. The essential feedback loop
 
 The complete development loop becomes:
 
@@ -773,7 +814,8 @@ tree, and submit the fresh bytes for a new gate.
 
 \---
 
-# 17\. Hard prohibitions
+<a id="s-17-hard-prohibitions"></a>
+## 17\. Hard prohibitions
 
 Never:
 
@@ -791,7 +833,8 @@ Never:
 
 \---
 
-# 18\. Core principle
+<a id="s-18-core-principle"></a>
+## 18\. Core principle
 
 ```text
 Jev does not explain the patch.

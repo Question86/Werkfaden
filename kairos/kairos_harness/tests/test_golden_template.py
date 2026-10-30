@@ -301,13 +301,16 @@ class FrameworkDistributionTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / "source"
         self.source.mkdir()
-        from kairos.golden import _FRAMEWORK_ROOT_FILES, _FRAMEWORK_ROOT_DIRS, _FRAMEWORK_REQUIRED
+        from kairos.golden import _framework_source_entries, _FRAMEWORK_ROOT_DIRS
+        product = Path(__file__).resolve().parents[3]
         for relative in _FRAMEWORK_ROOT_DIRS:
             (self.source / relative).mkdir(parents=True, exist_ok=True)
-        for relative in (*_FRAMEWORK_ROOT_FILES, *_FRAMEWORK_REQUIRED):
-            path = self.source / relative
+        # A complete product fixture includes a real hash-bound database and documents.
+        # Arbitrary placeholder database/Markdown bytes are no longer admissible inputs.
+        for entry in _framework_source_entries(product):
+            path = self.source / entry["path"]
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(("fixture " + relative).encode("utf-8"))
+            shutil.copyfile(product / entry["path"], path)
 
     def export(self, name="candidate"):
         from kairos.golden import build_framework_distribution
@@ -337,6 +340,69 @@ class FrameworkDistributionTests(unittest.TestCase):
         for path in (self.root/"candidate").rglob("*"):
             if path.is_file():
                 self.assertNotEqual(path.read_bytes(), b"private")
+
+
+    def test_headerless_markdown_blocks_export_before_target_creation(self):
+        from kairos.golden import GoldenTemplateError
+        path = self.source / "docs/UNCLASSIFIED.md"
+        path.write_text("# Silent distributed knowledge\n", encoding="utf-8")
+        before = path.read_bytes()
+        with self.assertRaises((GoldenTemplateError, ValueError, RuntimeError)):
+            self.export()
+        self.assertFalse((self.root / "candidate").exists())
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_valid_but_unindexed_markdown_blocks_export(self):
+        from kairos.frontmatter import render_frontmatter
+        from kairos.golden import GoldenTemplateError
+        source = self.source / "docs/CANONICAL_DOCUMENTS.md"
+        parsed = split_frontmatter(source.read_text(encoding="utf-8"))
+        previous_id = parsed.metadata["id"]
+        parsed.metadata["id"] = "TEST_UNINDEXED_DOCUMENT"
+        parsed.metadata["route"] = "KAIROS_FRAMEWORK/TEST_UNINDEXED_DOCUMENT"
+        for contract in parsed.metadata["search_contract"]:
+            contract["expected"] = contract["expected"].replace(previous_id, parsed.metadata["id"])
+        rendered = render_frontmatter(parsed.metadata)
+        if "[refs]" not in rendered:
+            closing = rendered.rindex("\n+++")
+            rendered = rendered[:closing] + "\n\n[refs]" + rendered[closing:]
+        path = self.source / "docs/VALID_UNINDEXED.md"
+        path.write_text(rendered + parsed.body, encoding="utf-8")
+        with self.assertRaises((GoldenTemplateError, ValueError, RuntimeError)):
+            self.export()
+        self.assertFalse((self.root / "candidate").exists())
+
+    def test_unknown_template_is_not_a_header_exemption(self):
+        from kairos.golden import GoldenTemplateError
+        path = self.source / "kairos/kairos_harness/templates/UNKNOWN_TEMPLATE.md"
+        path.write_text("# Placeholder without a reviewed role\n", encoding="utf-8")
+        with self.assertRaises((GoldenTemplateError, ValueError, RuntimeError)):
+            self.export()
+        self.assertFalse((self.root / "candidate").exists())
+
+    def test_known_template_bytes_are_bound_to_the_index_coverage(self):
+        from kairos.golden import GoldenTemplateError
+        path = self.source / "kairos/kairos_harness/templates/TASK_TEMPLATE.md"
+        path.write_bytes(path.read_bytes() + b"\nUnreviewed template change\n")
+        with self.assertRaises(GoldenTemplateError):
+            self.export()
+        self.assertFalse((self.root / "candidate").exists())
+
+    def test_source_role_and_namespace_changes_require_valid_fresh_admission(self):
+        from kairos.frontmatter import render_frontmatter
+        from kairos.golden import GoldenTemplateError
+        path = self.source / "workshop/RECYCLING.md"
+        original = path.read_text(encoding="utf-8")
+        for field, value in (("distribution_role", "unreviewed"),
+                             ("workspace", "FOREIGN_PROJECT")):
+            with self.subTest(field=field):
+                parsed = split_frontmatter(original)
+                parsed.metadata[field] = value
+                path.write_text(render_frontmatter(parsed.metadata) + parsed.body, encoding="utf-8")
+                with self.assertRaises((GoldenTemplateError, ValueError, RuntimeError)):
+                    self.export()
+                self.assertFalse((self.root / "candidate").exists())
+                path.write_text(original, encoding="utf-8")
 
     def test_missing_module_fails_before_target_creation(self):
         from kairos.golden import GoldenTemplateError

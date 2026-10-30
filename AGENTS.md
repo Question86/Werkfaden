@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_RULES"
 type = "documentation"
-revision = 5
+revision = 6
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_RULES"
-updated_at = "2026-10-25T16:00:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_RULES"]
 facets = ["operating-rules", "authority", "bootstrap", "change-discipline", "metadata-aftercheck"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "operating_rules"
@@ -36,9 +37,9 @@ question = "What does KAIROS refuse to infer or bypass?"
 target = "s-fail-closed-boundaries"
 
 [refs]
-bootstrap = "[ref:docs/FRAMEWORK_BOOTSTRAP.md#s-before-project-intake|id:KAIROS_FRAMEWORK_BOOTSTRAP|v:1|rel:requires|tags:bootstrap,retrieval|src:framework]"
-kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-1-project-intent-precedes-code-discovery|id:KAIROS_PROJECT_KICKSTART|v:1|rel:requires|tags:intent,kickstart|src:framework]"
-workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:6|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
+bootstrap = "[ref:docs/FRAMEWORK_BOOTSTRAP.md#s-before-project-intake|id:KAIROS_FRAMEWORK_BOOTSTRAP|v:3|rel:requires|tags:bootstrap,retrieval|src:framework]"
+kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-1-project-intent-precedes-code-discovery|id:KAIROS_PROJECT_KICKSTART|v:3|rel:requires|tags:intent,kickstart|src:framework]"
+workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:7|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
 
 [[search_contract]]
 query = "How must an agent operate KAIROS?"
@@ -49,12 +50,12 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied.
-- [`s-authority-and-placement`](#s-authority-and-placement) — Authoritative claims live in source Markdown and goal contracts. SQLite, routers, search
-- [`s-project-initiation-authority`](#s-project-initiation-authority) — For a fresh external project, Human intent comes first. A reviewed
-- [`s-mandatory-context-loop`](#s-mandatory-context-loop) — Before a project workspace exists, query the immutable framework corpus with kairos search "<question>" and no --workspace; use it to retrieve the governing KAIROS procedure instead of reconstructing rules from the directory tree. Once proj
-- [`s-fail-closed-boundaries`](#s-fail-closed-boundaries) — The harness owns document validation and deterministic promotion. The Workshop is the only
-- [`s-change-discipline`](#s-change-discipline) — Keep source and affected semantic Markdown in the same bounded, reviewed and verified transaction.
+- [Overview](#s-overview)
+- [Authority and placement](#s-authority-and-placement)
+- [Project initiation authority](#s-project-initiation-authority)
+- [Mandatory context loop](#s-mandatory-context-loop)
+- [Fail-closed boundaries](#s-fail-closed-boundaries)
+- [Change discipline](#s-change-discipline)
 
 <a id="s-overview"></a>
 ## Overview

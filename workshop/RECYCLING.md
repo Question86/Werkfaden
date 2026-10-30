@@ -1,11 +1,76 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_TX_RECYCLING"
+type = "documentation"
+revision = 1
+state = "active"
+authority = "operating_contract"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_TX_RECYCLING"
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Native transaction recycling, bounded review, archive-before-compaction and safe recovery under the configured runtime policy."
+claim_boundary = "Defines supported recycling procedure and refusal boundaries; live policy, exact source and verified native receipts own actual transaction state, results and retention clearance."
+entities = ["KAIROS", "KAIROS_TX_RECYCLING"]
+facets = ["recycling", "retention", "paged-review", "recovery", "workspace-administration"]
+criteria = []
+does_not_answer = ["live project state", "current acceptance without verified evidence"]
+distribution_role = "current_authority"
+
+[[answers]]
+intent = "procedure"
+question = "How do I recycle old Workshop transactions safely?"
+target = "s-supported-catch-up-sequence"
+
+[[answers]]
+intent = "procedure"
+question = "How do I review more than 512 changed files without incomplete recycling clearance?"
+target = "s-paginated-review"
+
+[[answers]]
+intent = "procedure"
+question = "How does interrupted transaction compaction resume?"
+target = "s-crash-safety"
+
+[refs]
+workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:dynamic|rel:requires|tags:workshop,authority|src:framework]"
+
+[[search_contract]]
+query = "How do I recycle old Workshop transactions safely?"
+expected = "KAIROS_TX_RECYCLING#s-supported-catch-up-sequence"
+required_top_k = 5
+
+[[search_contract]]
+query = "How do I review more than 512 changed files without incomplete recycling clearance?"
+expected = "KAIROS_TX_RECYCLING#s-paginated-review"
+required_top_k = 5
+
+[[search_contract]]
+query = "How does interrupted transaction compaction resume?"
+expected = "KAIROS_TX_RECYCLING#s-crash-safety"
+required_top_k = 5
++++
 # Workshop TX recycling and legacy backlog recovery
+
+## CONTEXT INDEX
+
+- [Authority and trigger](#s-authority-and-trigger)
+- [Supported catch-up sequence](#s-supported-catch-up-sequence)
+- [Paginated review](#s-paginated-review)
+- [Pre-apply orphans and recoveries](#s-pre-apply-orphans-and-recoveries)
+- [Crash safety](#s-crash-safety)
+- [Documentation contract](#s-documentation-contract)
+- [Still out of scope](#s-still-out-of-scope)
+
 
 Status: opt-in feature. No production workspace is upgraded automatically.
 
+<a id="s-authority-and-trigger"></a>
 ## Authority and trigger
 
-Set `transaction_documents_required=true` and
-`tx_retention_required=true` in the canonical Workshop configuration.
+> Capsule: Configured policy and live Engine admission enforce recycling; derived routing does not replace the gate.
+
+The declared runtime policy sets `transaction_documents_required=true` and
+`tx_retention_required=true` in the canonical Workshop configuration. After seal, change policy only through the native policy migration lifecycle; never edit live configuration to clear a recycling gate.
 `tx_max_materialized=10` is the absolute configured limit; the default
 `tx_recycle_trigger=9` deliberately blocks a **new** checkout when
 nine materialized TX already exist. An existing messy workspace with 11,
@@ -20,7 +85,10 @@ KAIROS's numbered goal/task Loop is NOT incremented when a transaction is
 recycled. The recycling operation sits between patch-session transactions
 under the existing task, and uses its own transaction history.
 
+<a id="s-supported-catch-up-sequence"></a>
 ## Supported catch-up sequence
+
+> Capsule: Inspect, review exact file units, submit evidence and drain only eligible terminal candidates.
 
 From the Workshop entry point, with its canonical `--config`:
 
@@ -61,7 +129,17 @@ processed by running the command again. No destructive "force" shortcut
 is offered. When all remaining TX are protected or unreadable, Checkout
 correctly remains blocked: safe reduction below nine is not always possible.
 
+<a id="s-paginated-review"></a>
+## Paginated review
+
+> Capsule: Hash-bound partial pages preserve progress; only exact full coverage can authorize completed review.
+
+For inventories exceeding512changed file units, inspect deterministic bounded pages with `tx-recycle-inspect <TX-ID> --chunk-index <N> --chunk-size <1..512>`. The native proposal binds one global inventory hash, the page index/range and exact page hash. Submit each completed page using `tx-recycle-submit <TX-ID> --analysis <page.json>`. Partial page receipts preserve searchable progress and grant no completed-review or compaction clearance. After full exact non-overlapping coverage, inspect again without a chunk index and submit the native completion proposal. A changed source/inventory or invalid/missing/overlapping page is refused. Receipt existence and the agent rationale do not prove semantic truth.
+
+<a id="s-pre-apply-orphans-and-recoveries"></a>
 ## Pre-apply orphans and recoveries
+
+> Capsule: Use the owning recovery path and preserve every byte before retiring an eligible orphan.
 
 A missing Workshop lease does **not** prove that a patch was never applied.
 An unleased `CHECKED_OUT`, `PREPARED` or `SHADOW_VERIFIED` TX may be
@@ -78,7 +156,10 @@ vault. The code can be recovered with `tx-rehydrate`, but any reused
 part needs its own fresh validation. There is deliberately no shared
 vault garbage collector in this change.
 
+<a id="s-crash-safety"></a>
 ## Crash safety
+
+> Capsule: Verified complete archives and durable compaction plans precede materialized-byte removal.
 
 Before any working directory is renamed, the Engine preserves and
 rereads every TX file in a SHA-addressed complete manifest, verifies the
@@ -90,7 +171,10 @@ plan. The retention process lock is released by the OS on process exit,
 including crashes. Missing bytes or inconsistent hashes stop only that
 TX and surface a diagnostic.
 
+<a id="s-documentation-contract"></a>
 ## Documentation contract
+
+> Capsule: Retain fixed transaction anchors, exact decision provenance and verified Markdown/SQL parity.
 
 The existing 18 fixed KAIROS section anchors remain in place. The TX
 Markdown describes **what code/approach was planned, what was actually
@@ -107,7 +191,10 @@ report is evidence-attributed agent judgment, not an independently
 verified correctness theorem. Apply and deployment remain distinct
 events.
 
+<a id="s-still-out-of-scope"></a>
 ## Still out of scope
+
+> Capsule: File-level coverage is not semantic correctness, deployed-binary proof or automatic cross-transaction adoption.
 
 Automatic semantic hunk extraction, cross-TX matching, merging code
 into a successor TX, proof-carrying adoption by that successor, and

@@ -4,6 +4,7 @@ from ._core_contract import EngineCoreContract
 
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from .corpus import (
     build_corpus_manifest,
@@ -56,6 +57,7 @@ class CheckoutCore(EngineCoreContract):
             if relative not in admitted_tests or admitted_tests[relative]["owner"] not in normalized_sources:
                 raise WorkshopError("CHECKOUT_TEST_NOT_ADMITTED", f"test requires its configured selected Runtime owner: {relative}")
         created_at = utc_now()
+        attempt_nonce = uuid4().hex
         transaction_id = "TXN_" + package_hash({
             "baseline": manifest["package_sha256"],
             "sources": normalized_sources,
@@ -63,6 +65,7 @@ class CheckoutCore(EngineCoreContract):
             "documents": selected_documents,
             "purpose": purpose.strip(),
             "created_at": created_at,
+            "attempt_nonce": attempt_nonce,
         })[:24]
         root = self._transaction_path(transaction_id)
         if root.exists():
@@ -121,6 +124,7 @@ class CheckoutCore(EngineCoreContract):
                 "transaction_id": transaction_id,
                 "state": "CHECKED_OUT",
                 "created_at": created_at,
+                "attempt_nonce": attempt_nonce,
                 "updated_at": created_at,
                 "deterministic_updated_at": created_at,
                 "purpose": purpose.strip(),

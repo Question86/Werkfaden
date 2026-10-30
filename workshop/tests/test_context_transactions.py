@@ -249,6 +249,51 @@ class ContextTransactionTests(unittest.TestCase):
         self.engine.seal()
         self.database = self.workspace / ".kairos" / "kairos.db"
 
+    def test_same_clock_checkout_attempts_are_distinct_and_preserve_prior_transactions(self):
+        from uuid import UUID
+
+        fixed = "2030-01-01T00:00:00Z"
+        prior = {}
+        with patch("runtime_sync_workshop._core_checkout.utc_now", return_value=fixed), \
+             patch("runtime_sync_workshop._core_checkout.uuid4",
+                   side_effect=[UUID(int=index + 1) for index in range(3)]) as nonce:
+            for attempt in range(3):
+                checkout = self.engine.checkout(["app.py"], documents=(BEHAVIOR,),
+                    purpose="Repeat identical source admission while the clock is fixed")
+                tx = checkout["transaction_id"]
+                state_path = Path(checkout["work_directory"]).parent / "state.json"
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertNotIn(tx, prior)
+                self.assertRegex(tx, r"^TXN_[0-9a-f]{24}$")
+                self.assertEqual(state["created_at"], fixed)
+                self.assertEqual(state["attempt_nonce"], UUID(int=attempt + 1).hex)
+                for state_path, before in prior.values():
+                    self.assertEqual(state_path.read_bytes(), before)
+                self.assertEqual(self.engine.abort(tx)["state"], "ABORTED")
+                prior[tx] = (state_path, state_path.read_bytes())
+                self.assertFalse(self.engine.lease_path.exists())
+        self.assertEqual(nonce.call_count, 3)
+        self.assertEqual((self.project / "app.py").read_bytes(), b"value = 1\n")
+
+    def test_repeated_attempt_nonce_still_refuses_an_existing_transaction(self):
+        from uuid import UUID
+
+        with patch("runtime_sync_workshop._core_checkout.utc_now", return_value="2030-01-01T00:00:00Z"), \
+             patch("runtime_sync_workshop._core_checkout.uuid4", return_value=UUID(int=1)):
+            first = self.engine.checkout(["app.py"], documents=(BEHAVIOR,),
+                purpose="Preserve exact collision refusal despite a repeated entropy value")
+            tx = first["transaction_id"]
+            self.assertEqual(self.engine.abort(tx)["state"], "ABORTED")
+            state_path = Path(first["work_directory"]).parent / "state.json"
+            before = state_path.read_bytes()
+            with self.assertRaises(WorkshopError) as caught:
+                self.engine.checkout(["app.py"], documents=(BEHAVIOR,),
+                    purpose="Preserve exact collision refusal despite a repeated entropy value")
+            self.assertEqual(caught.exception.code, "TRANSACTION_COLLISION")
+            self.assertEqual(state_path.read_bytes(), before)
+            self.assertFalse(self.engine.lease_path.exists())
+            self.assertEqual((self.project / "app.py").read_bytes(), b"value = 1\n")
+
     def _policy_candidate(self):
         profile = "mandatory-runtime/v1"
         plan = self.engine.policy_activation_plan(profile)

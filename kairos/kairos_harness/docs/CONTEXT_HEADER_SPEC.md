@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_CONTEXT_HEADER_SPEC"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_CONTEXT_HEADER_SPEC"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Normative context-header, answer-handle, typed-reference, stable-section, search-contract and resource-bound specification."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_CONTEXT_HEADER_SPEC"]
 facets = ["schema", "context-header", "references", "sections"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "header"
@@ -34,22 +35,24 @@ target = "s-section-contract"
 query = "What metadata must a KAIROS context header contain?"
 expected = "KAIROS_CONTEXT_HEADER_SPEC#s-required-metadata"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS Context Header Specification
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Normative context-header, answer-handle, typed-reference, stable-section, search-contract and resource-bound specification.
-- [`s-purpose`](#s-purpose) — The first model read should answer four questions without scanning the body:
-- [`s-first-window-contract`](#s-first-window-contract) — UTF-8 TOML frontmatter begins at byte zero with +++.
-- [`s-required-metadata`](#s-required-metadata) — Normative context-header, answer-handle, typed-reference, stable-section, search-contract and resource-bound specification.
-- [`s-identity-and-revision-rules`](#s-identity-and-revision-rules) — id is stable across revisions and unique in the workspace.
-- [`s-authority-and-claim-rules`](#s-authority-and-claim-rules) — authority is a controlled routing signal. The allowed values are architecture_authority, diagnostic_record, execution_evidence, goal_authority, implementation_documentation, loop_archive, operating_contract, research_evidence, routing, stat
-- [`s-answer-handles`](#s-answer-handles) — Each answer handle contains:
-- [`s-typed-reference-grammar`](#s-typed-reference-grammar) — paths are workspace-relative and may not escape the workspace;
-- [`s-section-contract`](#s-section-contract) — Use one semantic responsibility per section. Root cause, resolution, regression evidence, limitations, and next query should be separate targets when they answer different intents.
-- [`s-search-contract`](#s-search-contract) — A search contract is executable metadata. Promotion fails when the declared question cannot retrieve its expected section inside required_top_k. This turns metadata quality into a gate rather than a subjective aspiration.
-- [`s-resource-bounds`](#s-resource-bounds) — document source: 2 MiB;
+- [Overview](#s-overview)
+- [Purpose](#s-purpose)
+- [First-window contract](#s-first-window-contract)
+- [Required metadata](#s-required-metadata)
+- [Identity and revision rules](#s-identity-and-revision-rules)
+- [Authority and claim rules](#s-authority-and-claim-rules)
+- [Answer handles](#s-answer-handles)
+- [Typed reference grammar](#s-typed-reference-grammar)
+- [Section contract](#s-section-contract)
+- [Search contract](#s-search-contract)
+- [Resource bounds](#s-resource-bounds)
 
 <a id="s-overview"></a>
 ## Overview

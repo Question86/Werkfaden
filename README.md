@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_README"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_README"
-updated_at = "2026-10-29T23:00:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Human entry surface for installing KAIROS, querying the immutable framework corpus, and starting a separately bound project workspace with exact source authority."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_README"]
 facets = ["entry", "installation", "bootstrap", "kickstart"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "entry"
@@ -34,15 +35,17 @@ target = "s-start-a-real-project"
 query = "How do I get started with KAIROS?"
 expected = "KAIROS_README#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS Framework
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — **Current technical snapshot: 2026-10-30 — developer preview.**
-- [`s-layout`](#s-layout) — | Path | Role |
-- [`s-ask-kairos-how-kairos-works`](#s-ask-kairos-how-kairos-works) — The release ships a hash-verified read-only framework knowledge database. After installing the harness, the ordinary search command works before any project workspace exists:
-- [`s-start-a-real-project`](#s-start-a-real-project) — Review a bounded human contract before read-only detection and explicitly authorized project intake.
+- [Overview](#s-overview)
+- [Layout](#s-layout)
+- [Ask KAIROS how KAIROS works](#s-ask-kairos-how-kairos-works)
+- [Start a real project](#s-start-a-real-project)
 
 <a id="s-overview"></a>
 ## Overview
@@ -142,7 +145,7 @@ Create a fresh external project workspace; use the test commands in
 
 See `docs/PROJECT_KICKSTART.md` for ground-truth and refusal boundaries,
 `docs/WORKSHOP.md` for the synchronized change lifecycle, `docs/KNOWN_LIMITATIONS.md` for the
-current support boundary, and `docs/RELEASE_NOTES_0.1.0_ALPHA2.md` for historical alpha.2 bootstrap evidence. Changes to the governed local-header
+current support boundary, and `docs/ARCHIVED_RELEASE_HISTORY.md#s-release-claims` for historical alpha.2 bootstrap evidence. Changes to the governed local-header
 set use the Workshop's explicit authority-migration commands against an isolated candidate tree.
 Translation-unit membership or compiler-context changes fail closed until a project-specific
 build-authority migration can reproduce the real build configuration; the framework never edits

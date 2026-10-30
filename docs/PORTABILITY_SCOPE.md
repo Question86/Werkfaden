@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_PORTABILITY_SCOPE"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_PORTABILITY_SCOPE"
-updated_at = "2026-10-25T18:32:39Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Defines what the reusable framework package includes, excludes as authority, and requires for portability acceptance."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_PORTABILITY_SCOPE"]
 facets = ["portability", "distribution", "acceptance"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "portability"
@@ -29,15 +30,17 @@ target = "s-not-distributed-as-authority"
 query = "What is included in the portable KAIROS framework?"
 expected = "KAIROS_PORTABILITY_SCOPE#s-included"
 required_top_k = 1
+
+[refs]
 +++
 # Framework portability scope
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — This package is a project-agnostic framework distribution. It must remain separable from
-- [`s-included`](#s-included) — | Module | Included material | Reason |
-- [`s-not-distributed-as-authority`](#s-not-distributed-as-authority) — The package must not rely on or publish a live customer/project source tree, project-bound
-- [`s-portability-acceptance`](#s-portability-acceptance) — Portability is not established by importing the package itself. A release candidate must
+- [Overview](#s-overview)
+- [Included](#s-included)
+- [Not distributed as authority](#s-not-distributed-as-authority)
+- [Portability acceptance](#s-portability-acceptance)
 
 <a id="s-overview"></a>
 ## Overview

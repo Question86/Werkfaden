@@ -1,10 +1,53 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_JEV_APPLY_POLICY"
+type = "documentation"
+revision = 1
+state = "active"
+authority = "operating_contract"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_JEV_APPLY_POLICY"
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Conditional evidence-bound JEV Apply admission, workflow binding and explicit experimental limits."
+claim_boundary = "Defines an explicitly configured policy and its refusal conditions; it is not blanket deployment authority, external review correctness or default project approval."
+entities = ["KAIROS", "KAIROS_JEV_APPLY_POLICY"]
+facets = ["framework-documentation", "current-authority"]
+criteria = []
+does_not_answer = ["live project state", "unverified current release acceptance"]
+distribution_role = "current_authority"
+origin_commit = "6d8d498c62c411ecad9c49e1ab41e2a72b724e56"
+origin_source_sha256 = "b313047a537e6018c06ad03782fc56172ea507795a67f332efd1391b3e92c714"
+
+[[answers]]
+intent = "procedure"
+question = "How does the optional JEV Apply policy bind an exact Workshop candidate?"
+target = "s-correct-usage"
+
+[refs]
+current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|rel:requires|tags:current,authority|src:framework]"
+
+[[search_contract]]
+query = "How does the optional JEV Apply policy bind an exact Workshop candidate?"
+expected = "KAIROS_JEV_APPLY_POLICY#s-correct-usage"
+required_top_k = 5
++++
 # JEV candidate binding: experimental Apply policy
+
+## CONTEXT INDEX
+
+- [Correct usage](#s-correct-usage)
+- [Limitations / not yet secure enough for production release authority](#s-limitations-not-yet-secure-enough-for-production-release-autho)
+- [Transaction lifecycle and retention](#s-transaction-lifecycle-and-retention)
+
 
 This change adds a *conditional* (explicit `jev_apply_required: true`) JEV
 admission check to the ordinary public `WorkshopEngine.apply` path. Existing
 projects remain unchanged until this policy is deliberately enabled.
 
+<a id="s-correct-usage"></a>
 ## Correct usage
+
+> Capsule: Documents explicit review inputs and exact active-transaction submission; an attempt-review file is not approval.
 
 1. Run a fresh TypeSafe attempt review with the exact Workshop candidate.
 2. Run the standalone JEV workflow using an explicit positive and negative
@@ -20,7 +63,10 @@ projects remain unchanged until this policy is deliberately enabled.
    a mismatched Workshop package, empty policies, invalid scores, or a low
    JEV vector. All the existing metadata/shadow/scientific gates remain.
 
+<a id="s-limitations-not-yet-secure-enough-for-production-release-autho"></a>
 ## Limitations / not yet secure enough for production release authority
+
+> Capsule: Local review JSON is not signed provider provenance or independent production release authority.
 
 - The TypeSafe receipt is **not provider-signed**. A local JSON file is not a
   cryptographic proof of response provenance or an independent AI identity.
@@ -37,7 +83,10 @@ projects remain unchanged until this policy is deliberately enabled.
 - Missing historical receipts require new bounded reviews; old JSON must not be
   silently upgraded to approval.
 
+<a id="s-transaction-lifecycle-and-retention"></a>
 ## Transaction lifecycle and retention
+
+> Capsule: Explains separately configured transaction-document and retention obligations; presence alone does not prove activation.
 
 A separate opt-in lifecycle implementation exists on this feature branch:
 

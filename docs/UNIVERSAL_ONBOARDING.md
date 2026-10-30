@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_UNIVERSAL_ONBOARDING"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_UNIVERSAL_ONBOARDING"
-updated_at = "2026-09-09T08:40:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Authoritative zero-prior-context onboarding contract for universal KAIROS intake, initial seal, Workshop-only mutation, and source-set transactions."
 claim_boundary = "This document defines framework procedure and authority boundaries. It does not prove live project state, successful builds, runtime behavior, or project-specific correctness."
 entities = ["KAIROS", "KAIROS_UNIVERSAL_ONBOARDING", "Universal Intake", "Workshop"]
 facets = ["bootstrap", "universal-intake", "workshop", "mutation-boundary", "cold-start"]
 criteria = []
 does_not_answer = ["live project state", "successful application build", "runtime behavior"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "onboarding"
@@ -41,9 +42,9 @@ question = "When must KAIROS clone a project before analysis?"
 target = "s-clone-before-risk"
 
 [refs]
-rules = "[ref:AGENTS.md#s-fail-closed-boundaries|id:KAIROS_FRAMEWORK_RULES|v:2|rel:constrained_by|tags:rules,mutation|src:framework]"
-kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-universal-auto-intake|id:KAIROS_PROJECT_KICKSTART|v:2|rel:implements|tags:kickstart,auto|src:framework]"
-workshop = "[ref:docs/WORKSHOP.md#s-universal-source-set-mutation|id:KAIROS_WORKSHOP|v:2|rel:next|tags:workshop,source-set|src:framework]"
+rules = "[ref:AGENTS.md#s-fail-closed-boundaries|id:KAIROS_FRAMEWORK_RULES|v:6|rel:constrained_by|tags:rules,mutation|src:framework]"
+kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-universal-auto-intake|id:KAIROS_PROJECT_KICKSTART|v:3|rel:implements|tags:kickstart,auto|src:framework]"
+workshop = "[ref:docs/WORKSHOP.md#s-universal-source-set-mutation|id:KAIROS_WORKSHOP|v:7|rel:next|tags:workshop,source-set|src:framework]"
 
 [[search_contract]]
 query = "How do I onboard an arbitrary existing codebase into KAIROS?"
@@ -64,13 +65,13 @@ required_top_k = 1
 
 ## CONTEXT INDEX
 
-- [`s-cold-onboarding`](#s-cold-onboarding) — The complete zero-prior-context path from framework search to a verified first Workshop transaction.
-- [`s-universal-intake`](#s-universal-intake) — Ecosystem detection and normalized initial source authority for static ecosystems plus compiler-backed C-family membership.
-- [`s-single-mutation-boundary`](#s-single-mutation-boundary) — After the initial seal, Workshop transactions are the only mutation path for governed source, build/config authority and governed Markdown.
-- [`s-clone-before-risk`](#s-clone-before-risk) — Any analysis that could mutate the observed project must run on an isolated clone or snapshot.
-- [`s-first-workshop-transaction`](#s-first-workshop-transaction) — Existing-file changes use the normal checkout/prepare/verify/apply lifecycle.
-- [`s-source-set-transactions`](#s-source-set-transactions) — Create, delete and rename use Workshop-owned source-set candidate transactions.
-- [`s-c-family-boundary`](#s-c-family-boundary) — C/C++/CUDA retains compiler-backed membership and stronger build/header authority boundaries.
+- [Cold onboarding](#s-cold-onboarding)
+- [Universal intake](#s-universal-intake)
+- [Single mutation boundary](#s-single-mutation-boundary)
+- [Clone before mutation risk](#s-clone-before-risk)
+- [First Workshop transaction](#s-first-workshop-transaction)
+- [Source-set transactions](#s-source-set-transactions)
+- [C-family authority boundary](#s-c-family-boundary)
 
 <a id="s-cold-onboarding"></a>
 ## Cold onboarding

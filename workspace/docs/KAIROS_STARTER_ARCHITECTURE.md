@@ -2,18 +2,21 @@
 schema = "kairos-context/v1"
 id = "KAIROS_STARTER_ARCHITECTURE"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
-workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
-route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_STARTER_ARCHITECTURE"
-updated_at = "2026-09-07T17:52:05Z"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_STARTER_ARCHITECTURE"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Clean starter self-model for KAIROS authority, content placement, metadata retrieval, loop finalization, and atomic project kickoff."
 claim_boundary = "This document owns starter architecture and placement; live state, task contracts, and promoted evidence own their scoped claims."
 entities = ["KAIROS_STARTER_ARCHITECTURE", "KAIROS", "SQLite FTS5"]
 facets = ["architecture", "content-placement", "database-model", "lifecycle", "project-kickoff"]
 criteria = []
 does_not_answer = ["live project outcome", "task completion"]
+distribution_role = "current_authority"
+origin_route = "KAIROS_FRAMEWORK_CANONICAL_20260907/KAIROS_STARTER_ARCHITECTURE"
+origin_workspace = "KAIROS_FRAMEWORK_CANONICAL_20260907"
 
 [[answers]]
 intent = "architecture"
@@ -36,7 +39,7 @@ question = "How is KAIROS architecture represented in the database?"
 target = "s-database"
 
 [refs]
-contract = "[ref:AGENTS.md#s-operating-loop|id:KAIROS_OPERATING_CONTRACT|v:1|rel:requires|tags:contract,workflow|src:system]"
+contract = "[ref:AGENTS.md#s-mandatory-context-loop|id:KAIROS_FRAMEWORK_RULES|v:6|rel:requires|tags:contract,workflow|src:framework]"
 state = "[ref:current.json|v:dynamic|rel:references|tags:runtime,state|src:system]"
 
 [[search_contract]]
@@ -54,16 +57,18 @@ query = "How do I start a new project from the golden KAIROS template?"
 expected = "KAIROS_STARTER_ARCHITECTURE#s-kickoff"
 required_top_k = 1
 +++
+Framework method scope: concrete project-workspace artifacts are created by reviewed intake. This framework method is governed by the current framework rules; it does not bind the framework checkout as a consumer project.
+
 # KAIROS STARTER ARCHITECTURE
 
 ## CONTEXT INDEX
 
-- [`s-entry`](#s-entry) — Use the operating contract for procedure, live state for current scope, and this self-model for stable architecture.
-- [`s-layers`](#s-layers) — Authoritative documents feed a verified SQLite projection, bounded routers, receipts, archives, and recovery packages.
-- [`s-placement`](#s-placement) — Place each durable claim by epistemic role and connect it with typed workspace-relative references.
-- [`s-database`](#s-database) — SQLite stores artifacts, stable sections, natural-language handles, typed relations, goal coverage, receipts, and governance evidence.
-- [`s-lifecycle`](#s-lifecycle) — Task and goal closure make a loop ready; finalize creates its mandatory archive, receipt, and verified backup.
-- [`s-kickoff`](#s-kickoff) — One Human-triggered project-kickoff contract creates fresh goal and task sources and activates the next loop without reopening the predecess
+- [LLM ENTRY](#s-entry)
+- [SYSTEM LAYERS](#s-layers)
+- [CONTENT PLACEMENT](#s-placement)
+- [DATABASE REPRESENTATION](#s-database)
+- [LOOP LIFECYCLE](#s-lifecycle)
+- [ATOMIC PROJECT KICKOFF](#s-kickoff)
 
 <a id="s-entry"></a>
 ## LLM ENTRY

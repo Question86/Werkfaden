@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_INGESTED_DOCUMENT_SPEC"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_INGESTED_DOCUMENT_SPEC"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Normative transfer format for ingested documents, normalized graph structures, evidence anchors and enforcement/reporting boundaries."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_INGESTED_DOCUMENT_SPEC"]
 facets = ["ingestion", "graph", "evidence", "schema"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "ingestion"
@@ -34,22 +35,24 @@ target = "s-evidence-anchors"
 query = "How does KAIROS ingest an external structured document?"
 expected = "KAIROS_INGESTED_DOCUMENT_SPEC#s-the-two-step-transfer"
 required_top_k = 1
+
+[refs]
 +++
 # KAIROS Ingested Document Specification
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — This is the contract a project fulfils so that its documents, and the normalized graph they
-- [`s-purpose`](#s-purpose) — A project produces one document per unit it describes. Each document is two things at once:
-- [`s-the-two-step-transfer`](#s-the-two-step-transfer) — KAIROS never writes into the project's own tree, and never rewrites a document to fit
-- [`s-origin`](#s-origin) — A document that was authored in another workspace declares that workspace in its header.
-- [`s-header`](#s-header) — The ordinary kairos-context/v1 header applies; see CONTEXT_HEADER_SPEC.md. An ingested
-- [`s-canonical-node-identity`](#s-canonical-node-identity) — The graph joins on exact strings. Choose an identifier in this order and never invent one
-- [`s-evidence-anchors`](#s-evidence-anchors) — Every graph row names the narrowest section that substantiates it. That anchor must exist
-- [`s-optional-a-source-ledger-section`](#s-optional-a-source-ledger-section) — A document may carry a line-numbered copy of the material it describes in its own section.
-- [`s-what-kairos-enforces-and-what-it-only-reports`](#s-what-kairos-enforces-and-what-it-only-reports) — Enforced, fail-closed, because the document is otherwise unusable:
-- [`s-reading-the-graph`](#s-reading-the-graph) — Every response carries its own total, so a truncated answer is visible as truncated rather
-- [`s-bounds`](#s-bounds) — | bound | value | applies to |
+- [Overview](#s-overview)
+- [Purpose](#s-purpose)
+- [The two-step transfer](#s-the-two-step-transfer)
+- [Origin](#s-origin)
+- [Header](#s-header)
+- [Canonical node identity](#s-canonical-node-identity)
+- [Evidence anchors](#s-evidence-anchors)
+- [Optional: a source ledger section](#s-optional-a-source-ledger-section)
+- [What KAIROS enforces, and what it only reports](#s-what-kairos-enforces-and-what-it-only-reports)
+- [Reading the graph](#s-reading-the-graph)
+- [Bounds](#s-bounds)
 
 <a id="s-overview"></a>
 ## Overview

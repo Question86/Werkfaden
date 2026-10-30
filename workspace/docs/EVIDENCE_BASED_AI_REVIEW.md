@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "WERKFADEN_EVIDENCE_BASED_AI_REVIEW"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/WERKFADEN_EVIDENCE_BASED_AI_REVIEW"
-updated_at = "2026-10-25T18:26:33Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Canonical method for atomic, evidence-bound AI review using separate proposition-support and evidence-sufficiency judgments, explicit counterexamples and deterministic delivery gates."
 claim_boundary = "Defines review method and evidence contracts; does not prove model accuracy, independent errors, executed tests, provider attestation, runtime activation or release readiness."
 entities = ["WERKFADEN_EVIDENCE_BASED_AI_REVIEW", "KAIROS", "AI_REVIEW"]
 facets = ["review-method", "atomic-claims", "evidence", "decision-models", "counterexamples"]
 criteria = []
 does_not_answer = ["provider credentials", "consumer architecture", "universal model error rate", "live project approval"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "operating_rules"
@@ -54,19 +55,21 @@ required_top_k = 1
 query = "How are proposition support and evidence sufficiency kept separate?"
 expected = "WERKFADEN_EVIDENCE_BASED_AI_REVIEW#s-two-lanes"
 required_top_k = 3
+
+[refs]
 +++
 # Evidence-Based AI Review
 
 ## CONTEXT INDEX
 
-- [`s-method`](#s-method) — Canonical review procedure.
-- [`s-model-role`](#s-model-role) — Decision models and generative models.
-- [`s-atomicity`](#s-atomicity) — Frozen atomic propositions and neutral questions.
-- [`s-two-lanes`](#s-two-lanes) — Separate support and sufficiency judgments.
-- [`s-evidence`](#s-evidence) — Falsification, coverage and actual execution.
-- [`s-calibration`](#s-calibration) — Error rates, thresholds and applicability.
-- [`s-context`](#s-context) — Bounded requests and overflow.
-- [`s-delivery`](#s-delivery) — Exact approval binding and retained history.
+- [Method](#s-method)
+- [Model role](#s-model-role)
+- [Atomic propositions](#s-atomicity)
+- [Two separate judgments](#s-two-lanes)
+- [Evidence and falsification](#s-evidence)
+- [Calibration and error rates](#s-calibration)
+- [Request boundaries](#s-context)
+- [Delivery binding and references](#s-delivery)
 
 <a id="s-method"></a>
 ## Method

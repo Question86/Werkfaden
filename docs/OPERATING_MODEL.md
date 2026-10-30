@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_OPERATING_MODEL"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_OPERATING_MODEL"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Defines the operating model linking Human intent, bounded context acquisition, governed action, same-heartbeat promotion and verification."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_OPERATING_MODEL"]
 facets = ["operating-model", "workflow", "context"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "operating_model"
@@ -24,12 +25,14 @@ target = "s-overview"
 query = "What is the KAIROS operating model?"
 expected = "KAIROS_OPERATING_MODEL#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # Operating model
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Use the same bounded sequence for every material action:
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
 ## Overview

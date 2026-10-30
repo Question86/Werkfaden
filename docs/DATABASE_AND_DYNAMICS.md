@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_DATABASE_DYNAMICS"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_DATABASE_DYNAMICS"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Explains the derived SQLite projection, dynamic state, freshness and the boundary between source authority and retrieval state."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_DATABASE_DYNAMICS"]
 facets = ["sqlite", "derived-state", "freshness"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "database"
@@ -29,12 +30,14 @@ target = "s-overview"
 query = "What is the role of SQLite in KAIROS?"
 expected = "KAIROS_DATABASE_DYNAMICS#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # Database and dynamics
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — The .kairos/kairos.db file is a derived, verified projection. It stores artifacts, stable
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
 ## Overview

@@ -1,18 +1,75 @@
++++
+schema = "kairos-context/v1"
+id = "KAIROS_PUBLIC_ROLLOUT_HISTORY"
+type = "documentation"
+revision = 1
+state = "ready"
+authority = "architecture_authority"
+workspace = "KAIROS_FRAMEWORK"
+route = "KAIROS_FRAMEWORK/KAIROS_PUBLIC_ROLLOUT_HISTORY"
+updated_at = "2026-10-30T01:33:38Z"
+capsule = "Historical public rollout ledger, identity/link migration and explicit limits on executed outreach."
+claim_boundary = "Records rollout statements from its captured source epoch; it is not current engine authority, current remote state or permission to publish."
+entities = ["KAIROS", "KAIROS_PUBLIC_ROLLOUT_HISTORY"]
+facets = ["framework-documentation", "historical-evidence"]
+criteria = []
+does_not_answer = ["live project state", "unverified current release acceptance"]
+distribution_role = "historical_evidence"
+origin_commit = "6d8d498c62c411ecad9c49e1ab41e2a72b724e56"
+origin_source_sha256 = "25c176af028476b65883b18c56a0b07035faeb8cbb7e32295dc27cd1914a704e"
+
+[[answers]]
+intent = "historical_evidence"
+question = "What does the historical Werkfaden rollout ledger record?"
+target = "s-first-objective"
+
+[refs]
+current_rules = "[ref:AGENTS.md#s-overview|id:KAIROS_FRAMEWORK_RULES|v:dynamic|rel:requires|tags:current,authority|src:framework]"
+
+[[search_contract]]
+query = "What does the historical Werkfaden rollout ledger record?"
+expected = "KAIROS_PUBLIC_ROLLOUT_HISTORY#s-first-objective"
+required_top_k = 5
++++
 # Werkfaden rollout ledger
+
+## CONTEXT INDEX
+
+- [First objective](#s-first-objective)
+- [Implemented in this rollout](#s-implemented-in-this-rollout)
+- [Repository rename completed](#s-repository-rename-completed)
+- [About metadata completed](#s-about-metadata-completed)
+- [Initial observations](#s-initial-observations)
+- [Experiment register](#s-experiment-register)
+- [Founder marketing tasks](#s-founder-marketing-tasks)
+- [Next asset: show the search, not the rename](#s-next-asset-show-the-search-not-the-rename)
+- [Rollout boundaries](#s-rollout-boundaries)
+
+
+Historical source material captured from commit `6d8d498c62c411ecad9c49e1ab41e2a72b724e56`. Statements about release, rollout, branch or tests below belong to that source epoch. Current operating contracts and verified current receipts own current behavior. This material does not authorize publication or future execution.
 
 Owner: Yannick Wende. Mode: public-presentation and adoption work only. No engine, architecture, license or historical release changes are authorized by this ledger.
 
+<a id="s-first-objective"></a>
 ## First objective
+
+> Capsule: Records the original first-use comprehension objective rather than an achieved adoption outcome.
 
 Make the project understandable and test whether an eligible independent developer can reach one useful result without Yannick narrating the repository. The first outcome is a real framework query, then a first verified Workshop transaction on a permitted private project. Stars are a secondary attention signal, not proof of adoption.
 
+<a id="s-implemented-in-this-rollout"></a>
 ## Implemented in this rollout
+
+> Capsule: Lists the assets and boundaries reported for the historical rollout branch.
 
 The branch contains a public GitHub README, a first-use guide, a brand decision with actual search limitations, an evidence ledger, social drafts, a first-use feedback form and a read-only integrity gate. Public claims point to the existing engine release. No new seal is minted by the branding workflow.
 
 The initial presentation commit `d119f5401359f8ae7ee01539efc3785096c456dd` was promoted to the default branch `v3` after the growth integrity gate passed. The engine release remains pinned separately to `v0.1.0-alpha.6`, commit `13db71aa841c7859e68f5728d0c925ea76343e20`.
 
+<a id="s-repository-rename-completed"></a>
 ## Repository rename completed
+
+> Capsule: Records the2026-09-10 repository rename and identity observations, not a fresh remote-state check.
 
 On 2026-09-10 Yannick supplied the new [Question86/Werkfaden](https://github.com/Question86/Werkfaden) address. The GitHub API confirmed `full_name = Question86/Werkfaden` and the unchanged repository ID `1320481505`. The old `Question86/KAIROS-GOLDEN` API route returned `Moved Permanently` to that same ID. Both `v3` and `growth-rollout` were at `d119f5401359f8ae7ee01539efc3785096c456dd` at the start of this link migration.
 
@@ -20,7 +77,10 @@ The follow-up presentation changes replace active repository URLs in the public 
 
 At the rename check, the About description still read `Sealed reusable KAIROS starter with atomic governed project kickoff`, topics were empty and no homepage was set. That historical observation is superseded for description and topics by the completed metadata check below. Domain, trademark and social-handle clearance are not established by a repository rename.
 
+<a id="s-about-metadata-completed"></a>
 ## About metadata completed
+
+> Capsule: Records the2026-09-10 description/topic update and its verification epoch.
 
 On 2026-09-10 Yannick reported that the description and topics had been updated. A subsequent read of the [repository API](https://api.github.com/repos/Question86/Werkfaden) confirmed the same repository ID and this exact public description:
 
@@ -30,13 +90,19 @@ All eight requested topics are present, plus three added by the founder. The ele
 
 Repository rename, public-link migration, About description and topic entry are now completed rollout tasks. Do not ask the founder to repeat them. Website remains empty until a separate public landing exists. This check establishes public metadata, not search-engine indexing, improved ranking, traffic or adoption.
 
+<a id="s-initial-observations"></a>
 ## Initial observations
+
+> Capsule: Historical repository counters are dated baseline observations, never live adoption metrics.
 
 At the initial repository review on 2026-09-10, the API reported one star, zero forks, no topics and no homepage. These are baseline observations, not live counters. The public repository description and root README still used the older KAIROS/alpha.2 framing. The new human landing addresses the entry problem without rewriting framework-admitted Markdown.
 
 The Metricool account reviewed for this rollout had Bluesky `ypswe.bsky.social` connected. No X/LinkedIn publishing connection was shown. Social drafts in this repository are not proof of publication or a scheduled campaign.
 
+<a id="s-experiment-register"></a>
 ## Experiment register
+
+> Capsule: Lists proposed comprehension experiments and their recorded unexecuted status.
 
 | Test | Method | Success criterion | Status |
 |---|---|---|---|
@@ -48,7 +114,10 @@ The Metricool account reviewed for this rollout had Bluesky `ypswe.bsky.social` 
 
 These are exploratory usability trials, not statistically powered A/B studies. Do not declare a winning name or conversion uplift from tiny samples. Record denominators and failures as carefully as successes.
 
+<a id="s-founder-marketing-tasks"></a>
 ## Founder marketing tasks
+
+> Capsule: Preserves the historical marketing frontier; it does not assign current project execution authority.
 
 Completed: repository rename, About description and all requested topics. The canonical public destination is [Question86/Werkfaden](https://github.com/Question86/Werkfaden).
 
@@ -56,7 +125,10 @@ Immediate task: provide one real, sanitized search demonstration, using the focu
 
 Before significant brand spend, complete exact/similar-mark, domain and social-handle checks. No domain or trademark registration is recorded by this rollout. This remaining check does not mean the completed repository settings need to be repeated.
 
+<a id="s-next-asset-show-the-search-not-the-rename"></a>
 ## Next asset: show the search, not the rename
+
+> Capsule: Records a proposed demonstration brief, without promising search or onboarding performance.
 
 Record approximately 30-60 seconds as an editing target, not a promised search or onboarding time. Use an already-ingested, non-sensitive demonstration project that the founder owns and may show. Do not create a new feature for this recording or modify governed files outside Workshop.
 
@@ -68,7 +140,10 @@ Record the engine tag or commit separately with the asset. Keep the original tak
 
 For the first asset, there is no need to also demonstrate intake, a complete source-set migration and a Workshop postcheck. One complete, understandable search example takes priority. No new asset is claimed to exist until it is supplied and inspected.
 
+<a id="s-rollout-boundaries"></a>
 ## Rollout boundaries
+
+> Capsule: Limits the recorded rollout actions and keeps personal branding and publication authority separate.
 
 No paid advertising budget, purchases, legal filing, unsolicited campaign, automatic posting or personal social-account rename has been executed by this rollout. The personal brand remains Yannick Wende. The software's current license is retained, so professional/organizational/educational trials need written permission.
 

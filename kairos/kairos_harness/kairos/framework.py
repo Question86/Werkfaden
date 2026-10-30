@@ -322,6 +322,114 @@ FRAMEWORK_DOCUMENT_PATHS: tuple[str, ...] = (
 )
 
 
+
+# This tuple is a required core floor, never the complete distributed corpus.
+# Coverage is derived from the same bounded product surfaces as the exporter.
+FRAMEWORK_SOURCE_ROLES = frozenset({
+    "current_authority", "navigation", "reference", "historical_evidence",
+    "publication_view", "quarantine_notice",
+})
+FRAMEWORK_RENDER_TEMPLATES = tuple(
+    "kairos/kairos_harness/templates/" + name + "_TEMPLATE.md"
+    for name in ("BUG", "CODE", "DECISION", "REPORT", "RESEARCH", "ROUTER", "TASK")
+)
+_FRAMEWORK_HEADER_FIELDS = frozenset({
+    "schema", "id", "type", "revision", "state", "authority", "workspace", "route",
+    "updated_at", "capsule", "claim_boundary", "entities", "facets", "criteria",
+    "does_not_answer", "answers", "refs", "search_contract", "distribution_role",
+})
+
+
+def framework_markdown_inventory(root: Path) -> list[dict[str, Any]]:
+    """Classify every exported Markdown input; no silent extension or SQL omission."""
+    from .frontmatter import split_frontmatter, validate_metadata
+    from .sections import parse_sections, validate_answer_targets
+    from .golden import _framework_source_entries
+
+    rows = []
+    ids = set()
+    for entry in _framework_source_entries(root):
+        relative = entry["path"]
+        if Path(relative).suffix.lower() != ".md":
+            continue
+        if relative in FRAMEWORK_RENDER_TEMPLATES:
+            rows.append({"path": relative, "sha256": entry["sha256"],
+                         "role": "render_template",
+                         "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates"})
+            continue
+        parsed = split_frontmatter((root / relative).read_text(encoding="utf-8"))
+        metadata = parsed.metadata
+        missing = sorted(_FRAMEWORK_HEADER_FIELDS - metadata.keys())
+        if missing:
+            raise RuntimeError(f"framework Markdown has incomplete metadata: {relative}: {missing}")
+        validate_metadata(metadata)
+        if parsed.header_bytes > 3072:
+            raise RuntimeError(f"framework Markdown header exceeds 3072 bytes: {relative}")
+        if metadata["workspace"] != FRAMEWORK_WORKSPACE_ID or metadata["route"] != (
+                FRAMEWORK_WORKSPACE_ID + "/" + metadata["id"]):
+            raise RuntimeError(f"framework Markdown has foreign namespace: {relative}")
+        if metadata["distribution_role"] not in FRAMEWORK_SOURCE_ROLES:
+            raise RuntimeError(f"framework Markdown has unclassified role: {relative}")
+        sections = parse_sections(parsed.body, header_bytes=parsed.header_bytes, ingested=False)
+        validate_answer_targets(metadata, sections)
+        if not metadata["answers"] or not metadata["search_contract"]:
+            raise RuntimeError(f"framework Markdown lacks retrieval contract: {relative}")
+        if metadata["id"] in ids:
+            raise RuntimeError(f"duplicate framework Markdown identity: {metadata['id']}")
+        ids.add(metadata["id"])
+        rows.append({"path": relative, "sha256": entry["sha256"],
+                     "role": metadata["distribution_role"], "artifact_id": metadata["id"]})
+    if not set(FRAMEWORK_DOCUMENT_PATHS).issubset(
+            row["path"] for row in rows if row["role"] != "render_template"):
+        raise RuntimeError("framework Markdown is missing required core sources")
+    if not set(FRAMEWORK_RENDER_TEMPLATES).issubset(row["path"] for row in rows):
+        raise RuntimeError("framework Markdown is missing required render templates")
+    return rows
+
+
+def framework_markdown_coverage_sha256(rows: list[dict[str, Any]]) -> str:
+    return _sha256_bytes(json.dumps(rows, ensure_ascii=True, sort_keys=True,
+                                   separators=(",", ":")).encode("utf-8"))
+
+
+def _framework_manifest_documents(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate the source/template partition even without a source tree installed."""
+    rows = manifest.get("markdown_coverage")
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("framework manifest lacks complete Markdown coverage")
+    paths = []
+    docs = []
+    templates = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RuntimeError("invalid framework Markdown coverage entry")
+        path = row.get("path")
+        digest = row.get("sha256")
+        if (not isinstance(path, str) or not path.endswith(".md") or "\\" in path
+                or path.startswith("/") or ":" in path or ".." in Path(path).parts
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)):
+            raise RuntimeError("invalid framework Markdown coverage path or hash")
+        paths.append(path)
+        if row.get("role") == "render_template":
+            if (path not in FRAMEWORK_RENDER_TEMPLATES or set(row) != {
+                    "path", "sha256", "role", "catalog"} or row["catalog"] != (
+                    "KAIROS_CANONICAL_DOCUMENTS#s-render-templates")):
+                raise RuntimeError("unclassified framework render template")
+            templates.append(path)
+        elif row.get("role") in FRAMEWORK_SOURCE_ROLES and set(row) == {
+                "path", "sha256", "role", "artifact_id"}:
+            docs.append({k: row[k] for k in ("path", "artifact_id", "sha256")})
+        else:
+            raise RuntimeError("unclassified framework Markdown coverage entry")
+    if (paths != sorted(set(paths)) or set(templates) != set(FRAMEWORK_RENDER_TEMPLATES)
+            or not set(FRAMEWORK_DOCUMENT_PATHS).issubset(row["path"] for row in docs)
+            or manifest.get("markdown_coverage_sha256") != framework_markdown_coverage_sha256(rows)
+            or manifest.get("documents") != docs):
+        raise RuntimeError("framework Markdown coverage and index admission mismatch")
+    return docs
+
+
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -406,23 +514,25 @@ def framework_manifest_path() -> Path:
     return package_directory() / FRAMEWORK_MANIFEST_NAME
 
 
-def load_framework_manifest() -> dict[str, Any]:
-    path = framework_manifest_path()
+def load_framework_manifest(path: Path | None = None) -> dict[str, Any]:
+    path = path if path is not None else framework_manifest_path()
     if not path.is_file():
         raise RuntimeError(
             f"KAIROS framework manifest is missing: {path}. Reinstall the release or rebuild the framework index."
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema") != "kairos-framework-index/v1":
+    if payload.get("schema") != "kairos-framework-index/v2":
         raise RuntimeError(f"unsupported framework manifest schema: {payload.get('schema')!r}")
     if payload.get("workspace_id") != FRAMEWORK_WORKSPACE_ID:
         raise RuntimeError("framework manifest workspace identity mismatch")
     return payload
 
 
-def verify_framework_bundle(*, verify_sources: bool = True) -> dict[str, Any]:
-    manifest = load_framework_manifest()
-    database_path = framework_database_path()
+def verify_framework_bundle(*, verify_sources: bool = True,
+                            source_root: Path | None = None) -> dict[str, Any]:
+    package = source_root / "kairos/kairos_harness/kairos" if source_root is not None else package_directory()
+    manifest = load_framework_manifest(package / FRAMEWORK_MANIFEST_NAME)
+    database_path = package / FRAMEWORK_DATABASE_NAME
     if not database_path.is_file():
         raise RuntimeError(
             f"KAIROS framework database is missing: {database_path}. Reinstall the release or rebuild the framework index."
@@ -441,11 +551,7 @@ def verify_framework_bundle(*, verify_sources: bool = True) -> dict[str, Any]:
             f"{database_content_sha} != {expected_database_content_sha}"
         )
 
-    entries = manifest.get("documents", [])
-    if not isinstance(entries, list) or tuple(
-        entry.get("path") for entry in entries if isinstance(entry, dict)
-    ) != FRAMEWORK_DOCUMENT_PATHS:
-        raise RuntimeError("framework manifest document inventory does not match the executable inventory")
+    entries = _framework_manifest_documents(manifest)
     generated = manifest.get("generated_documents", [])
     definitions = tool_catalog_definitions()
     if not isinstance(generated, list) or len(generated) != len(definitions):
@@ -472,19 +578,29 @@ def verify_framework_bundle(*, verify_sources: bool = True) -> dict[str, Any]:
     connection = sqlite3.connect(f"file:{database_path.resolve().as_posix()}?mode=ro", uri=True)
     try:
         actual_ids = {row[0] for row in connection.execute("SELECT artifact_id FROM artifacts")}
+        source_rows = {row[0]: (row[1], row[2]) for row in connection.execute(
+            "SELECT artifact_id, path, content_sha256 FROM artifacts")
+            if row[0] not in expected_routers}
+        template_catalog_present = connection.execute(
+            "SELECT COUNT(*) FROM sections WHERE artifact_id = ? AND section_id = ?",
+            ("KAIROS_CANONICAL_DOCUMENTS", "s-render-templates")).fetchone()[0] == 1
         router_rows = {artifact_id: connection.execute(
             "SELECT path, content_sha256 FROM artifacts WHERE artifact_id = ?", (artifact_id,)
         ).fetchone() for artifact_id in expected_routers}
     finally:
         connection.close()
     if (len(expected_ids) != len(entries) + len(definitions) or actual_ids != expected_ids
+            or source_rows != {row["artifact_id"]: (row["path"], row["sha256"]) for row in entries}
+            or not template_catalog_present
             or router_rows != expected_routers or manifest.get("document_count") != len(expected_ids)):
         raise RuntimeError("framework database artifact inventory or tool router binding mismatch")
 
     verified_sources = 0
     verified_generated_sources = 0
-    root = source_distribution_root() if verify_sources else None
+    root = (source_root if source_root is not None else source_distribution_root()) if verify_sources else None
     if root is not None:
+        if framework_markdown_inventory(root) != manifest["markdown_coverage"]:
+            raise RuntimeError("framework distributed Markdown coverage differs from the index")
         for entry in entries:
             relative = str(entry["path"])
             source = root / relative

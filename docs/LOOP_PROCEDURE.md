@@ -2,18 +2,19 @@
 schema = "kairos-context/v1"
 id = "KAIROS_LOOP_PROCEDURE"
 type = "documentation"
-revision = 1
+revision = 2
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_LOOP_PROCEDURE"
-updated_at = "2026-09-08T10:30:00Z"
+updated_at = "2026-10-30T01:33:38Z"
 capsule = "Compact Orient-Act-Close-Recover loop procedure for governed KAIROS work."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_LOOP_PROCEDURE"]
 facets = ["loop", "workflow", "recovery"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
+distribution_role = "current_authority"
 
 [[answers]]
 intent = "loop"
@@ -24,12 +25,14 @@ target = "s-overview"
 query = "What is the KAIROS loop procedure?"
 expected = "KAIROS_LOOP_PROCEDURE#s-overview"
 required_top_k = 1
+
+[refs]
 +++
 # Loop procedure
 
 ## CONTEXT INDEX
 
-- [`s-overview`](#s-overview) — Read workspace/current.json, _LOOP_GATE.md, NEURAL_CORTEX.md, and AGENTS.md.
+- [Overview](#s-overview)
 
 <a id="s-overview"></a>
 ## Overview
