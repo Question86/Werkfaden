@@ -67,6 +67,50 @@ class WorkshopEngine(_CoreWorkshopEngine):
         result["plan_sha256"] = sha256_bytes(canonical_json(result).encode("utf-8"))
         return result
 
+    def framework_documents_plan(self, candidate_root: Path) -> dict[str, Any]:
+        from .corpus import (_framework_inspect, framework_machine_candidate,
+                             FRAMEWORK_DOCUMENT_AUTHORITY_SCHEMA)
+        from .util import package_hash
+        self._assert_canonical_control_plane()
+        if self._guardian_enabled() or self.config.raw.get("jev_apply_required", False):
+            raise WorkshopError("FRAMEWORK_GUARDED_SCOPE_UNSUPPORTED", "framework document scope has no Guardian/JEV admission contract")
+        if not all(self.config.raw.get(key) is True for key in ("transaction_documents_required", "tx_retention_required")):
+            raise WorkshopError("FRAMEWORK_RUNTIME_POLICY_REQUIRED", "activate the native mandatory-runtime/v1 policy before framework admission")
+        baseline = self._verified_package(require_seal=True)
+        seal = self.seal_path.read_bytes()
+        result = _framework_inspect(self.config, self.config.codebase_root, "plan",
+                                    {"candidate_root": str(candidate_root)})
+        declaration = dict(schema=FRAMEWORK_DOCUMENT_AUTHORITY_SCHEMA, root=".", namespace="KAIROS_FRAMEWORK",
+                           documents=sorted(row["path"] for row in result["markdown_coverage"]))
+        source, target = framework_machine_candidate(self.config, declaration)
+        result.update(schema="werkfaden-framework-admission-plan/v1",
+                      source_plan_sha256=result.pop("plan_sha256"), declaration=declaration,
+                      baseline_package_sha256=baseline, baseline_seal_sha256=sha256_bytes(seal),
+                      machine_source_hashes={p: sha256_bytes(v) for p, v in source.items()},
+                      machine_target_hashes={p: sha256_bytes(v) for p, v in target.items()})
+        if self.seal_path.read_bytes() != seal or self._verified_package(require_seal=True) != baseline:
+            raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "sealed baseline changed while planning admission")
+        result["plan_sha256"] = package_hash(result)
+        return result
+
+    def framework_documents_checkout(self, candidate_root: Path, *, expected_plan_sha256: str, purpose: str):
+        plan = self.framework_documents_plan(candidate_root)
+        if plan["plan_sha256"] != expected_plan_sha256:
+            raise WorkshopError("FRAMEWORK_PLAN_CHANGED", "reviewed framework admission plan is no longer current")
+        owner = "workshop/src/runtime_sync_workshop/corpus.py"
+        if owner not in self.config.raw.get("source_ecosystems", {}):
+            raise WorkshopError("FRAMEWORK_SELF_MAINTENANCE_REQUIRED", "this route owns framework self-maintenance, not consumer project memory")
+        if getattr(self, "_framework_doc_request", None) is not None:
+            raise WorkshopError("FRAMEWORK_CHECKOUT_NESTED", "nested framework checkout is forbidden")
+        self._framework_doc_request = {**plan, "candidate_root": str(candidate_root)}
+        try:
+            result = self.checkout([owner], purpose=purpose)
+            result["framework_directory"] = str(Path(result["work_directory"]) / "framework")
+            result["framework_review"] = str(Path(result["work_directory"]).parent / "review/framework_review.json")
+            return result
+        finally:
+            self._framework_doc_request = None
+
     def policy_checkout(self, profile: str, *, expected_plan_sha256: str, purpose: str) -> dict[str, Any]:
         return RuntimePolicyTransaction(self).checkout(profile, expected_plan_sha256=expected_plan_sha256, purpose=purpose)
 
@@ -298,6 +342,8 @@ class WorkshopEngine(_CoreWorkshopEngine):
         return result
 
     def checkout(self, sources: Iterable[str], *, purpose: str, tests: Iterable[str] = (), documents: Iterable[str] = (), guardian_id: str | None = None, guardian_state_ticket: str | None = None) -> dict[str, Any]:
+        if self.config.raw.get("framework_documents") is not None and (self._guardian_enabled() or self.config.raw.get("jev_apply_required", False)):
+            raise WorkshopError("FRAMEWORK_GUARDED_SCOPE_UNSUPPORTED", "framework projection has no Guardian/JEV source-scope contract")
         document_list = list(documents)
         if document_list and (self._guardian_enabled() or guardian_id):
             raise WorkshopError("GUARDIAN_CONTEXT_DOCUMENTS_UNSUPPORTED", "Guardian v2 scope does not authorize normal-transaction context documents; use a separately proven auxiliary transaction")

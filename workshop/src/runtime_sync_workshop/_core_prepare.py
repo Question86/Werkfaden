@@ -485,6 +485,8 @@ class PrepareCore(EngineCoreContract):
                 state.pop(key, None)
             self._save_transaction(root, state, event="VERIFICATION_REOPENED")
         baseline_manifest = read_json(root / "baseline" / "manifest.json")
+        from .corpus import framework_projection_reopen
+        framework_projection_reopen(root, state)
         self._assert_live_baseline(state)
         reviews = self._review_map(root, state)
         review_blockers: list[dict[str, Any]] = []
@@ -608,8 +610,6 @@ class PrepareCore(EngineCoreContract):
                 state["state"] = "AWAITING_METADATA_REVIEW"
                 self._save_transaction(root, state, event="CONTEXT_REVIEW_REQUIRED", details=exc.details)
             raise
-        if not any(row["changed"] for row in change_rows) and not state.get("changed_documents"):
-            raise WorkshopError("TRANSACTION_NO_CHANGES", "prepare found no source, header, or semantic document changes")
         try:
             metadata_aftercheck = self.metadata_gate.validate(root, state)
         except WorkshopError as exc:
@@ -644,6 +644,12 @@ class PrepareCore(EngineCoreContract):
             baseline_manifest,
         )
         state["document_changes"] = document_changes
+        from .corpus import framework_projection_prepare
+        framework_projection_prepare(self.config, root, state)
+        frame = state.get("framework_projection") or {}
+        if (not any(row["changed"] for row in change_rows) and not state.get("changed_documents")
+                and not frame.get("changes") and not frame.get("machine_targets")):
+            raise WorkshopError("TRANSACTION_NO_CHANGES", "prepare found no source, header, or semantic document changes")
         state["prepared_work_package_sha256"] = transaction_work_manifest(self.config, root, state)["package_sha256"]
         state["state"] = "PREPARED"
         self._save_transaction(root, state, event="PREPARE_COMPLETED", details=change_rows)

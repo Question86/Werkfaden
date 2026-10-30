@@ -142,6 +142,15 @@ class StateCore(EngineCoreContract):
             objects[f"machine-authority:{relative}"] = self._store_object(
                 (self.config.machine_root / relative).read_bytes()
             )
+        framework = manifest["authority"].get("framework_documents")
+        if framework is not None:
+            from .corpus import _policy_authority_bytes
+            for row in [*framework["documents"], *framework["projection_files"].values()]:
+                relative = row["path"]
+                raw = _policy_authority_bytes(self.config.codebase_root / relative)
+                if sha256_bytes(raw) != row["sha256"]:
+                    raise WorkshopError("FRAMEWORK_MIRROR_DRIFT", "framework bytes changed before exact mirror capture")
+                objects[f"framework:{relative}"] = self._store_object(raw)
         snapshot = self.config.state_directory / f".snapshot-{manifest['package_sha256'][:16]}-{os.getpid()}.db"
         snapshot.unlink(missing_ok=True)
         try:

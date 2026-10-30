@@ -198,7 +198,34 @@ def inventory(engine: Any, transaction_id: str, *, persist: bool = True) -> dict
         raise WorkshopError("TX_RECYCLING_WORK_MISSING", "transaction has no materialized candidate to inspect")
     work = _files(work_root)
     baseline = _files(root / "baseline")
-    source_candidates = set(work)
+    framework_paths: set[str] = set()
+    if "framework_projection" in state:
+        from .corpus import _framework_scope
+        scope = _framework_scope(root, state)
+        expected = {"framework/" + row["path"]: row for row in scope["baseline_product"]}
+        observed = {name for name in baseline if name.startswith("framework/")}
+        if observed != set(expected) or any(
+            _sha_file(baseline[name]) != row["sha256"]
+            or baseline[name].stat().st_size != row["size"]
+            for name, row in expected.items()
+        ):
+            raise WorkshopError("FRAMEWORK_RECYCLING_BASELINE_DRIFT",
+                                "framework recycling requires its exact complete frozen baseline")
+        framework_paths.update(expected)
+        machine = {name.removeprefix("framework-machine/"): path for name, path in baseline.items()
+                   if name.startswith("framework-machine/")}
+        if set(machine) != set(scope["baseline_machine"]):
+            raise WorkshopError("FRAMEWORK_RECYCLING_BASELINE_DRIFT",
+                                "framework machine baseline membership changed")
+        for name, digest in scope["baseline_machine"].items():
+            preimage = machine[name]
+            alias = "machine/" + name
+            if (_sha_file(preimage) != digest
+                    or (alias in baseline and _sha_file(baseline[alias]) != digest)):
+                raise WorkshopError("FRAMEWORK_RECYCLING_BASELINE_DRIFT",
+                                    "framework machine baseline changed or conflicts with another owner")
+            baseline[alias] = preimage
+    source_candidates = set(work) | framework_paths
     # Include missing Work files when the baseline had an ordinary source or
     # governed blueprint; exclude baseline-specific manifests and SQLite images.
     for relative in baseline:

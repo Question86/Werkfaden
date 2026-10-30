@@ -2,12 +2,12 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_RULES"
 type = "documentation"
-revision = 6
+revision = 7
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_RULES"
-updated_at = "2026-10-30T01:33:38Z"
+updated_at = "2026-10-30T19:18:31Z"
 capsule = "Binding operating rules for KAIROS authority, retrieval-first context acquisition, and mandatory metadata aftercheck before ordinary Workshop source patches can be applied."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_RULES"]
@@ -39,7 +39,7 @@ target = "s-fail-closed-boundaries"
 [refs]
 bootstrap = "[ref:docs/FRAMEWORK_BOOTSTRAP.md#s-before-project-intake|id:KAIROS_FRAMEWORK_BOOTSTRAP|v:3|rel:requires|tags:bootstrap,retrieval|src:framework]"
 kickstart = "[ref:docs/PROJECT_KICKSTART.md#s-1-project-intent-precedes-code-discovery|id:KAIROS_PROJECT_KICKSTART|v:3|rel:requires|tags:intent,kickstart|src:framework]"
-workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:7|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
+workshop = "[ref:docs/WORKSHOP.md#s-overview|id:KAIROS_WORKSHOP|v:8|rel:requires|tags:workshop,mutation,metadata-aftercheck|src:framework]"
 
 [[search_contract]]
 query = "How must an agent operate KAIROS?"

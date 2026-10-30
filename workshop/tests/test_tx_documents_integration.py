@@ -4539,7 +4539,9 @@ with patch.object(owner._CoreWorkshopEngine, '_save_transaction', side_effect=la
                     rows.append((relative, node.name, "direct-state:" + event_arg.value))
         self.assertFalse(states - set(PHASES), f"Unmapped persisted transition states: {sorted(states - set(PHASES))}")
         fingerprint = hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
-        self.assertEqual(fingerprint, "62114fedebfbfa8b3ef3281d07b154b9ffdb3d5867a3dcb3f021a1091d942791",
+        # Reviewed 102 sites: the previous 98 plus framework heartbeat and
+        # exact-target forward/verified-heartbeat/preimage-rollback recovery.
+        self.assertEqual(fingerprint, "5fe34f5a4a3868a9f7a733afc172ae975eb83853ea9cac58a16f9d430a1a4f0f",
                          f"Authoritative TX event writers changed; review each new event/type and update the inventory evidence: {rows}")
 
     def _assert_event_inventory_rejects_new_module(

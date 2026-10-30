@@ -2,12 +2,12 @@
 schema = "kairos-context/v1"
 id = "KAIROS_ARCHIVED_RELEASE_HISTORY"
 type = "documentation"
-revision = 1
+revision = 2
 state = "ready"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_ARCHIVED_RELEASE_HISTORY"
-updated_at = "2026-10-30T01:33:38Z"
+updated_at = "2026-10-30T16:16:00Z"
 capsule = "Historical alpha release claims, obsolete v3 development rules and retired workflow consumers with exact recoverable source identities."
 claim_boundary = "Owns synthesized release/development history from eight Markdown documents and ten retired workflow definitions. It grants no current execution, setup, branch, publication or acceptance authority."
 entities = ["KAIROS", "KAIROS_ARCHIVED_RELEASE_HISTORY"]
@@ -30,6 +30,16 @@ target = "s-obsolete-development-authority"
 intent = "historical_evidence"
 question = "Why were the old alpha and v3 release workflows retired from the neutral preview?"
 target = "s-retired-workflow-consumers"
+
+[[answers]]
+intent = "historical_evidence"
+question = "Where are the historical alpha release notes archived?"
+target = "s-release-claims"
+
+[[search_contract]]
+query = "Where are the historical alpha release notes archived?"
+expected = "KAIROS_ARCHIVED_RELEASE_HISTORY#s-release-claims"
+required_top_k = 1
 
 [refs]
 current_onboarding = "[ref:docs/UNIVERSAL_ONBOARDING.md#s-cold-onboarding|id:KAIROS_UNIVERSAL_ONBOARDING|v:dynamic|rel:requires|tags:current,onboarding|src:framework]"

@@ -103,6 +103,14 @@ def _json(value: Any, limit: int | None = 8000) -> str:
     return "\n" + fence + ("text" if truncated else "json") + "\n" + raw + "\n" + fence
 
 
+def _literal_text(value: Any) -> str:
+    """Preserve declared prose exactly without granting it Markdown authority."""
+    raw = str(value)
+    longest = max((len(match.group()) for match in re.finditer(r"`+", raw)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "\n" + fence + "text\n" + raw + "\n" + fence
+
+
 def _event_obligations(transaction: dict[str, Any]) -> str:
     """Retain every identity without duplicating full replay endpoint payloads."""
     history = [{k: event.get(k) for k in ("sequence", "event_id", "event", "phase", "previous_event_id")}
@@ -197,6 +205,8 @@ def render_transaction_document(
     # Budget the serialized UTF-8 excerpt, including TOML/JSON escaping.
     # The complete declared purpose remains in s-purpose and s-execution.
     purpose_excerpt = purpose[:64]
+    if re.search(r"(?i)(?:file://|(?<![A-Za-z0-9_])[A-Z]:[\\/]|\[ref:|\]\(|[`\r\n])", purpose_excerpt):
+        purpose_excerpt = "Declared purpose retained in literal evidence"
     while len(json.dumps(purpose_excerpt, ensure_ascii=False).encode("utf-8")) > 66:
         purpose_excerpt = purpose_excerpt[:-1]
     history = transaction.get("historical_scope") or {}
@@ -250,8 +260,8 @@ def render_transaction_document(
         for row in decisions if row.get("disposition") == "REJECT_FOR_REUSE"
     )[:3000]
     content = {
-        "s-purpose": "- Declared purpose: " + purpose + "\n- Actual state: " + status
-                     + "\n- Recycling intent: " + str(recycle.get("planned_approach") or "unreviewed"),
+        "s-purpose": "- Declared purpose: " + _literal_text(purpose) + "\n- Actual state: " + status
+                     + "\n- Recycling intent: " + _literal_text(recycle.get("planned_approach") or "unreviewed"),
         "s-mapping": "- Selected source paths: " + _json(transaction.get("sources", []), 1000)
                      + "\n- Baseline package SHA-256: " + str(transaction.get("baseline_package_sha256") or "none"),
         "s-drift": ("Historical lookup: HISTORICAL_UNRESOLVED/" + transaction_id
@@ -263,12 +273,14 @@ def render_transaction_document(
         "s-symbols": "Selected files (not a verified symbol inventory): "
                      + _json(transaction.get("sources", []), 1000),
         "s-inputs": "- Dependent tests: " + _json(transaction.get("dependent_tests", []), 1000)
-                    + "\n- Selected documents: " + _json(transaction.get("documents", []), 1000),
+                    + "\n- Selected documents: " + _json(transaction.get("documents", []), 1000)
+                    + "\n- Framework namespace: " + ("KAIROS_FRAMEWORK (separate projection)" if transaction.get("framework_projection") else "none")
+                    + "\n- Framework document/index changes: " + _json((transaction.get("framework_projection") or {}).get("changes", []), 6000),
         "s-preconditions": "Only explicitly recorded preconditions and evidence may be cited. Missing proof is not a pass.",
         "s-structures": "none; consult the actual implementation blueprints",
         "s-constants": "none",
         "s-primitives": "none",
-        "s-execution": attempt + "\n\nAtomic dispositions (overview):\n" + summary
+        "s-execution": _literal_text(attempt) + "\n\nAtomic dispositions (overview):\n" + _literal_text(summary)
                        + "\n\nOther declared notes:\n" + _json((transaction.get("transaction_notes") or [])[-30:], 6000)
                        + "\n\nRecent machine events:\n" + _json((transaction.get("journal") or [])[-8:], 4000)
                        + _event_obligations(transaction),
@@ -280,8 +292,8 @@ def render_transaction_document(
                     + "\n- Compaction: " + _json(transaction.get("compaction") or "none", 1400)
                     + "\n- Terminal receipt: " + _json({key: value for key, value in (transaction.get("terminal_receipt") or {}).items() if key != "payload"} or "none", 1400),
         "s-failures": "- Recorded failure: " + _json(transaction.get("failure") or "none", 1400)
-                      + "\n- Outcome rationale: " + str(recycle.get("outcome_reason") or "not yet reviewed")
-                      + "\n- Rejected code or approaches:\n" + (rejected or "none"),
+                      + "\n- Outcome rationale: " + _literal_text(recycle.get("outcome_reason") or "not yet reviewed")
+                      + "\n- Rejected code or approaches:\n" + _literal_text(rejected or "none"),
         "s-determinism": "- Prepared package: " + str(transaction.get("prepared_work_package_sha256") or "none")
                          + "\n- Verified package: " + str(transaction.get("verified_work_package_sha256") or "none")
                          + "\n- Recycling inventory SHA-256: " + str(recycle.get("inventory_sha256") or "none")

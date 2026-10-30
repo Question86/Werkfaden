@@ -452,6 +452,12 @@ class RecoveryCore(EngineCoreContract):
     def recover(self, transaction_id: str) -> dict[str, Any]:
         root, state = self._load_transaction(transaction_id)
         self._require_lease(transaction_id)
+        if state.get("framework_projection"):
+            from .corpus import framework_projection_recover
+            recovered = framework_projection_recover(self, root, state)
+            if recovered is not None:
+                return recovered
+            root, state = self._load_transaction(transaction_id)
         if state["state"] != "RECOVERY_REQUIRED":
             raise WorkshopError("TRANSACTION_STATE_INVALID", f"recover requires RECOVERY_REQUIRED, found {state['state']}")
         post = build_corpus_manifest(self.config)
@@ -524,6 +530,8 @@ class RecoveryCore(EngineCoreContract):
             if (self.config.machine_root / relative).read_bytes() != (root / "work" / "machine" / relative).read_bytes():
                 raise WorkshopError("RECOVERY_STILL_BLOCKED", f"live machine authority differs from transaction result: {relative}")
         self.context_documents.postcheck(root, state)
+        from .corpus import framework_projection_postcheck
+        framework_projection_postcheck(self.config, root, state)
         mirror = self._mirror(post, documents=state.get("documents", []))
         seal = {
             "schema": "runtime-sync-seal/v1",
@@ -543,6 +551,8 @@ class RecoveryCore(EngineCoreContract):
         receipt = {"schema": "runtime-sync-recovery/v1", "transaction_id": transaction_id,
                    "state": "POSTCHECK_VERIFIED", "package_sha256": post["package_sha256"],
                    "postcheck_package_sha256": post["package_sha256"]}
+        if state.get("framework_projection"):
+            receipt["framework_heartbeat"] = state["framework_recovery_heartbeat"]
         state["postcheck_receipt_payload"] = receipt
         self._save_transaction(root, state, event="RECOVERY_POSTCHECK_VERIFIED")
         return receipt

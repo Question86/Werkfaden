@@ -16,6 +16,51 @@ from kairos.transaction_document import (
 
 
 class TransactionDocumentTests(unittest.TestCase):
+    def test_declared_paths_references_and_fences_remain_exact_literal_data(self):
+        import json
+        import re
+        from kairos.health import ABSOLUTE_FILE_REFERENCE
+        from kairos.markdown import mask_markdown_code
+        text = (r"Recorded physical location Q:\isolated\candidate" +
+                "\n``````\n[ref:missing.md#s-no|id:MISSING|v:1|rel:uses|tags:test|src:fixture]\n" +
+                "[unsafe](file:///outside/evidence)\n## Injected section\n``````")
+        decisions = [{"unit_id": "FILE_CHANGE_" + "a" * 32, "path": "code.py",
+                      "disposition": "REJECT_FOR_REUSE", "reason": text}]
+        tx = {"transaction_id": "TXN_" + "a" * 24, "state": "POSTCHECK_VERIFIED",
+              "purpose": text, "recycling": {"status": "REVIEWED",
+                  "analysis_sha256": "b" * 64, "inventory_sha256": "c" * 64,
+                  "planned_approach": text, "attempted_approach": text,
+                  "outcome_reason": text, "decisions": decisions}}
+        document = render_transaction_document(transaction=tx, workspace_id="KAIROS_TEST",
+            goal_id="GOAL_KAIROS_001", milestone_id="MILESTONE_KAIROS_01", task_id="TASK_0001", loop=1)
+        parsed = split_frontmatter(document)
+        sections = parse_sections(parsed.body, header_bytes=parsed.header_bytes)
+        self.assertEqual([part.section_id for part in sections], [row[0] for row in SECTION_SPECS])
+        validate_answer_targets(parsed.metadata, sections)
+        self.assertIn(text, parsed.body)
+        masked = mask_markdown_code(document)
+        self.assertFalse(ABSOLUTE_FILE_REFERENCE.search(masked))
+        self.assertNotIn("[ref:missing", masked)
+        self.assertNotIn("Injected section", masked)
+        graph = next(part.body for part in sections if part.section_id == "s-graph-metadata")
+        payload = json.loads(re.search(r"(?ms)^```json\n(.*?)^```", graph).group(1))
+        self.assertEqual(payload["decisions"], decisions)
+        self.assertEqual(payload["analysis_sha256"], "b" * 64)
+
+    def test_literal_purpose_caption_keeps_exact_full_body_and_safe_header(self):
+        from kairos.health import ABSOLUTE_FILE_REFERENCE
+        from kairos.markdown import mask_markdown_code
+        for purpose in [r"Inspect D:\external\file.py", "Inspect file:///external/file.py",
+                        "Inspect [ref:missing.md#s-no|id:MISSING|v:1|rel:uses|tags:test|src:fixture]"]:
+            with self.subTest(purpose=purpose):
+                document = render_transaction_document(transaction={
+                    "transaction_id": "TXN_" + "b" * 24, "state": "ABORTED", "purpose": purpose},
+                    workspace_id="KAIROS_TEST", goal_id=None, milestone_id=None, task_id=None, loop=None)
+                parsed = split_frontmatter(document)
+                self.assertIn(purpose, parsed.body)
+                self.assertNotIn(purpose, parsed.metadata["capsule"])
+                self.assertFalse(ABSOLUTE_FILE_REFERENCE.search(mask_markdown_code(document)))
+
     def test_search_contract_questions_match_exact_answer_handles(self):
         for state in ("CHECKED_OUT", "ABORTED", "POSTCHECK_VERIFIED"):
             with self.subTest(state=state):

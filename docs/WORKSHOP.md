@@ -2,16 +2,16 @@
 schema = "kairos-context/v1"
 id = "KAIROS_WORKSHOP"
 type = "documentation"
-revision = 7
+revision = 8
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_WORKSHOP"
-updated_at = "2026-10-30T01:33:38Z"
-capsule = "Source and Markdown stay together through semantic afterchecks, shadow verification, Apply, heartbeat and postcheck."
+updated_at = "2026-10-30T16:16:00Z"
+capsule = "Source and Markdown stay together through semantic afterchecks, verification and same-heartbeat Apply; explicit framework self-maintenance includes its separate immutable index."
 claim_boundary = "Procedure only; source, receipts and project evidence own state and outcomes."
 entities = ["KAIROS", "KAIROS_WORKSHOP"]
-facets = ["ai-review", "guardian", "workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration"]
+facets = ["ai-review", "guardian", "workshop", "transaction", "semantic-context", "metadata-aftercheck", "source-set", "topology", "authority-migration", "framework-document-authority"]
 criteria = []
 does_not_answer = ["live project state", "project-specific execution outcome"]
 distribution_role = "current_authority"
@@ -66,27 +66,30 @@ query = "How must I check metadata before applying a source patch?"
 expected = "KAIROS_WORKSHOP#s-metadata-aftercheck"
 required_top_k = 1
 
+[[answers]]
+intent = "framework_documents"
+question = "How do I admit and maintain framework Markdown and its separate search database through Workshop?"
+target = "s-framework-document-authority"
+
+[[search_contract]]
+query = "How do I admit and maintain framework Markdown and its separate search database through Workshop?"
+expected = "KAIROS_WORKSHOP#s-framework-document-authority"
+required_top_k = 1
+
 [refs]
 +++
 # Workshop module
 
 ## CONTEXT INDEX
 
-- `s-standalone-ai-review` â€” JEV diagnostic by default and opt-in ordinary Apply admission; no universal AI or deployment approval.
-
-- [`s-overview`](#s-overview) â€” The Workshop synchronizes governed source, implementation documents and reviewed Markdown context through one verified package.
-- [`s-semantic-context-transactions`](#s-semantic-context-transactions) â€” A code patch includes its affected semantic Markdown before verification and applies that complete package before heartbeat promotion.
-- [`s-metadata-aftercheck`](#s-metadata-aftercheck) â€” Every ordinary code patch requires changed semantic headers, field-by-field review and bound source/document spot checks before apply.
-- [`s-header-and-topology-behavior`](#s-header-and-topology-behavior) â€” Header-only project records are valid Workshop checkout targets and can be changed through
-- [`s-universal-source-set-mutation`](#s-universal-source-set-mutation) â€” Create, delete and rename of static-ecosystem source files use a separate candidate migration.
-- [`s-authority-migration`](#s-authority-migration) â€” authority-checkout requires an isolated candidate project tree plus its compile_commands.json
 - [Overview](#s-overview)
-- [Semantic context transactions](#s-semantic-context-transactions)
-- [Mandatory metadata aftercheck](#s-metadata-aftercheck)
-- [Header and topology behavior](#s-header-and-topology-behavior)
-- [Universal static source-set mutation](#s-universal-source-set-mutation)
+- [Semantic context](#s-semantic-context-transactions)
+- [Metadata aftercheck](#s-metadata-aftercheck)
+- [Header and topology](#s-header-and-topology-behavior)
+- [Source-set mutation](#s-universal-source-set-mutation)
 - [Authority migration](#s-authority-migration)
-- [Standalone AI review and combined branch](#s-standalone-ai-review)
+- [AI review](#s-standalone-ai-review)
+- [Framework documents](#s-framework-document-authority)
 
 <a id="s-overview"></a>
 ## Overview
@@ -337,3 +340,59 @@ The publication combines Guardian v2 with the metadata-aware Workshop core. Exis
 When Guardian is required, normal-transaction context documents remain unsupported and fail closed; separately proven auxiliary scope is required. Without Guardian enforcement, the existing context-document transaction path retains its metadata checks.
 
 Transaction retention is separately opt-in with `transaction_documents_required=true` and `tx_retention_required=true`. At the default nine-worktree threshold ordinary checkout is refused; interrupted compactions continue reserving capacity until their SQL-projected commit. `tx-recycle-inspect`, `tx-recycle-submit` and `tx-recycle-drain` are the bounded recovery workflow. Historical TX lacking original binding are marked `SCOPE_UNRESOLVED`, never assigned to the current Task. Binding operating rules are indexed in `workshop/OPERATIONS.md#s-scratch-retention`.
+
+<a id="s-framework-document-authority"></a>
+## Framework document authority
+
+> Capsule: Native framework self-maintenance admits exact Markdown and its separate immutable index through an ordinary verified transaction; consumer project memory stays separate.
+
+This optional mode is for maintaining the framework repository itself. An ordinary consumer
+project without `framework_documents` retains its existing authority and search behavior.
+The mode does not select or overwrite personal memory. Project questions use the explicitly
+bound workspace; framework-rule questions use workspace-free framework search.
+
+Start from a verified sealed project whose source authority owns the framework Workshop
+implementation. `transaction_documents_required` and `tx_retention_required` must both be
+true. Guardian-required or JEV-required framework-document scope is currently refused; do
+not disable a project policy to pass admission. This interface does not grant compiler,
+build-authority or source-membership migration.
+
+Use an isolated complete candidate product with the same non-Markdown source bytes as the
+sealed live product. All distributed Markdown must have an admitted role, valid metadata,
+answer targets and matching index membership; the seven catalogued render templates remain
+explicit exceptions to source indexing. The candidate may replace, add or remove Markdown.
+Do not hand-edit the live config, index, seal or lease.
+
+```text
+framework-documents-plan --candidate-root <isolated-product>
+framework-documents-checkout --candidate-root <isolated-product> --expected-plan-sha256 <reviewed-hash> --purpose "<bounded-purpose>"
+review -> prepare -> metadata-check -> verify -> apply
+```
+
+Both commands use the ordinary `--config <workshop.config.json>` entrypoint. The read-only
+plan grants no write permission. Checkout recomputes the plan, checks its exact hash and
+reuses an ordinary source transaction with an unchanged framework implementation witness.
+Review changed Markdown under `work/framework/` and complete every requested field in
+`review/framework_review.json`. Complete the ordinary implementation/document impact review
+too; unchanged source does not require a fabricated code edit or semantic header change.
+
+Preparation rebuilds the candidate bundle with the canonical isolated builder, verifies it
+using the physical configured harness and stages only the native machine-authority changes.
+The raw config changes only the explicit framework declaration; any already-bound intake
+config digest is updated by the same native transaction. Framework artifacts remain in
+namespace `KAIROS_FRAMEWORK` and are not imported into the project SQLite database.
+The transaction and report record the operation in the project workspace.
+
+After admission, ordinary source checkouts capture the bound framework product too. Edit
+framework prose only in `work/framework/`; edit selected code in its ordinary work paths and
+its implementation metadata in `work/blueprints/`. Preparation overlays that selected code,
+rebuilds the separate framework index and requires explicit review of every changed public
+Markdown. Unselected code changes in the framework copy are refused.
+
+Apply binds the reviewed source, Markdown, rebuilt bundle and config to one verified package.
+Exact preimages support rollback before heartbeat; native recovery handles interrupted writes
+and a completed-target recovery heartbeat. Foreign target bytes cause refusal and retain the
+lease. The successful seal mirror contains the admitted Markdown and both projection files.
+Use `recover <transaction-id>` or normal `abort` where its lifecycle allows it; never repair
+mixed state by hand. Recovery tests and receipts establish their named scenarios, not a
+filesystem ACL boundary, external backup migration or universal crash-atomic storage.

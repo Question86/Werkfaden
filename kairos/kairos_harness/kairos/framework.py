@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from .util import is_link_or_junction, reject_link_components
+
 from .database import KnowledgeDatabase
 from .search import search_database
 
@@ -14,6 +16,7 @@ FRAMEWORK_INDEX_WORKSPACE_ID = "KAIROS_FRAMEWORK_INDEX"
 FRAMEWORK_VERSION = "0.1.0-alpha.6"
 FRAMEWORK_DATABASE_NAME = "framework.db"
 FRAMEWORK_MANIFEST_NAME = "framework_manifest.json"
+FRAMEWORK_MANIFEST_SCHEMA = "kairos-framework-index/v3"
 TOOL_CATALOG_ID = "KAIROS_WORKSPACE_TOOLS"
 TOOL_CATALOG_PATH = "docs/KAIROS_WORKSPACE_TOOLS.md"
 
@@ -153,7 +156,7 @@ WORKSHOP_TOOL_GROUPS = (
     ("s-maintenance", "Document authorities and legacy repair / Dokumente und Altbestand",
      "Document-only auxiliary changes require configured authority; bootstrap repair is a bounded legacy maintenance route.",
      "Dokumente ohne Code aendern: auxiliary-checkout, auxiliary-verify and auxiliary-apply admit only configured process authorities; auxiliary-abort abandons their candidate. bootstrap-stage, bootstrap-apply and bootstrap-abort handle only the supported legacy document repair boundary, not arbitrary broken seals or unrestricted rule edits. Guardian enforcement can refuse unsupported maintenance. Owners: auxiliary, repair, blueprint, header_blueprint.",
-     "auxiliary-checkout auxiliary-verify auxiliary-apply auxiliary-abort bootstrap-stage bootstrap-apply bootstrap-abort"),
+     "auxiliary-checkout auxiliary-verify auxiliary-apply auxiliary-abort bootstrap-stage bootstrap-apply bootstrap-abort framework-documents-plan framework-documents-checkout"),
     ("s-guardian", "Guarded investigation / Bewachte Untersuchung",
      "Guardian sessions require canonical Memory, ordered state evidence and state-bound execution tickets.",
      "Guardian, Memory und Untersuchung: guard-start establishes the Human problem and Memory binding; guard-enter issues the required state ticket, guard-step records the evidenced transition, guard-status inspects it. guard-reframe is an admitted return to investigation, not history rewriting. guard-patch-close, guard-fresh-run and guard-reconcile require their exact receipt/state boundaries. A cancelled Guardian is not revived by generic recovery. Owners: guardian and the guardian_* implementation modules.",
@@ -357,7 +360,11 @@ def framework_markdown_inventory(root: Path) -> list[dict[str, Any]]:
                          "role": "render_template",
                          "catalog": "KAIROS_CANONICAL_DOCUMENTS#s-render-templates"})
             continue
-        parsed = split_frontmatter((root / relative).read_text(encoding="utf-8"))
+        raw = (root / relative).read_bytes()
+        if _sha256_bytes(raw) != entry["sha256"]:
+            raise RuntimeError(f"framework Markdown changed during inventory: {relative}")
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        parsed = split_frontmatter(text)
         metadata = parsed.metadata
         missing = sorted(_FRAMEWORK_HEADER_FIELDS - metadata.keys())
         if missing:
@@ -378,6 +385,7 @@ def framework_markdown_inventory(root: Path) -> list[dict[str, Any]]:
             raise RuntimeError(f"duplicate framework Markdown identity: {metadata['id']}")
         ids.add(metadata["id"])
         rows.append({"path": relative, "sha256": entry["sha256"],
+                     "content_sha256": _sha256_bytes(text.encode("utf-8")),
                      "role": metadata["distribution_role"], "artifact_id": metadata["id"]})
     if not set(FRAMEWORK_DOCUMENT_PATHS).issubset(
             row["path"] for row in rows if row["role"] != "render_template"):
@@ -387,6 +395,23 @@ def framework_markdown_inventory(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def framework_document_authority_snapshot(root: Path, declaration: dict[str, Any]) -> dict[str, Any]:
+    """Verify one complete physical framework product without importing project state."""
+    before = _framework_plan_files(root)
+    coverage = framework_markdown_inventory(root)
+    if sorted(row["path"] for row in coverage) != declaration["documents"]:
+        raise RuntimeError("FRAMEWORK_DOCUMENT_MEMBERSHIP_DRIFT: declaration differs from complete Markdown inventory")
+    bundle = verify_framework_bundle(source_root=root)
+    if _framework_plan_files(root) != before:
+        raise RuntimeError("FRAMEWORK_DOCUMENT_SNAPSHOT_CHANGED: product changed during verification")
+    files = {row["path"]: row for row in before}
+    prefix = "kairos/kairos_harness/kairos/"
+    return dict(schema=declaration["schema"], root=".", namespace=declaration["namespace"],
+                documents=coverage, database_content_sha256=bundle["database_content_sha256"],
+                projection_files={name: files[prefix + name] for name in
+                                  (FRAMEWORK_DATABASE_NAME, FRAMEWORK_MANIFEST_NAME)})
+
+
 def framework_markdown_coverage_sha256(rows: list[dict[str, Any]]) -> str:
     return _sha256_bytes(json.dumps(rows, ensure_ascii=True, sort_keys=True,
                                    separators=(",", ":")).encode("utf-8"))
@@ -394,6 +419,10 @@ def framework_markdown_coverage_sha256(rows: list[dict[str, Any]]) -> str:
 
 def _framework_manifest_documents(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate the source/template partition even without a source tree installed."""
+    schema = manifest.get("schema")
+    if schema not in {"kairos-framework-index/v2", FRAMEWORK_MANIFEST_SCHEMA}:
+        raise RuntimeError("unsupported framework manifest identity schema")
+    content_fields = ("content_sha256",) if schema == FRAMEWORK_MANIFEST_SCHEMA else ()
     rows = manifest.get("markdown_coverage")
     if not isinstance(rows, list) or not rows:
         raise RuntimeError("framework manifest lacks complete Markdown coverage")
@@ -418,8 +447,13 @@ def _framework_manifest_documents(manifest: dict[str, Any]) -> list[dict[str, An
                 raise RuntimeError("unclassified framework render template")
             templates.append(path)
         elif row.get("role") in FRAMEWORK_SOURCE_ROLES and set(row) == {
-                "path", "sha256", "role", "artifact_id"}:
-            docs.append({k: row[k] for k in ("path", "artifact_id", "sha256")})
+                "path", "sha256", "role", "artifact_id", *content_fields}:
+            if content_fields:
+                content_digest = row["content_sha256"]
+                if (not isinstance(content_digest, str) or len(content_digest) != 64
+                        or any(c not in "0123456789abcdef" for c in content_digest)):
+                    raise RuntimeError("invalid framework canonical content hash")
+            docs.append({k: row[k] for k in ("path", "artifact_id", "sha256", *content_fields)})
         else:
             raise RuntimeError("unclassified framework Markdown coverage entry")
     if (paths != sorted(set(paths)) or set(templates) != set(FRAMEWORK_RENDER_TEMPLATES)
@@ -521,7 +555,7 @@ def load_framework_manifest(path: Path | None = None) -> dict[str, Any]:
             f"KAIROS framework manifest is missing: {path}. Reinstall the release or rebuild the framework index."
         )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema") != "kairos-framework-index/v2":
+    if payload.get("schema") not in {"kairos-framework-index/v2", FRAMEWORK_MANIFEST_SCHEMA}:
         raise RuntimeError(f"unsupported framework manifest schema: {payload.get('schema')!r}")
     if payload.get("workspace_id") != FRAMEWORK_WORKSPACE_ID:
         raise RuntimeError("framework manifest workspace identity mismatch")
@@ -529,10 +563,12 @@ def load_framework_manifest(path: Path | None = None) -> dict[str, Any]:
 
 
 def verify_framework_bundle(*, verify_sources: bool = True,
-                            source_root: Path | None = None) -> dict[str, Any]:
+                            source_root: Path | None = None,
+                            database_path: Path | None = None,
+                            manifest_path: Path | None = None) -> dict[str, Any]:
     package = source_root / "kairos/kairos_harness/kairos" if source_root is not None else package_directory()
-    manifest = load_framework_manifest(package / FRAMEWORK_MANIFEST_NAME)
-    database_path = package / FRAMEWORK_DATABASE_NAME
+    manifest = load_framework_manifest(manifest_path if manifest_path is not None else package / FRAMEWORK_MANIFEST_NAME)
+    database_path = database_path if database_path is not None else package / FRAMEWORK_DATABASE_NAME
     if not database_path.is_file():
         raise RuntimeError(
             f"KAIROS framework database is missing: {database_path}. Reinstall the release or rebuild the framework index."
@@ -590,7 +626,8 @@ def verify_framework_bundle(*, verify_sources: bool = True,
     finally:
         connection.close()
     if (len(expected_ids) != len(entries) + len(definitions) or actual_ids != expected_ids
-            or source_rows != {row["artifact_id"]: (row["path"], row["sha256"]) for row in entries}
+            or source_rows != {row["artifact_id"]: (row["path"], row.get("content_sha256", row["sha256"]))
+                               for row in entries}
             or not template_catalog_present
             or router_rows != expected_routers or manifest.get("document_count") != len(expected_ids)):
         raise RuntimeError("framework database artifact inventory or tool router binding mismatch")
@@ -599,7 +636,11 @@ def verify_framework_bundle(*, verify_sources: bool = True,
     verified_generated_sources = 0
     root = (source_root if source_root is not None else source_distribution_root()) if verify_sources else None
     if root is not None:
-        if framework_markdown_inventory(root) != manifest["markdown_coverage"]:
+        live_coverage = framework_markdown_inventory(root)
+        if manifest["schema"] == "kairos-framework-index/v2":
+            live_coverage = [{k: v for k, v in row.items() if k != "content_sha256"}
+                             for row in live_coverage]
+        if live_coverage != manifest["markdown_coverage"]:
             raise RuntimeError("framework distributed Markdown coverage differs from the index")
         for entry in entries:
             relative = str(entry["path"])
@@ -640,6 +681,123 @@ def verify_framework_bundle(*, verify_sources: bool = True,
         "source_documents_verified": verified_sources,
         "generated_source_files_verified": verified_generated_sources,
     }
+
+
+def _framework_plan_path(path: Path) -> None:
+    try:
+        reject_link_components(path, label="framework plan path")
+    except (ValueError, OSError) as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def _framework_plan_files(root: Path) -> list[dict[str, Any]]:
+    """Bound and stabilize product reads before producing a document-only plan."""
+    import stat
+    from .golden import (
+        _FRAMEWORK_ROOT_FILES, _FRAMEWORK_ROOT_DIRS, _FRAMEWORK_PRUNED,
+        _framework_source_entries,
+    )
+
+    def facts() -> dict[str, tuple[int, ...]]:
+        result = {}
+        total = 0
+        _framework_plan_path(root)
+
+        def inspect(path: Path) -> None:
+            nonlocal total
+            if is_link_or_junction(path):
+                raise RuntimeError("framework plan refuses links or junctions")
+            if path.name in _FRAMEWORK_PRUNED:
+                return
+            try:
+                value = path.stat()
+            except FileNotFoundError as exc:
+                raise RuntimeError("framework plan required product input missing: " +
+                                   path.relative_to(root).as_posix()) from exc
+            if stat.S_ISDIR(value.st_mode):
+                for child in sorted(path.iterdir()):
+                    inspect(child)
+                return
+            if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
+                raise RuntimeError("framework plan requires singly linked regular files")
+            if value.st_size > 32 * 1024 * 1024:
+                raise RuntimeError("framework plan file exceeds 32 MiB read budget")
+            total += value.st_size
+            if len(result) >= 4096 or total > 256 * 1024 * 1024:
+                raise RuntimeError("framework plan exceeds product read budget")
+            relative = path.relative_to(root).as_posix()
+            result[relative] = (value.st_size, value.st_mtime_ns, value.st_ino,
+                                value.st_dev, value.st_mode, value.st_nlink)
+
+        for relative in (*_FRAMEWORK_ROOT_FILES, *_FRAMEWORK_ROOT_DIRS):
+            path = root / relative
+            _framework_plan_path(path)
+            inspect(path)
+        return result
+
+    before = facts()
+    entries = _framework_source_entries(root)
+    if facts() != before:
+        raise RuntimeError("framework plan product changed during inspection")
+    portable = [row["path"].casefold() for row in entries]
+    if len(portable) != len(set(portable)):
+        raise RuntimeError("framework plan product paths collide portably")
+    return entries
+
+
+def framework_document_change_plan(source_root: Path, candidate_root: Path) -> dict[str, Any]:
+    """Read-only exact change proof; never grants admission, mutation or a seal."""
+    roots = []
+    for supplied in (source_root, candidate_root):
+        path = Path(supplied).absolute()
+        _framework_plan_path(path)
+        if not path.is_dir():
+            raise RuntimeError("framework plan requires explicit source directories")
+        roots.append(path.resolve(strict=True))
+    source, candidate = roots
+    if source.is_relative_to(candidate) or candidate.is_relative_to(source):
+        raise RuntimeError("framework plan roots must be disjoint")
+    baseline = _framework_plan_files(source)
+    target = _framework_plan_files(candidate)
+    derived = {
+        "kairos/kairos_harness/kairos/" + FRAMEWORK_DATABASE_NAME,
+        "kairos/kairos_harness/kairos/" + FRAMEWORK_MANIFEST_NAME,
+    }
+    before = {row["path"]: row for row in baseline}
+    after = {row["path"]: row for row in target}
+    for relative in sorted(before.keys() | after.keys()):
+        if Path(relative).suffix.lower() != ".md" and relative not in derived:
+            if before.get(relative) != after.get(relative):
+                raise RuntimeError("framework document plan changes non-Markdown product input: " + relative)
+    # The old tree may have incomplete headers or a legacy index. Only the
+    # candidate may supply current retrieval authority, through the real verifier.
+    coverage = framework_markdown_inventory(candidate)
+    bundle = verify_framework_bundle(source_root=candidate)
+    if _framework_plan_files(source) != baseline or _framework_plan_files(candidate) != target:
+        raise RuntimeError("framework plan product changed during verification")
+    changes = []
+    for relative in sorted(before.keys() | after.keys()):
+        if Path(relative).suffix.lower() != ".md" or before.get(relative) == after.get(relative):
+            continue
+        old, new = before.get(relative), after.get(relative)
+        changes.append({"path": relative,
+                        "operation": "add" if old is None else "delete" if new is None else "replace",
+                        "before": old, "after": new})
+    plan = {
+        "schema": "werkfaden-framework-document-change-plan/v1",
+        "namespace": FRAMEWORK_WORKSPACE_ID,
+        "read_only": True, "mutation_authorized": False,
+        "authority_admitted": False, "transaction_required": True,
+        "baseline_product": baseline, "candidate_product": target,
+        "markdown_coverage": coverage, "changes": changes,
+        "candidate_bundle": {key: bundle[key] for key in (
+            "schema", "database_sha256", "database_content_sha256", "document_count",
+            "source_documents_verified", "generated_source_files_verified")},
+    }
+    plan["plan_sha256"] = _sha256_bytes(json.dumps(
+        plan, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8"))
+    return plan
 
 
 def search_framework(

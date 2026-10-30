@@ -163,19 +163,43 @@ class ApplyCore(EngineCoreContract):
                 "backup": str(backup),
                 **capture_rollback_preimage(live, backup, copier=copy_exact),
             })
+        from .corpus import framework_projection_backups
+        rows = framework_projection_backups(self.config, root, state, rows)
         atomic_write_json(root / "rollback" / "targets.json", rows)
+        if state.get("framework_projection"):
+            state["framework_rollback_sha256"] = sha256_bytes((root / "rollback/targets.json").read_bytes())
         return rows
 
     def _rollback_files(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        from .corpus import framework_validate_rollback
+        from .util import reject_link_components
+        try:
+            framework_validate_rollback(rows)
+        except Exception as exc:
+            return [{"path": row["live"], "restored": False, "error": str(exc)} for row in rows]
         for row in reversed(rows):
             live = Path(row["live"])
             backup = Path(row["backup"])
             try:
+                if row.get("preimage_absent"):
+                    if live.exists():
+                        live.unlink()
+                    results.append({"path": str(live), "restored": True})
+                    continue
                 valid = restore_rollback_preimage(backup, live, row["sha256"], row.get("mtime_ns"), copier=copy_exact)
                 results.append({"path": str(live), "restored": valid})
             except Exception as exc:
                 results.append({"path": str(live), "restored": False, "error": str(exc)})
+        if all(row.get("restored") for row in results):
+            directories = {p for row in rows for p in row.get("created_directories", [])}
+            for name in sorted(directories, key=len, reverse=True):
+                try:
+                    reject_link_components(Path(name), label="framework rollback directory")
+                    if Path(name).exists():
+                        Path(name).rmdir()
+                except Exception as exc:
+                    results.append({"path": name, "restored": False, "error": str(exc)})
         return results
 
     def apply(self, transaction_id: str) -> dict[str, Any]:
@@ -220,8 +244,10 @@ class ApplyCore(EngineCoreContract):
                 paths=changed_managed,
                 reason=f"Runtime Sync Workshop {transaction_id}: {state['purpose']}",
                 ttl_seconds=1800,
-            )
+            ) if changed_managed else None
         state["state"] = "APPLYING"
+        if state.get("framework_projection"):
+            state["framework_commit_boundary"] = "FILES_WRITING"
         state["permit"] = permit
         self._save_transaction(root, state, event="APPLY_STARTED", details={"managed_paths": changed_managed})
         heartbeat_started = False
@@ -251,6 +277,8 @@ class ApplyCore(EngineCoreContract):
                 copy_exact(root / "work" / "authority" / relative, self.config.kairos_workspace / relative)
             for relative in state.get("changed_documents", []):
                 copy_exact(root / "work" / "documents" / relative, self.config.kairos_workspace / relative)
+            from .corpus import framework_projection_apply, framework_projection_reload, framework_projection_postcheck
+            framework_projection_apply(self.config, root, state)
             for relative in state.get("machine_authority_files", []):
                 copy_exact(root / "work" / "machine" / relative, self.config.machine_root / relative)
             heartbeat_receipt: dict[str, Any]
@@ -258,6 +286,11 @@ class ApplyCore(EngineCoreContract):
                 if change["changed"]:
                     relative = change["source"]
                     copy_exact(root / "work" / relative, self.config.codebase_root / relative)
+            if state.get("framework_projection"):
+                framework_projection_reload(self)
+                framework_projection_postcheck(self.config, root, state)
+                state["framework_commit_boundary"] = "HEARTBEAT_STARTED"
+                self._save_transaction(root, state, event="FRAMEWORK_HEARTBEAT_STARTED")
             if adapter == "native":
                 _, heartbeat = self._import_kairos()
                 heartbeat_started = True
@@ -304,6 +337,7 @@ class ApplyCore(EngineCoreContract):
                 if (self.config.machine_root / relative).read_bytes() != (root / "work" / "machine" / relative).read_bytes():
                     raise WorkshopError("POSTCHECK_MACHINE_AUTHORITY_MISMATCH", f"live machine authority differs from work: {relative}")
             self.context_documents.postcheck(root, state)
+            framework_projection_postcheck(self.config, root, state)
             mirror = self._mirror(post, documents=state.get("documents", []))
             seal = {
                 "schema": "runtime-sync-seal/v1",
@@ -346,6 +380,9 @@ class ApplyCore(EngineCoreContract):
                 raise WorkshopError("RECOVERY_REQUIRED", "apply crossed the heartbeat boundary and failed; lease retained", details=state["failure"]) from exc
             rollback = self._rollback_files(backups)
             if all(row.get("restored") for row in rollback):
+                if state.get("framework_projection"):
+                    from .corpus import framework_projection_reload
+                    framework_projection_reload(self)
                 if permit and adapter == "native":
                     try:
                         governance, _ = self._import_kairos()

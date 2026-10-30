@@ -469,6 +469,33 @@ class FrameworkDistributionTests(unittest.TestCase):
 
 
     @unittest.skipUnless(sys.platform == "win32", "Windows junction regression")
+    def test_windows_root_aliases_refused_by_inventory_export_and_verification(self):
+        from kairos.golden import (
+            GoldenTemplateError, _framework_source_entries, build_framework_distribution,
+            verify_framework_distribution,
+        )
+        alias = self.root / "source-alias"
+        result = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(alias), str(self.source)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.addCleanup(alias.rmdir)
+        target = self.root / "rejected-root-export"
+        with self.assertRaisesRegex(GoldenTemplateError, "link or junction"):
+            _framework_source_entries(alias)
+        with self.assertRaisesRegex(GoldenTemplateError, "link or junction"):
+            build_framework_distribution(source_root=alias, target_root=target, source_commit="fixture")
+        self.assertFalse(target.exists())
+        normal = self.root / "normal-export"
+        build_framework_distribution(source_root=self.source, target_root=normal, source_commit="fixture")
+        verified_alias = self.root / "verified-alias"
+        result = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(verified_alias), str(normal)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.addCleanup(verified_alias.rmdir)
+        with self.assertRaisesRegex(GoldenTemplateError, "link or junction"):
+            verify_framework_distribution(verified_alias)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows junction regression")
     def test_windows_junction_inputs_and_target_parents_fail_closed(self):
         from kairos.golden import GoldenTemplateError, build_framework_distribution
         outside = self.root/"outside"

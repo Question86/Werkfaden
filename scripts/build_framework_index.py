@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -21,6 +22,7 @@ from kairos.framework import (  # noqa: E402
     framework_markdown_coverage_sha256,
     FRAMEWORK_INDEX_WORKSPACE_ID,
     FRAMEWORK_MANIFEST_NAME,
+    FRAMEWORK_MANIFEST_SCHEMA,
     FRAMEWORK_VERSION,
     FRAMEWORK_WORKSPACE_ID,
     framework_database_content_sha256,
@@ -30,10 +32,12 @@ from kairos.framework import (  # noqa: E402
     tool_catalog_source_paths,
     verify_tool_inventory,
     verify_context_tool_inventory,
+    verify_framework_bundle,
     tool_catalog_definitions,
 )
 from kairos.promoter import promote_many  # noqa: E402
 import kairos.promoter as promoter_module  # noqa: E402
+from kairos.util import reject_link_components  # noqa: E402
 from kairos.search import search_database  # noqa: E402
 
 BUILD_EPOCH = "2000-01-01T00:00:00Z"
@@ -232,11 +236,11 @@ def build_once(output: Path) -> dict:
 
     if framework_markdown_inventory(ROOT) != coverage:
         raise SystemExit("framework Markdown membership or bytes changed during build")
-    documents_manifest = [{k: row[k] for k in ("path", "artifact_id", "sha256")}
+    documents_manifest = [{k: row[k] for k in ("path", "artifact_id", "sha256", "content_sha256")}
                           for row in coverage if row["role"] != "render_template"]
 
     return {
-        "schema": "kairos-framework-index/v2",
+        "schema": FRAMEWORK_MANIFEST_SCHEMA,
         "version": FRAMEWORK_VERSION,
         "workspace_id": FRAMEWORK_WORKSPACE_ID,
         "database_file": FRAMEWORK_DATABASE_NAME,
@@ -261,6 +265,31 @@ def build_once(output: Path) -> dict:
     }
 
 
+def _checked_path(path: Path) -> Path:
+    try:
+        reject_link_components(path, label="framework builder path")
+    except (ValueError, OSError) as exc:
+        raise SystemExit(str(exc)) from exc
+    return path.resolve()
+
+
+def _publish_file(source: Path, target: Path) -> None:
+    """Replace one derived output atomically; native installation owns pair recovery."""
+    _checked_path(source)
+    _checked_path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix="." + target.name + "-", dir=target.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as destination, source.open("rb") as origin:
+            shutil.copyfileobj(origin, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the immutable KAIROS framework retrieval projection")
     parser.add_argument("--output", default=str(HARNESS / "kairos" / FRAMEWORK_DATABASE_NAME))
@@ -272,33 +301,42 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    output = Path(args.output).resolve()
-    manifest_path = Path(args.manifest).resolve()
-    manifest = build_once(output)
-    if args.verify_determinism:
-        with tempfile.TemporaryDirectory(prefix="kairos-framework-determinism-") as temp:
-            second = Path(temp) / FRAMEWORK_DATABASE_NAME
-            second_manifest = build_once(second)
-            if sha256(second) != manifest["database_sha256"]:
+    _checked_path(Path(__file__))
+    output = _checked_path(Path(args.output))
+    manifest_path = _checked_path(Path(args.manifest))
+    compared_database = _checked_path(Path(args.compare_content_with)) if args.compare_content_with else None
+    if output == manifest_path:
+        raise SystemExit("framework database and manifest outputs must be distinct")
+    with tempfile.TemporaryDirectory(prefix="kairos-framework-publication-") as staged:
+        staged_output = Path(staged) / FRAMEWORK_DATABASE_NAME
+        staged_manifest = Path(staged) / FRAMEWORK_MANIFEST_NAME
+        manifest = build_once(staged_output)
+        if args.verify_determinism:
+            with tempfile.TemporaryDirectory(prefix="kairos-framework-determinism-") as temp:
+                second = Path(temp) / FRAMEWORK_DATABASE_NAME
+                second_manifest = build_once(second)
+                if sha256(second) != manifest["database_sha256"]:
+                    raise SystemExit(
+                        f"framework DB is not deterministic: {manifest['database_sha256']} != {sha256(second)}"
+                    )
+                if framework_database_content_sha256(second) != manifest["database_content_sha256"]:
+                    raise SystemExit("framework DB content is not deterministic")
+                if [item["sha256"] for item in second_manifest["documents"]] != [item["sha256"] for item in manifest["documents"]]:
+                    raise SystemExit("framework document inventory changed between deterministic builds")
+                if second_manifest["generated_documents"] != manifest["generated_documents"]:
+                    raise SystemExit("framework generated routing sources changed between deterministic builds")
+        if compared_database is not None:
+            compared_content_sha = framework_database_content_sha256(compared_database)
+            if compared_content_sha != manifest["database_content_sha256"]:
                 raise SystemExit(
-                    f"framework DB is not deterministic: {manifest['database_sha256']} != {sha256(second)}"
+                    "framework DB logical content differs from bundle: "
+                    f"{manifest['database_content_sha256']} != {compared_content_sha}"
                 )
-            if framework_database_content_sha256(second) != manifest["database_content_sha256"]:
-                raise SystemExit("framework DB content is not deterministic")
-            if [item["sha256"] for item in second_manifest["documents"]] != [item["sha256"] for item in manifest["documents"]]:
-                raise SystemExit("framework document inventory changed between deterministic builds")
-            if second_manifest["generated_documents"] != manifest["generated_documents"]:
-                raise SystemExit("framework generated routing sources changed between deterministic builds")
-    compared_database = None
-    if args.compare_content_with:
-        compared_database = Path(args.compare_content_with).resolve()
-        compared_content_sha = framework_database_content_sha256(compared_database)
-        if compared_content_sha != manifest["database_content_sha256"]:
-            raise SystemExit(
-                "framework DB logical content differs from bundle: "
-                f"{manifest['database_content_sha256']} != {compared_content_sha}"
-            )
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        staged_manifest.write_bytes((json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        verify_framework_bundle(source_root=ROOT, database_path=staged_output, manifest_path=staged_manifest)
+        _publish_file(staged_output, output)
+        _publish_file(staged_manifest, manifest_path)
+        verify_framework_bundle(source_root=ROOT, database_path=output, manifest_path=manifest_path)
     print(json.dumps({
         "verified": True,
         "database": str(output),

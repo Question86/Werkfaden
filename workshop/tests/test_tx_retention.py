@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import sys
 import tempfile
 import unittest
@@ -70,6 +71,174 @@ class TransactionRetentionTests(unittest.TestCase):
         stack.enter_context(patch("runtime_sync_workshop.tx_documents.assert_projected"))
         return stack
 
+    def framework_tx(self, suffix="f"):
+        import hashlib
+        from runtime_sync_workshop.corpus import FRAMEWORK_PROJECTION_SCHEMA
+        txid, root = self.make_tx(suffix, "POSTCHECK_VERIFIED", verified=True)
+        rows = []
+        for name, raw in {"docs/kept.md": b"kept", "docs/changed.md": b"before",
+                          "docs/retired.md": b"historical"}.items():
+            path = root / "baseline/framework" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            rows.append(dict(path=name, size=len(raw), sha256=hashlib.sha256(raw).hexdigest()))
+        for name, raw in {"docs/kept.md": b"kept", "docs/changed.md": b"after",
+                          "docs/new.md": b"new"}.items():
+            path = root / "work/framework" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        old = root / "baseline/framework-machine/workshop.config.json"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b'{"framework_documents":null}')
+        current = root / "work/machine/workshop.config.json"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(b'{"framework_documents":{"namespace":"KAIROS_FRAMEWORK"}}')
+        manifest = root / "baseline/manifest.json"
+        manifest.write_bytes(b"{}\n")
+        scope = dict(schema=FRAMEWORK_PROJECTION_SCHEMA, baseline_product=rows,
+                     baseline_machine={"workshop.config.json": hashlib.sha256(old.read_bytes()).hexdigest()},
+                     baseline_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest())
+        path = root / "review/framework_scope.json"
+        path.write_text(json.dumps(scope), encoding="utf-8")
+        state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+        state["framework_projection"] = dict(schema=FRAMEWORK_PROJECTION_SCHEMA,
+                                             scope_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return txid, root
+
+    def test_framework_prepare_retry_accepts_only_the_exact_selected_native_overlay(self):
+        import copy
+        import hashlib
+        from contextlib import ExitStack
+        from runtime_sync_workshop import corpus
+
+        for selected_as in ("sources", "dependent_tests"):
+            with self.subTest(selected_as=selected_as):
+                root = self.root / selected_as
+                live = root / "live"
+                work = root / "work/framework"
+                (root / "review").mkdir(parents=True)
+                live.mkdir()
+                work.mkdir(parents=True)
+                (live / "code.py").write_bytes(b"old")
+                (work / "code.py").write_bytes(b"old")
+                (root / "work/code.py").write_bytes(b"native candidate")
+                original = [dict(path="code.py", size=3, sha256=hashlib.sha256(b"old").hexdigest())]
+                config = SimpleNamespace(codebase_root=live)
+                pristine = dict(transaction_id="TXN_retry", framework_projection=dict(overlay_sources={}),
+                                sources=[], dependent_tests=[])
+                pristine[selected_as] = ["code.py"]
+                review = root / "review/framework_review.json"
+                review.write_text("{}", encoding="utf-8")
+
+                def inspect_product(config, path, kind):
+                    raw = (path / "code.py").read_bytes()
+                    return [dict(path="code.py", size=len(raw), sha256=hashlib.sha256(raw).hexdigest())]
+
+                with ExitStack() as stack:
+                    stack.enter_context(patch.object(corpus, "_framework_scope", return_value=dict(baseline_product=original)))
+                    stack.enter_context(patch.object(corpus, "_framework_inspect", side_effect=inspect_product))
+                    builder = stack.enter_context(patch.object(corpus.subprocess, "run", side_effect=RuntimeError("builder-boundary")))
+                    with self.assertRaises(WorkshopError) as refused:
+                        corpus.framework_projection_prepare(config, root, copy.deepcopy(pristine))
+                    self.assertEqual(refused.exception.code, "FRAMEWORK_REVIEW_REQUIRED")
+                    builder.assert_not_called()
+                    self.assertEqual((live / "code.py").read_bytes(), b"old")
+                    self.assertEqual((work / "code.py").read_bytes(), b"native candidate")
+                    review.write_text(json.dumps(dict(schema=corpus.FRAMEWORK_PROJECTION_SCHEMA,
+                        transaction_id="TXN_retry", reviewer="test", entries=[],
+                        reason="No framework Markdown changed in this exact selected-source retry regression.")), encoding="utf-8")
+                    # Fresh state on each invocation models the failed outer save.
+                    for attempt in range(2):
+                        with self.assertRaisesRegex(RuntimeError, "builder-boundary"):
+                            corpus.framework_projection_prepare(config, root, copy.deepcopy(pristine))
+                    self.assertEqual(builder.call_count, 2)
+                    self.assertEqual((work / "code.py").read_bytes(), b"native candidate")
+                    # Neither foreign bytes nor a now-unselected native copy may pass.
+                    for raw, state in [(b"foreign", copy.deepcopy(pristine)),
+                                       (b"native candidate", dict(pristine, sources=[], dependent_tests=[]))]:
+                        (work / "code.py").write_bytes(raw)
+                        with self.assertRaises(WorkshopError) as refused:
+                            corpus.framework_projection_prepare(config, root, state)
+                        self.assertEqual(refused.exception.code, "FRAMEWORK_SOURCE_SCOPE_INVALID")
+                    self.assertEqual(builder.call_count, 2)
+                    self.assertEqual((live / "code.py").read_bytes(), b"old")
+
+    def test_framework_inventory_includes_deleted_members_and_exact_machine_preimage(self):
+        import hashlib
+        txid, root = self.framework_tx()
+        result = inventory(self.engine, txid, persist=False)
+        rows = {row["path"]: row for row in result["units"]}
+        self.assertEqual(set(rows), {"code.py", "framework/docs/changed.md", "framework/docs/retired.md",
+                                    "framework/docs/new.md", "machine/workshop.config.json"})
+        retired = rows["framework/docs/retired.md"]
+        self.assertEqual(retired["category"], "deleted")
+        self.assertEqual(retired["baseline_sha256"], hashlib.sha256(b"historical").hexdigest())
+        self.assertIsNone(retired["candidate_sha256"])
+        machine = rows["machine/workshop.config.json"]
+        self.assertEqual(machine["category"], "modified")
+        self.assertEqual(machine["baseline_sha256"], hashlib.sha256(
+            (root / "baseline/framework-machine/workshop.config.json").read_bytes()).hexdigest())
+        self.assertEqual(rows["framework/docs/new.md"]["category"], "baseline_unknown")
+        self.assertEqual(result["inventory_sha256"], inventory(self.engine, txid, persist=False)["inventory_sha256"])
+
+    def test_framework_inventory_does_not_invent_deletion_of_unchanged_machine_authority(self):
+        txid, root = self.framework_tx()
+        (root / "work/machine/workshop.config.json").unlink()
+        result = inventory(self.engine, txid, persist=False)
+        self.assertNotIn("machine/workshop.config.json", {row["path"] for row in result["units"]})
+
+    def test_framework_inventory_refuses_missing_changed_or_extra_frozen_baseline(self):
+        for suffix, operation in [("a", "missing"), ("b", "changed"), ("c", "extra")]:
+            with self.subTest(operation=operation):
+                txid, root = self.framework_tx(suffix)
+                path = root / "baseline/framework/docs/retired.md"
+                if operation == "missing":
+                    path.unlink()
+                elif operation == "changed":
+                    path.write_bytes(b"foreign historical bytes")
+                else:
+                    (path.parent / "unknown.md").write_bytes(b"not frozen")
+                with self.assertRaises(WorkshopError) as caught:
+                    inventory(self.engine, txid, persist=False)
+                self.assertEqual(caught.exception.code, "FRAMEWORK_RECYCLING_BASELINE_DRIFT")
+
+    def test_framework_inventory_refuses_missing_changed_or_conflicting_machine_preimage(self):
+        for suffix, operation in [("a", "missing"), ("b", "changed"), ("c", "conflict")]:
+            with self.subTest(operation=operation):
+                txid, root = self.framework_tx(suffix)
+                path = root / "baseline/framework-machine/workshop.config.json"
+                if operation == "missing":
+                    path.unlink()
+                elif operation == "changed":
+                    path.write_bytes(b"foreign config")
+                else:
+                    path = root / "baseline/machine/workshop.config.json"
+                    path.parent.mkdir()
+                    path.write_bytes(b"conflicting owner")
+                with self.assertRaises(WorkshopError) as caught:
+                    inventory(self.engine, txid, persist=False)
+                self.assertEqual(caught.exception.code, "FRAMEWORK_RECYCLING_BASELINE_DRIFT")
+
+    def test_framework_inventory_requires_unchanged_frozen_scope_and_manifest(self):
+        for suffix, relative in [("a", "review/framework_scope.json"), ("b", "baseline/manifest.json")]:
+            with self.subTest(relative=relative):
+                txid, root = self.framework_tx(suffix)
+                path = root / relative
+                path.write_bytes(path.read_bytes() + b" ")
+                with self.assertRaises(WorkshopError) as caught:
+                    inventory(self.engine, txid, persist=False)
+                self.assertEqual(caught.exception.code, "FRAMEWORK_SCOPE_CHANGED")
+
+    def test_legacy_inventory_keeps_unknown_preimages_without_inventing_framework_authority(self):
+        txid, root = self.framework_tx()
+        state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+        state.pop("framework_projection")
+        (root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        rows = {row["path"]: row for row in inventory(self.engine, txid, persist=False)["units"]}
+        self.assertNotIn("framework/docs/retired.md", rows)
+        self.assertEqual(rows["machine/workshop.config.json"]["category"], "baseline_unknown")
+
     def _junction(self, link, target):
         if sys.platform != "win32":
             self.skipTest("a real Windows junction is required")
@@ -78,11 +247,11 @@ class TransactionRetentionTests(unittest.TestCase):
             _winapi.CreateJunction(str(target), str(link))
         except (AttributeError, OSError) as exc:
             self.skipTest(f"Windows junction creation unavailable: {exc}")
-        self.assertTrue(link.is_junction())
+        self.assertEqual(link.lstat().st_reparse_tag, stat.IO_REPARSE_TAG_MOUNT_POINT)
         self.assertEqual(link.resolve(), target.resolve())
 
         def remove_link():
-            self.assertTrue(link.is_junction())
+            self.assertEqual(link.lstat().st_reparse_tag, stat.IO_REPARSE_TAG_MOUNT_POINT)
             self.assertEqual(link.resolve(), target.resolve())
             self.assertTrue(link.parent.resolve().is_relative_to(self.root.resolve()))
             self.assertTrue(target.resolve().is_relative_to(self.root.resolve()))

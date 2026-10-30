@@ -15,6 +15,8 @@ from .util import (
     atomic_write_json,
     atomic_write_text,
     json_dumps,
+    is_link_or_junction,
+    reject_link_components,
     read_json,
     sha256_bytes,
     sha256_text,
@@ -787,13 +789,22 @@ _FRAMEWORK_PRUNED = {
 }
 
 
+def _checked_framework_path(path: Path) -> Path:
+    try:
+        reject_link_components(path, label="framework path")
+    except (ValueError, OSError) as exc:
+        raise GoldenTemplateError(str(exc)) from exc
+    return path.resolve()
+
+
 def _framework_source_entries(root: Path) -> list[dict[str, Any]]:
     """Inventory only declared product surfaces; never follow links or junctions."""
+    root = _checked_framework_path(root)
     entries: list[dict[str, Any]] = []
     selected: set[str] = set()
 
     def inspect(path: Path) -> None:
-        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+        if is_link_or_junction(path):
             raise GoldenTemplateError("framework input contains a link or junction")
         relative = path.relative_to(root).as_posix()
         if path.name in _FRAMEWORK_PRUNED:
@@ -826,11 +837,7 @@ def _framework_source_entries(root: Path) -> list[dict[str, Any]]:
         if not path.exists():
             raise GoldenTemplateError(f"required framework input missing: {relative}")
         # Inspect every ancestor too: a nested input root must not hide a junction.
-        for parent in (path, *path.parents):
-            if parent == root:
-                break
-            if parent.is_symlink() or (hasattr(parent, "is_junction") and parent.is_junction()):
-                raise GoldenTemplateError("framework root crosses a link or junction")
+        _checked_framework_path(path)
         inspect(path)
     for relative in _FRAMEWORK_REQUIRED:
         if relative not in selected:
@@ -840,9 +847,9 @@ def _framework_source_entries(root: Path) -> list[dict[str, Any]]:
 
 def verify_framework_distribution(root: Path) -> dict[str, Any]:
     """Verify exact bytes and reject extra files outside the declared boundary."""
-    root = root.resolve()
+    root = _checked_framework_path(root)
     manifest_path = root / FRAMEWORK_DISTRIBUTION_MANIFEST
-    if manifest_path.is_symlink():
+    if is_link_or_junction(manifest_path):
         raise GoldenTemplateError("linked framework manifest")
     manifest = read_json(manifest_path)
     if manifest.get("schema") != "kairos-framework-distribution/v1":
@@ -857,7 +864,7 @@ def verify_framework_distribution(root: Path) -> dict[str, Any]:
         raise GoldenTemplateError("framework distribution content mismatch")
     actual: set[str] = set()
     for path in root.rglob("*"):
-        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+        if is_link_or_junction(path):
             raise GoldenTemplateError("linked framework distribution entry")
         if path.is_file():
             actual.add(path.relative_to(root).as_posix())
@@ -873,14 +880,8 @@ def verify_framework_distribution(root: Path) -> dict[str, Any]:
 def build_framework_distribution(*, source_root: Path, target_root: Path,
                                  source_commit: str) -> dict[str, Any]:
     """Create a deterministic local framework candidate without project history."""
-    if target_root.is_symlink() or (hasattr(target_root, "is_junction") and target_root.is_junction()):
-        raise GoldenTemplateError("linked framework target")
-    for requested in (source_root.absolute(), target_root.absolute()):
-        for component in (requested, *requested.parents):
-            if component.is_symlink() or (hasattr(component, "is_junction") and component.is_junction()):
-                raise GoldenTemplateError("framework path crosses a link or junction")
-    source_root = source_root.resolve()
-    target_root = target_root.resolve()
+    source_root = _checked_framework_path(source_root)
+    target_root = _checked_framework_path(target_root)
     if source_root == target_root or source_root in target_root.parents:
         raise GoldenTemplateError("framework target must be outside the source tree")
     if target_root.exists():

@@ -207,6 +207,12 @@ def _parser() -> argparse.ArgumentParser:
         command = sub.add_parser("policy-" + operation, help="native runtime-policy " + operation)
         command.add_argument("transaction_id")
 
+    for operation in ("plan", "checkout"):
+        command = sub.add_parser("framework-documents-" + operation, help="native framework document " + operation)
+        command.add_argument("--candidate-root", required=True)
+        if operation == "checkout":
+            command.add_argument("--expected-plan-sha256", required=True)
+            command.add_argument("--purpose", required=True)
     return parser
 
 
@@ -234,6 +240,11 @@ def _require_guardian_checkout(engine: WorkshopEngine, arguments: argparse.Names
 def execute(arguments: argparse.Namespace) -> dict:
     engine = WorkshopEngine(Path(arguments.config))
     command = arguments.command
+    if command == "framework-documents-plan":
+        return engine.framework_documents_plan(Path(arguments.candidate_root))
+    if command == "framework-documents-checkout":
+        return engine.framework_documents_checkout(Path(arguments.candidate_root),
+            expected_plan_sha256=arguments.expected_plan_sha256, purpose=arguments.purpose)
     # Inspection is not a Guardian session. Each explicit session operation
     # obtains its owner only when used; native write/checkout gates stay intact.
 

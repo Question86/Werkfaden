@@ -3,10 +3,35 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+def is_link_or_junction(path: Path) -> bool:
+    """Inspect the entry itself, including Windows reparse points on Python 3.11."""
+    try:
+        info = Path(path).lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if os.name == "nt":
+        attributes = getattr(info, "st_file_attributes", None)
+        if not isinstance(attributes, int):
+            raise OSError("Windows reparse-point attributes are unavailable")
+        return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
+
+
+def reject_link_components(path: Path, *, label: str) -> None:
+    """Check raw ancestors from root to leaf before resolving or traversing them."""
+    requested = Path(path).absolute()
+    for component in (*reversed(requested.parents), requested):
+        if is_link_or_junction(component):
+            raise ValueError(f"{label} crosses a link or junction: {component}")
 
 
 def utc_now() -> str:

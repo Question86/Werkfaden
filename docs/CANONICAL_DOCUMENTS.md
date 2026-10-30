@@ -2,13 +2,13 @@
 schema = "kairos-context/v1"
 id = "KAIROS_CANONICAL_DOCUMENTS"
 type = "documentation"
-revision = 2
+revision = 3
 state = "active"
 authority = "architecture_authority"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_CANONICAL_DOCUMENTS"
-updated_at = "2026-10-30T01:33:38Z"
-capsule = "Canonical document roles, complete distribution/index coverage and the seven explicitly catalogued render templates."
+updated_at = "2026-10-30T16:16:00Z"
+capsule = "Canonical document roles, complete distribution/index coverage, raw versus normalized source identity and the seven explicitly catalogued render templates."
 claim_boundary = "This framework source owns the stable architecture it states; live project state, project-specific evidence, and execution results remain owned by their project authorities."
 entities = ["KAIROS", "KAIROS_CANONICAL_DOCUMENTS"]
 facets = ["documents", "authority", "placement", "distribution-coverage", "render-templates"]
@@ -70,8 +70,11 @@ references, and a resolvable search contract.
 
 > Capsule: Every distributed Markdown file has an explicit source or render-template role; relevant sources must be in the immutable framework index.
 
-The version2 framework index manifest records every distributed Markdown input with an exact
-SHA-256 and role. Current procedures, navigation, reference, historical evidence, publication
+The version3 framework index manifest records every distributed Markdown input with its exact
+raw-byte SHA-256, canonical normalized-content SHA-256 and role. Raw identity binds the source
+file; normalized identity binds its SQLite projection so LF and CRLF do not change the logical
+knowledge content. Legacy version2 verification remains supported for genuine version2 bundles;
+a build emits version3 and must not relabel an unverified old bundle. Current procedures, navigation, reference, historical evidence, publication
 views and quarantine notices remain separate declared roles. Every such source has a complete
 context header, resolvable section answers and actual database admission. A source omitted from
 the index, an unknown role or incomplete metadata blocks build/export. The seven named render

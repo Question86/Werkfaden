@@ -455,8 +455,518 @@ def load_config(path: Path) -> WorkshopConfig:
                 "CONFIG_PATH_MISSING",
                 f"configured machine authority is missing: {candidate}",
             )
+    framework_document_declaration(config)
     return config
 
+
+
+FRAMEWORK_DOCUMENT_AUTHORITY_SCHEMA = "werkfaden-framework-documents/v1"
+
+
+def framework_document_declaration(config: WorkshopConfig) -> dict[str, Any] | None:
+    """Validate explicit framework-self-maintenance scope; never infer admission."""
+    if "framework_documents" not in config.raw:
+        return None
+    value = config.raw["framework_documents"]
+    expected = {"schema", "root", "namespace", "documents"}
+    if (not isinstance(value, dict) or set(value) != expected
+            or value.get("schema") != FRAMEWORK_DOCUMENT_AUTHORITY_SCHEMA
+            or value.get("root") != "." or value.get("namespace") != "KAIROS_FRAMEWORK"):
+        raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID",
+                            "framework_documents requires the exact framework self-maintenance declaration")
+    paths = value["documents"]
+    if not isinstance(paths, list) or not paths or len(paths) > 4096:
+        raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID", "documents must be a bounded nonempty path array")
+    folded = set()
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}
+    for relative in paths:
+        if (not isinstance(relative, str) or not relative or len(relative) > 1024
+                or not relative.endswith(".md") or relative.startswith("/") or "\\" in relative):
+            raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID", "documents require canonical relative Markdown paths")
+        for part in relative.split("/"):
+            if (part in ("", ".", "..") or part[-1:] in (".", " ")
+                    or any(ord(char) < 32 or char in '<>:"|?*' for char in part)
+                    or part.split(".", 1)[0].upper() in reserved):
+                raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID", "document path has an unsafe component")
+        if relative.casefold() in folded:
+            raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID", "document paths have a portable identity collision")
+        folded.add(relative.casefold())
+    if paths != sorted(paths):
+        raise WorkshopError("FRAMEWORK_DOCUMENT_DECLARATION_INVALID", "document paths must be exactly sorted")
+    return {**value, "documents": list(paths)}
+
+
+def _framework_document_authority_in_process(config: WorkshopConfig) -> dict[str, Any] | None:
+    """Read exact admitted Markdown and its own framework projection, without writes.
+
+    This is an optional framework-self-maintenance profile, not project memory.
+    Only a future verified admission transaction may install its declaration.
+    """
+    declaration = framework_document_declaration(config)
+    if declaration is None:
+        return None
+    try:
+        from .context_documents import ContextDocuments
+        framework = ContextDocuments(config)._module("framework")
+        expected_module = config.kairos_harness / "kairos" / "framework.py"
+        reject_link_components(expected_module, label="framework verifier authority")
+        if Path(framework.__file__).resolve(strict=True) != expected_module.resolve(strict=True):
+            raise WorkshopError("FRAMEWORK_HARNESS_AUTHORITY_MISMATCH",
+                                "loaded framework verifier differs from the configured harness")
+        root = Path(config.codebase_root).absolute()
+        before = framework._framework_plan_files(root)
+        coverage = framework.framework_markdown_inventory(root)
+        if sorted(row["path"] for row in coverage) != declaration["documents"]:
+            raise WorkshopError("FRAMEWORK_DOCUMENT_MEMBERSHIP_DRIFT",
+                                "declared documents differ from the complete distributed Markdown inventory")
+        bundle = framework.verify_framework_bundle(source_root=root)
+        if framework._framework_plan_files(root) != before:
+            raise WorkshopError("FRAMEWORK_DOCUMENT_SNAPSHOT_CHANGED",
+                                "framework product changed during authority verification")
+        files = {row["path"]: row for row in before}
+        prefix = "kairos/kairos_harness/kairos/"
+        projection = {name: files[prefix + name] for name in (
+            framework.FRAMEWORK_DATABASE_NAME, framework.FRAMEWORK_MANIFEST_NAME)}
+        return {
+            "schema": declaration["schema"], "root": ".", "namespace": declaration["namespace"],
+            "documents": coverage, "projection_files": projection,
+            "database_content_sha256": bundle["database_content_sha256"],
+        }
+    except WorkshopError:
+        raise
+    except (OSError, ValueError, RuntimeError, KeyError, UnicodeError, ImportError) as exc:
+        raise WorkshopError("FRAMEWORK_DOCUMENT_AUTHORITY_INVALID",
+                            "framework document authority or its projection failed verification",
+                            details={"error": str(exc)}) from exc
+
+
+def _framework_inspect(config: WorkshopConfig, root: Path, mode: str, declaration=None):
+    """Use the configured physical verifier, never an earlier in-process import."""
+    import sys
+    request = dict(root=str(root), harness=str(config.kairos_harness), mode=mode,
+                   declaration=declaration)
+    code = '''import json,sys
+from pathlib import Path
+try:
+ r=json.loads(sys.stdin.read(16*1024*1024))
+ sys.path.insert(0,str(Path(r['root'])/'workshop/src'))
+ sys.path.insert(0,r['harness'])
+ import kairos.framework as framework
+ if Path(framework.__file__).resolve()!=Path(r['harness'],'kairos/framework.py').resolve():
+  raise RuntimeError('FRAMEWORK_HARNESS_AUTHORITY_MISMATCH: configured verifier path differs')
+ from kairos.framework import _framework_plan_files,framework_document_authority_snapshot
+ value=(_framework_plan_files(Path(r['root'])) if r['mode']=='product' else
+        framework.framework_document_change_plan(Path(r['root']),Path(r['declaration']['candidate_root']))
+        if r['mode']=='plan' else framework_document_authority_snapshot(Path(r['root']),r['declaration']))
+ print(json.dumps({'value':value}))
+except Exception as e:
+ text=str(e);prefix=text.split(':',1)[0]
+ error=prefix if prefix in ('FRAMEWORK_DOCUMENT_MEMBERSHIP_DRIFT','FRAMEWORK_DOCUMENT_SNAPSHOT_CHANGED','FRAMEWORK_HARNESS_AUTHORITY_MISMATCH') else 'FRAMEWORK_DOCUMENT_AUTHORITY_INVALID'
+ print(json.dumps({'error':error,'message':text}))
+ sys.exit(2)
+'''
+    reject_link_components(config.kairos_harness, label="framework harness")
+    reject_link_components(config.kairos_harness / "kairos/framework.py", label="framework verifier")
+    reject_link_components(config.kairos_harness / "kairos/__init__.py", label="framework package")
+    try:
+        result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", code,
+                                 str(Path(__file__).resolve().parents[1])],
+                                input=json.dumps(request), text=True, encoding="utf-8",
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+        if len(result.stdout) > 16 * 1024 * 1024:
+            raise ValueError("framework inspection exceeded its output budget")
+        payload = json.loads(result.stdout)
+        if result.returncode or "error" in payload:
+            raise WorkshopError(payload.get("error", "FRAMEWORK_DOCUMENT_AUTHORITY_INVALID"),
+                                payload.get("message", "configured framework inspection failed"))
+        return payload["value"]
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        raise WorkshopError("FRAMEWORK_DOCUMENT_AUTHORITY_INVALID", "fresh configured framework inspection failed") from exc
+
+
+def framework_document_authority(config: WorkshopConfig) -> dict[str, Any] | None:
+    declaration = framework_document_declaration(config)
+    return None if declaration is None else _framework_inspect(config, config.codebase_root, "authority", declaration)
+
+
+FRAMEWORK_PROJECTION_SCHEMA = "werkfaden-framework-projection/v1"
+FRAMEWORK_PROJECTION_FILES = ("kairos/kairos_harness/kairos/framework.db",
+                              "kairos/kairos_harness/kairos/framework_manifest.json")
+FRAMEWORK_REVIEW_FIELDS = ("capsule", "answers", "refs", "claim_boundary", "entities", "facets",
+                           "does_not_answer", "search_contract", "sections")
+
+
+def framework_machine_candidate(config: WorkshopConfig, declaration: dict[str, Any]):
+    """Derive only a framework binding and an already-bound compiler intake digest."""
+    relative = config.config_path.relative_to(config.machine_root).as_posix()
+    if relative not in config.machine_authority_files:
+        raise WorkshopError("FRAMEWORK_CONFIG_UNGOVERNED", "framework binding requires governed config")
+    original = _policy_authority_bytes(config.config_path)
+    if _policy_json(original) != config.raw:
+        raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "loaded machine config differs from its exact bytes")
+    target_raw = {**config.raw, "framework_documents": declaration}
+    framework_document_declaration(replace(config, raw=target_raw))
+    sources = {relative: original}
+    targets = {relative: (json.dumps(target_raw, indent=2, sort_keys=True) + "\n").encode("utf-8")}
+    intake_path = config.machine_root / "project-intake.json"
+    if intake_path.exists() or "project-intake.json" in config.machine_authority_files:
+        if "project-intake.json" not in config.machine_authority_files:
+            raise WorkshopError("FRAMEWORK_INTAKE_UNGOVERNED", "existing compiler intake must already be governed")
+        raw = _policy_authority_bytes(intake_path)
+        intake = _policy_json(raw)
+        if (intake.get("schema") != "kairos-project-intake/v1"
+                or intake.get("workshop_config_sha256") != package_hash(config.raw)):
+            raise WorkshopError("FRAMEWORK_INTAKE_BINDING_INVALID", "existing intake does not bind the current config")
+        sources["project-intake.json"] = raw
+        targets["project-intake.json"] = (json.dumps({**intake, "workshop_config_sha256": package_hash(target_raw)},
+                                                        indent=2, sort_keys=True) + "\n").encode("utf-8")
+    return sources, targets
+
+
+def framework_projection_checkout(config: WorkshopConfig, root: Path, state: dict[str, Any], request=None):
+    from .util import atomic_write_bytes, atomic_write_json
+    declaration = framework_document_declaration(config)
+    if declaration is None and request is None:
+        return
+    baseline = _framework_inspect(config, config.codebase_root, "product")
+    if request is not None and baseline != request["baseline_product"]:
+        raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework product changed after the reviewed plan")
+    candidate = Path(request["candidate_root"]) if request else config.codebase_root
+    target = _framework_inspect(config, candidate, "product")
+    for folder, source, rows in (("baseline", config.codebase_root, baseline), ("work", candidate, target)):
+        for row in rows:
+            raw = _policy_authority_bytes(source / row["path"])
+            if sha256_bytes(raw) != row["sha256"]:
+                raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework snapshot source changed")
+            atomic_write_bytes(root / folder / "framework" / row["path"], raw)
+    sources, _ = framework_machine_candidate(config, declaration or request["declaration"])
+    for name, data in sources.items():
+        atomic_write_bytes(root / "baseline" / "framework-machine" / name, data)
+    scope = dict(schema=FRAMEWORK_PROJECTION_SCHEMA, baseline_product=baseline,
+                 initial_product=target, initial_admission=declaration is None,
+                 baseline_machine={name: sha256_bytes(data) for name, data in sources.items()},
+                 baseline_manifest_sha256=sha256_bytes((root / "baseline/manifest.json").read_bytes()))
+    atomic_write_json(root / "review/framework_scope.json", scope)
+    atomic_write_json(root / "review/framework_review.json",
+                      dict(schema=FRAMEWORK_PROJECTION_SCHEMA, transaction_id=state["transaction_id"],
+                           reviewer="", reason="", entries=[]))
+    state["framework_projection"] = dict(schema=FRAMEWORK_PROJECTION_SCHEMA,
+        scope_sha256=sha256_bytes((root / "review/framework_scope.json").read_bytes()),
+        overlay_sources={}, prepared=False)
+    if _framework_inspect(config, config.codebase_root, "product") != baseline:
+        raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework changed during checkout")
+
+
+def _framework_scope(root: Path, state: dict[str, Any]):
+    projection = state.get("framework_projection")
+    if not isinstance(projection, dict) or projection.get("schema") != FRAMEWORK_PROJECTION_SCHEMA:
+        raise WorkshopError("FRAMEWORK_SCOPE_INVALID", "transaction has no valid framework projection scope")
+    raw = _policy_authority_bytes(root / "review/framework_scope.json")
+    scope = _policy_json(raw)
+    if sha256_bytes(raw) != projection.get("scope_sha256") or scope.get("schema") != FRAMEWORK_PROJECTION_SCHEMA:
+        raise WorkshopError("FRAMEWORK_SCOPE_CHANGED", "frozen framework scope changed")
+    if sha256_bytes(_policy_authority_bytes(root / "baseline/manifest.json")) != scope["baseline_manifest_sha256"]:
+        raise WorkshopError("FRAMEWORK_SCOPE_CHANGED", "complete native baseline manifest changed")
+    return scope
+
+
+def framework_projection_files(config: WorkshopConfig, root: Path, state: dict[str, Any]):
+    if not state.get("framework_projection"):
+        return []
+    _framework_scope(root, state)
+    rows = _framework_inspect(config, root / "work/framework", "product")
+    # The candidate is a confined product tree, not a place for ignored scripts.
+    pending, observed = [root / "work/framework"], set()
+    while pending:
+        path = pending.pop()
+        reject_link_components(path, label="framework candidate")
+        if path.is_dir():
+            pending.extend(path.iterdir())
+        else:
+            _policy_authority_bytes(path)
+            observed.add(path.relative_to(root / "work/framework").as_posix())
+    if observed != {row["path"] for row in rows}:
+        raise WorkshopError("FRAMEWORK_WORK_SCOPE_INVALID", "framework candidate contains unclassified files")
+    return [("framework", "framework/" + row["path"], root / "work/framework" / row["path"]) for row in rows] + [
+        ("review", "review/framework_scope.json", root / "review/framework_scope.json"),
+        ("review", "review/framework_review.json", root / "review/framework_review.json")]
+
+
+def framework_projection_prepare(config: WorkshopConfig, root: Path, state: dict[str, Any]):
+    from .util import atomic_write_bytes
+    if not state.get("framework_projection"):
+        return
+    scope = _framework_scope(root, state)
+    if _framework_inspect(config, config.codebase_root, "product") != scope["baseline_product"]:
+        raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "live framework no longer equals checkout")
+    work = root / "work/framework"
+    rows = _framework_inspect(config, work, "product")
+    original = {r["path"]: r for r in scope["baseline_product"]}
+    overlays = state["framework_projection"]["overlay_sources"]
+    if any(Path(rel).suffix.lower() != ".md" and rel not in FRAMEWORK_PROJECTION_FILES
+           and rel not in {row["path"] for row in rows} for rel in original):
+        raise WorkshopError("FRAMEWORK_SOURCE_SCOPE_INVALID", "framework candidate deleted a non-Markdown product input")
+    source_paths = set(state.get("sources", [])) | set(state.get("dependent_tests", []))
+    for row in rows:
+        rel = row["path"]
+        if Path(rel).suffix.lower() != ".md" and rel not in FRAMEWORK_PROJECTION_FILES:
+            expected = overlays.get(rel, original.get(rel, {}).get("sha256"))
+            if row["sha256"] != expected:
+                # A refused prepare can leave its exact native overlay on disk
+                # before the enclosing transaction saves overlay provenance.
+                # Retry admits only the selected native candidate's exact bytes;
+                # arbitrary edits in the framework copy remain out of scope.
+                if (rel not in source_paths or rel not in original
+                        or row["sha256"] != sha256_bytes(_policy_authority_bytes(root / "work" / rel))):
+                    raise WorkshopError("FRAMEWORK_SOURCE_SCOPE_INVALID", "edit code only through its native source work path")
+    for rel in sorted(source_paths):
+        if rel not in original:
+            raise WorkshopError("FRAMEWORK_SOURCE_SCOPE_INVALID", "source is outside the frozen product")
+        raw = _policy_authority_bytes(root / "work" / rel)
+        atomic_write_bytes(work / rel, raw)
+        overlays[rel] = sha256_bytes(raw)
+    review = _policy_json(_policy_authority_bytes(root / "review/framework_review.json"))
+    changed = []
+    current = {r["path"]: r for r in _framework_inspect(config, work, "product")}
+    for rel in sorted(original.keys() | current.keys()):
+        if Path(rel).suffix.lower() == ".md" and original.get(rel) != current.get(rel):
+            changed.append(rel)
+    entries = review.get("entries")
+    if (review.get("schema") != FRAMEWORK_PROJECTION_SCHEMA or review.get("transaction_id") != state["transaction_id"]
+            or not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip()
+            or not isinstance(review.get("reason"), str) or len(review["reason"].strip()) < 40
+            or not isinstance(entries, list) or len(entries) != len(changed)
+            or sorted(e.get("path", "") for e in entries) != changed):
+        raise WorkshopError("FRAMEWORK_REVIEW_REQUIRED", "review every changed framework document and the no-change impact decision")
+    for entry in entries:
+        if (entry.get("reviewed_fields") != list(FRAMEWORK_REVIEW_FIELDS)
+                or not isinstance(entry.get("reason"), str) or len(entry["reason"].strip()) < 40):
+            raise WorkshopError("FRAMEWORK_REVIEW_REQUIRED", "framework document review lacks fields or concrete rationale")
+    # Execute only the isolated product candidate, after native source metadata review.
+    import sys
+    runner = ("import runpy,sys;from pathlib import Path;root=Path(sys.argv[1]);"
+              "sys.path[:0]=[str(root),str(root/'kairos/kairos_harness'),str(root/'workshop/src')];"
+              "sys.argv=[str(root/'scripts/build_framework_index.py'),'--verify-determinism'];"
+              "runpy.run_path(sys.argv[0],run_name='__main__')")
+    result = subprocess.run([sys.executable, "-I", "-S", "-B", "-c", runner, str(work)], cwd=work, text=True, encoding="utf-8",
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+    if result.returncode:
+        raise WorkshopError("FRAMEWORK_PROJECTION_FAILED", "isolated canonical builder refused the package",
+                            details={"stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]})
+    current = _framework_inspect(config, work, "product")
+    declaration = dict(schema=FRAMEWORK_DOCUMENT_AUTHORITY_SCHEMA, root=".", namespace="KAIROS_FRAMEWORK",
+                       documents=sorted(r["path"] for r in current if Path(r["path"]).suffix.lower() == ".md"))
+    prospective = replace(config, codebase_root=work, kairos_harness=work / "kairos/kairos_harness",
+                          raw={**config.raw, "framework_documents": declaration})
+    framework_document_authority(prospective)
+    before_config, after_config = framework_machine_candidate(config, declaration)
+    for name, raw in before_config.items():
+        if sha256_bytes(raw) != scope["baseline_machine"].get(name):
+            raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework machine preimage changed")
+    # Unchanged declarations preserve exact config bytes, including formatting.
+    if framework_document_declaration(config) == declaration:
+        after_config = before_config
+    owned_machine = {}
+    for name, data in after_config.items():
+        if data != before_config[name]:
+            existing = root / "work/machine" / name
+            if name in state.get("machine_authority_files", []):
+                raise WorkshopError("FRAMEWORK_MACHINE_SCOPE_CONFLICT", "another owner already changes this machine authority")
+            atomic_write_bytes(existing, data)
+            state.setdefault("machine_authority_files", []).append(name)
+            owned_machine[name] = sha256_bytes(data)
+    state["machine_authority_files"] = sorted(set(state.get("machine_authority_files", [])))
+    after = {r["path"]: r for r in current}
+    changes = [dict(path=rel, before=original.get(rel), after=after.get(rel))
+               for rel in sorted(original.keys() | after.keys())
+               if (Path(rel).suffix.lower() == ".md" or rel in FRAMEWORK_PROJECTION_FILES)
+               and original.get(rel) != after.get(rel)]
+    state["framework_projection"].update(prepared=True, product=current, declaration=declaration,
+                                          changes=changes, machine_targets=owned_machine)
+
+
+def framework_projection_reopen(root: Path, state: dict[str, Any]):
+    projection = state.get("framework_projection")
+    if not projection:
+        return
+    for name, digest in projection.get("machine_targets", {}).items():
+        path = root / "work/machine" / name
+        if sha256_bytes(_policy_authority_bytes(path)) != digest:
+            raise WorkshopError("FRAMEWORK_STAGED_MACHINE_CHANGED", "generated framework machine bytes were edited")
+        path.unlink()
+        state["machine_authority_files"] = [n for n in state.get("machine_authority_files", []) if n != name]
+    projection["machine_targets"] = {}
+    projection["prepared"] = False
+
+
+def framework_projection_targets(config: WorkshopConfig, root: Path, state: dict[str, Any]):
+    if not state.get("framework_projection"):
+        return []
+    _framework_scope(root, state)
+    if not state["framework_projection"].get("prepared"):
+        raise WorkshopError("FRAMEWORK_NOT_PREPARED", "framework projection was not prepared")
+    return [(row["path"], config.codebase_root / row["path"],
+             root / "work/framework" / row["path"] if row["after"] else None)
+            for row in state["framework_projection"]["changes"]]
+
+
+def framework_projection_postcheck(config: WorkshopConfig, root: Path, state: dict[str, Any]):
+    if not state.get("framework_projection"):
+        return
+    if _framework_inspect(config, config.codebase_root, "product") != state["framework_projection"]["product"]:
+        raise WorkshopError("FRAMEWORK_POSTCHECK_DRIFT", "live framework differs from the verified complete product")
+    if framework_document_declaration(config) != state["framework_projection"]["declaration"]:
+        raise WorkshopError("FRAMEWORK_POSTCHECK_DRIFT", "live declaration differs from verified membership")
+
+
+def _framework_optional_bytes(path: Path):
+    reject_link_components(path, label="framework apply target")
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None
+    return _policy_authority_bytes(path)
+
+
+def framework_projection_backups(config: WorkshopConfig, root: Path, state: dict[str, Any], rows):
+    if not state.get("framework_projection"):
+        return rows
+    from .util import capture_rollback_preimage, copy_exact
+    baseline = read_json(root / "baseline/manifest.json")
+    if _framework_inspect(config, config.codebase_root, "product") != _framework_scope(root, state)["baseline_product"]:
+        raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "complete framework product changed before Apply")
+    targets = {}
+    for source in state.get("changed_sources", []):
+        record = baseline["records"][source]
+        targets[config.codebase_root / source] = root / "work" / source
+        name = record["blueprint"]["filename"]
+        targets[config.blueprint_root / name] = root / "work/blueprints" / name
+        targets[config.managed_blueprint_root / name] = root / "work/managed" / name
+        if record.get("header") or state.get("topology_blueprints"):
+            raise WorkshopError("FRAMEWORK_COMPILER_SCOPE_UNSUPPORTED", "framework projection has no compiler-header migration contract")
+    for key, folder, live_root in (("authority_documents", "authority", config.kairos_workspace),
+                                    ("changed_documents", "documents", config.kairos_workspace),
+                                    ("machine_authority_files", "machine", config.machine_root)):
+        for relative in state.get(key, []):
+            targets[live_root / relative] = root / "work" / folder / relative
+    for change in state.get("test_changes", []):
+        if change["changed"]:
+            targets[config.codebase_root / change["source"]] = root / "work" / change["source"]
+    for relative, live, work in framework_projection_targets(config, root, state):
+        targets[live] = work
+        raw = _framework_optional_bytes(live)
+        before = next(c["before"] for c in state["framework_projection"]["changes"] if c["path"] == relative)
+        if (None if raw is None else sha256_bytes(raw)) != (None if before is None else before["sha256"]):
+            raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework target changed before backup")
+        backup = root / "rollback/framework" / relative
+        facts = (dict(preimage_absent=True, sha256=None, mtime_ns=None) if raw is None else
+                 capture_rollback_preimage(live, backup, copier=copy_exact))
+        created = []
+        parent = live.parent
+        while not parent.exists():
+            parent.relative_to(config.codebase_root)
+            created.append(str(parent))
+            parent = parent.parent
+        rows.append(dict(role="framework", live=str(live), backup=str(backup), created_directories=created, **facts))
+    if {Path(r["live"]) for r in rows} != set(targets):
+        raise WorkshopError("FRAMEWORK_ROLLBACK_SCOPE_INVALID", "rollback targets differ from the exact prepared scope")
+    for row in rows:
+        work = targets[Path(row["live"])]
+        row.update(framework_group=True, target_sha256=None if work is None else sha256_bytes(_policy_authority_bytes(work)))
+    return rows
+
+
+def framework_validate_rollback(rows):
+    if not any(r.get("framework_group") for r in rows):
+        return
+    for row in rows:
+        if not row.get("framework_group"):
+            raise WorkshopError("FRAMEWORK_ROLLBACK_SCOPE_INVALID", "incomplete rollback group")
+        raw = _framework_optional_bytes(Path(row["live"]))
+        current = None if raw is None else sha256_bytes(raw)
+        if current not in (row["sha256"], row["target_sha256"]):
+            raise WorkshopError("FRAMEWORK_ROLLBACK_FOREIGN_BYTES", "foreign apply bytes must not be overwritten")
+        if not row.get("preimage_absent"):
+            original = _policy_authority_bytes(Path(row["backup"]))
+            if sha256_bytes(original) != row["sha256"] or type(row.get("mtime_ns")) is not int:
+                raise WorkshopError("FRAMEWORK_ROLLBACK_UNPROVEN", "missing exact preimage or original timestamp")
+
+
+def framework_projection_apply(config: WorkshopConfig, root: Path, state: dict[str, Any]):
+    from .util import atomic_write_bytes
+    for relative, live, work in framework_projection_targets(config, root, state):
+        change = next(c for c in state["framework_projection"]["changes"] if c["path"] == relative)
+        raw = _framework_optional_bytes(live)
+        expected = None if change["before"] is None else change["before"]["sha256"]
+        if (None if raw is None else sha256_bytes(raw)) != expected:
+            raise WorkshopError("FRAMEWORK_BASELINE_CHANGED", "framework preimage changed before replacement")
+        if work is None:
+            live.unlink()
+        else:
+            atomic_write_bytes(live, _policy_authority_bytes(work))
+
+
+def framework_projection_reload(engine):
+    from .scientific import ScientificParityGate
+    from .metadata_gate import MetadataGate
+    from .context_documents import ContextDocuments
+    engine.config = load_config(engine.config.config_path)
+    engine.scientific_gate = ScientificParityGate(engine.config)
+    engine.metadata_gate = MetadataGate(engine.config)
+    engine.context_documents = ContextDocuments(engine.config)
+
+
+def framework_projection_recover(engine, root: Path, state: dict[str, Any]):
+    """Classify exact targets before attempting to parse a possibly mixed bundle."""
+    if not state.get("framework_projection"):
+        return None
+    from .scientific import transaction_work_manifest
+    if transaction_work_manifest(engine.config, root, state)["package_sha256"] != state.get("verified_work_package_sha256"):
+        raise WorkshopError("FRAMEWORK_RECOVERY_WORK_CHANGED", "verified source/document/index package changed")
+    raw = _policy_authority_bytes(root / "rollback/targets.json")
+    if sha256_bytes(raw) != state.get("framework_rollback_sha256"):
+        raise WorkshopError("FRAMEWORK_RECOVERY_PREIMAGES_CHANGED", "rollback target record changed")
+    rows = json.loads(raw)
+    framework_validate_rollback(rows)
+    exact_target = all((None if (data := _framework_optional_bytes(Path(r["live"]))) is None else sha256_bytes(data))
+                       == r["target_sha256"] for r in rows)
+    if not exact_target:
+        if state.get("framework_commit_boundary") != "FILES_WRITING":
+            raise WorkshopError("FRAMEWORK_RECOVERY_PARTIAL_AFTER_HEARTBEAT", "partial target after publication needs explicit recovery evidence")
+        restored = engine._rollback_files(rows)
+        if not all(r.get("restored") for r in restored):
+            raise WorkshopError("FRAMEWORK_RECOVERY_ROLLBACK_FAILED", "exact rollback did not finish", details=restored)
+        framework_projection_reload(engine)
+        scope = _framework_scope(root, state)
+        if _framework_inspect(engine.config, engine.config.codebase_root, "product") != scope["baseline_product"]:
+            raise WorkshopError("FRAMEWORK_RECOVERY_BASELINE_CHANGED", "restored framework differs from original product")
+        engine._assert_live_baseline(state)
+        permit = state.get("permit")
+        if permit:
+            governance, _ = engine._import_kairos()
+            governance.revoke_action_permit(engine.config.kairos_workspace, permit_id=permit["permit_id"],
+                                             reason="Framework recovery restored every preimage before heartbeat.")
+        state["state"] = "ROLLED_BACK"
+        engine._save_transaction(root, state, event="FRAMEWORK_RECOVERY_ROLLED_BACK", details=restored)
+        engine._release_lease(state["transaction_id"])
+        return dict(transaction_id=state["transaction_id"], state="ROLLED_BACK", apply_repeated=False)
+    framework_projection_reload(engine)
+    framework_projection_postcheck(engine.config, root, state)
+    state.update(state="RECOVERY_REQUIRED", framework_commit_boundary="HEARTBEAT_STARTED")
+    engine._save_transaction(root, state, event="FRAMEWORK_RECOVERY_FORWARD")
+    _, heartbeat = engine._import_kairos()
+    result = heartbeat.run_heartbeat(engine.config.kairos_workspace, requested_mode="verify",
+                                    changed_paths=[], use_reconciliation=True,
+                                    trigger="framework-projection-recovery:" + state["transaction_id"])
+    if not result.get("verified"):
+        raise WorkshopError("HEARTBEAT_NOT_VERIFIED", "framework recovery heartbeat did not verify")
+    state["framework_recovery_heartbeat"] = result
+    engine._save_transaction(root, state, event="FRAMEWORK_RECOVERY_HEARTBEAT_VERIFIED")
+    return None
+
+
+RUNTIME_POLICY_PROFILE = "mandatory-runtime/v1"
 
 
 RUNTIME_POLICY_PROFILE = "mandatory-runtime/v1"
@@ -2022,6 +2532,9 @@ def build_corpus_manifest(config: WorkshopConfig, *, verify_database: bool = Tru
             for relative in config.machine_authority_files
         },
     }
+    framework_documents = framework_document_authority(config)
+    if framework_documents is not None:
+        authority["framework_documents"] = framework_documents
     tests = dependent_test_inventory(config)
     for relative, record in tests.items():
         if relative in records:

@@ -134,6 +134,8 @@ class CheckoutCore(EngineCoreContract):
                 "journal": [],
             }
             self.context_documents.checkout(root, state, selected_documents)
+            from .corpus import framework_projection_checkout
+            framework_projection_checkout(self.config, root, state, getattr(self, "_framework_doc_request", None))
             self._save_transaction(root, state, event="CHECKOUT_COMPLETED", details={
                 "sources": normalized_sources, "documents": selected_documents,
             })

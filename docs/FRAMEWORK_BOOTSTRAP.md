@@ -2,12 +2,12 @@
 schema = "kairos-context/v1"
 id = "KAIROS_FRAMEWORK_BOOTSTRAP"
 type = "documentation"
-revision = 3
+revision = 4
 state = "active"
 authority = "operating_contract"
 workspace = "KAIROS_FRAMEWORK"
 route = "KAIROS_FRAMEWORK/KAIROS_FRAMEWORK_BOOTSTRAP"
-updated_at = "2026-10-30T01:33:38Z"
+updated_at = "2026-10-30T16:16:00Z"
 capsule = "Defines the pre-project bootstrap search: an agent can query hash-verified KAIROS rules before any project workspace or project database exists."
 claim_boundary = "This framework source owns the procedure and rules it states; it does not prove live project state, project outcomes, or facts outside its declared scope."
 entities = ["KAIROS", "KAIROS_FRAMEWORK_BOOTSTRAP"]
@@ -108,4 +108,9 @@ Framework search routes inspection; it does not create truth. Each result retain
 
 > Capsule: After the Human goal is converted into a reviewed kairos-project-kickoff/v1 contract, project intake may create a fresh project workspace and project database from compiler evidence. From that point, project questions use kairos search --wo
 
-After framework search retrieves the universal onboarding contract, the agent runs `kickstart detect <project>`, establishes the reviewed Human `kairos-project-kickoff/v1` contract, and runs `kickstart init --auto`. Static ecosystems use bounded exact source membership; C/C++/CUDA remains compiler-backed. Intake observes the original project read-only, creates the initial KAIROS/Workshop baseline, and returns `VERIFIED_PENDING_SEAL`. The agent then seals through Workshop. From that point, project questions use `kairos search --workspace <path> ...`; framework-rule questions remain available through the workspace-free search path, and all governed mutations go through Workshop transactions.
+After framework search retrieves the universal onboarding contract, first obtain and review the Human `kairos-project-kickoff/v1` contract, then run read-only `kickstart detect <project>`. Run `kickstart init --auto` only with current explicit authorization for that reviewed contract. Static ecosystems use bounded exact source membership; C/C++/CUDA remains compiler-backed. Intake observes the original project read-only, creates the initial KAIROS/Workshop baseline, and returns `VERIFIED_PENDING_SEAL`. The agent then seals through Workshop. From that point, project questions use `kairos search --workspace <path> ...`; framework-rule questions remain available through the workspace-free search path, and all governed mutations go through Workshop transactions.
+
+Framework self-maintenance may explicitly bind the optional native framework-document authority.
+That binds exact framework Markdown and its bundled index to Workshop transactions; it does
+not import those artifacts into a consumer project database. Use the current procedure in
+[Framework document authority](WORKSHOP.md#s-framework-document-authority).

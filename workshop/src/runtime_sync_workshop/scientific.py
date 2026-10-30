@@ -135,6 +135,10 @@ def transaction_work_manifest(config: WorkshopConfig, root: Path, state: dict[st
                 "role": "review", "path": "review/metadata_audit.json",
                 "sha256": sha256_bytes(raw), "size": len(raw),
             }
+    from .corpus import framework_projection_files
+    for role, relative, path in framework_projection_files(config, root, state):
+        raw = path.read_bytes()
+        rows[f"{role}:{relative}"] = dict(role=role, path=relative, sha256=sha256_bytes(raw), size=len(raw))
     ordered = [rows[key] for key in sorted(rows)]
     return {
         "schema": "runtime-sync-work-package/v1",
